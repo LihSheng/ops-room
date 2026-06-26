@@ -13,18 +13,10 @@
  */
 
 import { execSync, execFileSync } from 'node:child_process';
+import { POLL_AGENTS, normalizeAgent } from '../lib/config.mjs';
+import { extractTask } from '../lib/task-routing.mjs';
 
 const REPO = process.env.OPENAB_REPO || 'LihSheng/LinkUp';
-const AGENT_ALIASES = {
-  berlin: 'berlin',
-  tokyo: 'tokyo',
-  professor: 'professor',
-};
-
-function normalizeAgent(agent) {
-  if (!agent) return null;
-  return AGENT_ALIASES[agent.toLowerCase()] || null;
-}
 
 function gh(args, opts = {}) {
   const isApi = args.startsWith('api ');
@@ -79,32 +71,24 @@ function addLabel(issueNumber, label) {
 }
 
 function parseTaskFromIssue(issue, agent) {
-  // Find the OpenAB acknowledgment comment
   const comments = getIssueComments(issue.number);
-  const openabComment = Array.isArray(comments) 
-    ? comments.find(c => c.body && c.body.includes('<!-- openab-task'))
-    : null;
-  
-  if (openabComment) {
-    const agentMatch = openabComment.body.match(/agent:\s*(\S+)/);
-    const taskMatch = openabComment.body.match(/task:\s*(.+)/);
-    return {
-      agent: agentMatch ? agentMatch[1] : agent,
-      task: taskMatch ? taskMatch[1].trim() : issue.title,
-      issue_number: issue.number,
-      issue_title: issue.title,
-      issue_url: issue.url || `https://github.com/${REPO}/issues/${issue.number}`,
-      commenter: openabComment.body.match(/commenter:\s*(\S+)/)?.[1] || 'unknown',
-    };
-  }
-  
-  return null;
+  const task = extractTask(comments, agent);
+  if (!task) return null;
+
+  return {
+    agent,
+    task: task.task || issue.title,
+    issue_number: issue.number,
+    issue_title: issue.title,
+    issue_url: issue.url || `https://github.com/${REPO}/issues/${issue.number}`,
+    commenter: task.commenter || 'unknown',
+  };
 }
 
 function main() {
   const args = process.argv.slice(2);
   const rawAgentName = args[0]?.toLowerCase();
-  const agentName = normalizeAgent(rawAgentName);
+  const agentName = rawAgentName ? normalizeAgent(rawAgentName) : null;
   const flag = args[1]?.toLowerCase();
 
   if (flag === '--done') {
@@ -176,8 +160,7 @@ function main() {
     console.log(`\nWhen done:\n  node openab-claim.mjs ${rawAgentName || agentName} --done`);
   } else {
     // No agent specified - list all
-    const allAgents = ['berlin', 'tokyo', 'professor'];
-    for (const ag of allAgents) {
+    for (const ag of POLL_AGENTS) {
       const issues = listIssuesByLabel(`openab/${ag}`);
       if (issues.length > 0) {
         console.log(`\n${ag} (${issues.length}):`);

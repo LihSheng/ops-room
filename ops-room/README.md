@@ -11,8 +11,7 @@ ops-room/
 │   ├── app/          → future UI/settings pages
 │   └── lib/          → shared helpers
 ├── scripts/          → maintenance/debug scripts
-├── package.json
-└── start.sh
+└── package.json
 ```
 
 Runtime data is stored outside the source tree at `../data/ops-room/`:
@@ -30,8 +29,11 @@ data/ops-room/
 |---|---|
 | `npm run bootstrap` | Create required runtime directories |
 | `npm start` | Start webhook server (with built-in poller) |
+| `nohup npm start >> ../data/ops-room/logs/server.log 2>&1 &` | Start webhook server detached without a shell wrapper |
 | `npm run poll` | Run standalone poller |
 | `npm run claim` | Claim tasks via CLI |
+
+`npm start` requires `OPENAB_WEBHOOK_SECRET` to be set. The server now refuses to start with a default dev secret.
 
 ## Environment Variables
 

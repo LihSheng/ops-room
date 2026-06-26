@@ -4,6 +4,11 @@ import { readFile, writeFile, mkdir, readdir, appendFile, rm } from 'node:fs/pro
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AGENT_IDS, AGENT_NAMES, BOT_USERS, LABEL_COLORS, POLL_AGENTS, normalizeAgent } from '../lib/config.mjs';
+import { extractTask, isCodingTask, parseFlags } from '../lib/task-routing.mjs';
+import { getTokenForAgent } from '../lib/github-app.mjs';
+import { createGitHubOps } from '../lib/github-ops.mjs';
+import { pollAgentIssues, startIssuePoller } from '../lib/issue-poller.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -18,7 +23,7 @@ console.log = (...args) => _origLog(`[${utcTimestamp()}]`, ...args);
 console.error = (...args) => _origError(`[${utcTimestamp()}]`, ...args);
 console.warn = (...args) => _origWarn(`[${utcTimestamp()}]`, ...args);
 const PORT = parseInt(process.env.OPENAB_WEBHOOK_PORT || '7381', 10);
-const WEBHOOK_SECRET = process.env.OPENAB_WEBHOOK_SECRET || 'dev-secret-change-me';
+const WEBHOOK_SECRET = process.env.OPENAB_WEBHOOK_SECRET;
 const TASKS_DIR = process.env.OPS_ROOM_TASKS_DIR || join(__dirname, '..', '..', '..', 'data', 'ops-room', 'tasks');
 const SHARED_MEMORY = process.env.OPENAB_SHARED_DIR ? join(process.env.OPENAB_SHARED_DIR, 'memory.md') : join(__dirname, '..', '..', '..', 'data', 'shared', 'memory.md');
 const OPENCODE_API = 'https://opencode.ai/zen/go/v1/chat/completions';
@@ -34,53 +39,6 @@ const LOCK_DIR = '/tmp/openab-locks';
 const PROCESSED_TASKS_FILE = join(STATE_DIR, 'processed-tasks.json');
 const DATA_DIR = join(__dirname, '..', '..', '..', 'data');
 
-const AGENT_MAP = {
-  professor: '1518980056880517140',
-  berlin: '1518983231012208903',
-  tokyo: '1518982568920355017',
-};
-
-const AGENT_ALIASES = { alpha: 'berlin', beta: 'tokyo' };
-
-const POLL_AGENTS = ['professor', 'berlin', 'tokyo'];
-
-function normalizeAgent(agent) {
-  const key = String(agent || '').toLowerCase();
-  return AGENT_ALIASES[key] || key;
-}
-
-const GITHUB_APP_CONFIG = {
-  professor: {
-    appId: 'GITHUB_APP_ID',
-    installationId: 'GITHUB_APP_INSTALLATION_ID',
-    keyPath: 'GITHUB_APP_KEY_PATH',
-    botUser: 'GITHUB_APP_BOT_USER',
-  },
-  berlin: {
-    appId: 'GITHUB_APP_ID_BERLIN',
-    installationId: 'GITHUB_APP_INSTALLATION_ID_BERLIN',
-    keyPath: 'GITHUB_APP_KEY_PATH_BERLIN',
-    botUser: 'GITHUB_APP_BOT_USER_BERLIN',
-  },
-  tokyo: {
-    appId: 'GITHUB_APP_ID_TOKYO',
-    installationId: 'GITHUB_APP_INSTALLATION_ID_TOKYO',
-    keyPath: 'GITHUB_APP_KEY_PATH_TOKYO',
-    botUser: 'GITHUB_APP_BOT_USER_TOKYO',
-  },
-};
-
-const AGENT_NAMES = {
-  alpha: 'Berlin', beta: 'Tokyo', professor: 'Professor',
-  berlin: 'Berlin', tokyo: 'Tokyo',
-};
-
-const BOT_USERS = {
-  professor: 'lihsheng-professor[bot]',
-  berlin: 'lihsheng-berlin[bot]',
-  tokyo: 'lihsheng-tokyo[bot]',
-};
-
 const FORBIDDEN_FILE_PATTERNS = [
   /^\.env/,
   /^\.openab(\/|$)/,
@@ -89,23 +47,7 @@ const FORBIDDEN_FILE_PATTERNS = [
   /credential/i,
 ];
 
-const CODING_KEYWORDS = [
-  "implement", "fix", "create pr", "pull request", "change code",
-  "change files", "modify code", "update code", "add feature",
-  "refactor", "run tests", "commit", "push branch", "open a pr",
-  "create a branch", "work on it", "coding task",
-];
-
 const OPENAB_SERVER_VERSION = 'openab-harness-v3-2026-06-26';
-
-const LABEL_COLORS = {
-  pending: '5319e7',
-  wip: 'fbca04',
-  failed: 'd73a4a',
-  done: '0e8a16',
-  pr: '0e8a16',
-  needsHuman: 'b60205',
-};
 
 // ── Init ────────────────────────────────────────────────────────────────────
 
@@ -152,145 +94,22 @@ async function appendToMemory(entry) {
 
 // ── GitHub auth ─────────────────────────────────────────────────────────────
 
-function githubEnvForAgent(agentKey) {
-  const cfg = GITHUB_APP_CONFIG[agentKey] || GITHUB_APP_CONFIG.professor;
-  const appId = process.env[cfg.appId];
-  const installationId = process.env[cfg.installationId];
-  const keyPath = process.env[cfg.keyPath];
-  const botUser = process.env[cfg.botUser];
-
-  if (!appId || !installationId || !keyPath) {
-    return null;
-  }
-
-  return {
-    GITHUB_APP_ID: appId,
-    GITHUB_APP_INSTALLATION_ID: installationId,
-    GITHUB_APP_KEY_PATH: keyPath,
-    GITHUB_APP_BOT_USER: botUser || 'bot',
-  };
+function githubToken(agentKey) {
+  return getTokenForAgent(agentKey, join(__dirname, 'github-app-token.mjs'));
 }
-
-function getTokenForAgent(agentKey) {
-  const env = githubEnvForAgent(agentKey);
-  if (!env) throw new Error(`missing GitHub App config for ${agentKey}`);
-  const tokenResult = execFileSync(
-    'node', [join(__dirname, 'github-app-token.mjs')],
-    { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, env: { ...process.env, ...env } },
-  ).trim();
-  return JSON.parse(tokenResult).token;
-}
-
-function addComment(issueNumber, body, agentKey = 'professor') {
-  const tryPost = (key) => {
-    const token = getTokenForAgent(key);
-    return execFileSync(
-      'gh',
-      ['api', `repos/${REPO}/issues/${issueNumber}/comments`, '-X', 'POST', '-f', `body=${body}`],
-      { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, env: { ...process.env, GH_TOKEN: token } },
-    );
-  };
-  try {
-    tryPost(agentKey);
-  } catch (e) {
-    const msg = (e.stderr && e.stderr.toString()) || e.message;
-    if (agentKey !== 'professor' && (msg.includes('403') || msg.includes('Resource not accessible'))) {
-      console.warn(`[poller] ${agentKey} token lacks comment permission, falling back to professor`);
-      try { tryPost('professor'); } catch (e2) {
-        console.error(`[poller] addComment fallback also failed on #${issueNumber}:`, (e2.stderr && e2.stderr.toString()) || e2.message);
-      }
-      return;
-    }
-    console.error(`[poller] addComment error on #${issueNumber}:`, msg);
-  }
-}
-
-function ghApi(method, path) {
-  const token = getTokenForAgent('professor');
-  const args = ['api', path];
-  if (method !== 'GET') args.push('-X', method);
-  const out = execFileSync('gh', args, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, env: { ...process.env, GH_TOKEN: token } });
-  return JSON.parse(out);
-}
-
-function ghExec(args, opts = {}) {
-  return execSync(`gh ${args} --repo "${REPO}"`, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, ...opts }).trim();
-}
-
-// ── Labels ──────────────────────────────────────────────────────────────────
-
-function ensureLabel(label, color = 'fbca04') {
-  try {
-    execSync(
-      `gh label create ${JSON.stringify(label)} --repo ${JSON.stringify(REPO)} --color ${JSON.stringify(color)} --force`,
-      { encoding: 'utf-8', stdio: 'pipe' }
-    );
-  } catch (e) {
-    const msg = e.stderr?.toString() || e.message;
-    console.warn(`[poller] ensureLabel warning for ${label}: ${msg.slice(0, 300)}`);
-  }
-}
-
-function removeLabel(issueNumber, label) {
-  try {
-    execSync(`gh issue edit ${issueNumber} --remove-label "${label}" --repo "${REPO}"`, { encoding: 'utf-8' });
-  } catch { }
-}
-
-function addLabel(issueNumber, label) {
-  try {
-    execSync(`gh issue edit ${issueNumber} --add-label "${label}" --repo "${REPO}"`, { encoding: 'utf-8' });
-  } catch { }
-}
-
-async function transitionLabels(ctx, { remove: removeLabels, add: addLabels }) {
-  for (const label of removeLabels) removeLabel(ctx.issueNumber, label);
-  for (const label of addLabels) ensureLabel(label);
-  for (const label of addLabels) addLabel(ctx.issueNumber, label);
-}
-
-// ── Task extraction ─────────────────────────────────────────────────────────
-
-function extractTask(comments, agentKey = null) {
-  const ordered = [...comments].reverse();
-
-  for (const c of ordered) {
-    if (!c.body?.includes('<!-- openab-task')) continue;
-
-    const agentMatch = c.body.match(/agent:\s*(.+?)(?:\n|$)/);
-    const agent = agentMatch?.[1]?.trim();
-
-    if (agentKey && agent && agent !== agentKey) continue;
-
-    const taskMatch = c.body.match(/task:\s*([\s\S]*?)(?:\nrepository:|\nissue:|\ncommenter:|\n-->)/);
-    const commenterMatch = c.body.match(/commenter:\s*(\S+)/);
-    const idMatch = c.body.match(/id:\s*(.+?)(?:\n|$)/);
-    const typeMatch = c.body.match(/task_type:\s*(\S+)/);
-
-    return {
-      task: taskMatch?.[1]?.trim() || '',
-      commenter: commenterMatch?.[1] || 'unknown',
-      taskId: idMatch?.[1]?.trim() || null,
-      taskType: typeMatch?.[1]?.trim() || null,
-    };
-  }
-
-  return null;
-}
-
-// ── Task type detection ─────────────────────────────────────────────────────
-
-function parseFlags(taskText) {
-  const flagMatch = taskText.match(/--(chat|code)\b/);
-  return flagMatch ? flagMatch[1] : null;
-}
-
-function isCodingTask(task, issue) {
-  const title = issue?.title || '';
-  const body = issue?.body || '';
-  const text = `${task}\n${title}\n${body}`.toLowerCase();
-  return CODING_KEYWORDS.some((keyword) => text.includes(keyword));
-}
+const {
+  addComment,
+  ghApi,
+  ensureLabel,
+  removeLabel,
+  addLabel,
+  transitionLabels,
+} = createGitHubOps({
+  repo: REPO,
+  tokenForAgent: githubToken,
+  processEnv: process.env,
+  logger: console,
+});
 
 // ── Processed task tracking ─────────────────────────────────────────────────
 
@@ -374,7 +193,7 @@ function buildBranchName(issueNumber, title, agent = 'agent') {
 // ── Authenticated remote URL ────────────────────────────────────────────────
 
 function authedGitUrlForAgent(agent) {
-  const token = getTokenForAgent(agent);
+  const token = githubToken(agent);
   return `https://x-access-token:${token}@github.com/${REPO}.git`;
 }
 
@@ -396,7 +215,7 @@ async function prepareWorkspace(ctx) {
   await ensureDir(parent);
   await rm(workspaceDir, { recursive: true, force: true });
 
-  const token = getTokenForAgent(ctx.agent);
+  const token = githubToken(ctx.agent);
   const env = { ...process.env, GH_TOKEN: token };
   const authedUrl = `https://x-access-token:${token}@github.com/${REPO}.git`;
 
@@ -904,10 +723,16 @@ function checksSummary(ctx) {
 
 // ── Commit ──────────────────────────────────────────────────────────────────
 
-function configureGitAuthor(agent) {
+function configureGitAuthor(ctx) {
+  const workspaceDir = ctx.workspaceDir;
+  if (!workspaceDir) {
+    throw new Error('Missing workspaceDir when configuring Git author');
+  }
+
+  const agent = ctx.agent;
   const botUser = BOT_USERS[agent] || `lihsheng-${agent}[bot]`;
-  execSync(`git config --global user.name "${botUser}"`, { encoding: 'utf-8' });
-  execSync(`git config --global user.email "${botUser}@users.noreply.github.com"`, { encoding: 'utf-8' });
+  execSync(`git config user.name "${botUser}"`, { cwd: workspaceDir, encoding: 'utf-8' });
+  execSync(`git config user.email "${botUser}@users.noreply.github.com"`, { cwd: workspaceDir, encoding: 'utf-8' });
 }
 
 async function commitIfChanges(ctx) {
@@ -918,7 +743,7 @@ async function commitIfChanges(ctx) {
   const changedFiles = getChangedFiles(ctx);
   validateChangedFiles(ctx, changedFiles);
 
-  configureGitAuthor(ctx.agent);
+  configureGitAuthor(ctx);
 
   const shortTitle = ctx.issueTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
   await execLogged(`cd "${ctx.workspaceDir}" && git add .`, ctx);
@@ -986,7 +811,7 @@ ${checks || '- No checks run'}
 }
 
 async function createPullRequest(ctx) {
-  const token = getTokenForAgent(ctx.agent);
+  const token = githubToken(ctx.agent);
   const env = { ...process.env, GH_TOKEN: token };
 
   const defaultBranch = ctx.defaultBranch || getDefaultBranch(env);
@@ -1015,7 +840,7 @@ async function createPullRequest(ctx) {
 }
 
 async function verifyPrExists(ctx) {
-  const token = getTokenForAgent(ctx.agent);
+  const token = githubToken(ctx.agent);
   const env = { ...process.env, GH_TOKEN: token };
   const output = execCapture(
     `gh pr list --repo "${REPO}" --head "${ctx.branchName}" --json url --jq '.[0].url'`,
@@ -1337,8 +1162,9 @@ function sendJSON(res, status, data) {
 
 async function handleWebhook(body) {
   const { agent, task, repository, issue_number, issue_title, issue_url, commenter } = body;
-  const agentId = AGENT_MAP[agent?.toLowerCase()];
-  const agentName = agentId ? agent : 'unassigned';
+  const normalizedAgent = normalizeAgent(agent);
+  const agentId = AGENT_IDS[normalizedAgent];
+  const agentName = agentId ? normalizedAgent : 'unassigned';
   const taskEntry = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     source: 'github_issue', received_at: new Date().toISOString(),
@@ -1378,49 +1204,15 @@ const server = createServer(async (req, res) => {
 
 // ── Poller ──────────────────────────────────────────────────────────────────
 
-async function startPoller() {
-  console.log('[server] poller started in-process');
-  while (true) {
-    try {
-      for (const agentKey of POLL_AGENTS) {
-        let issues;
-        try {
-          const out = execSync(`gh api repos/${REPO}/issues?labels=${encodeURIComponent('openab/' + agentKey)}&state=open&per_page=100&sort=created&direction=desc`, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
-          issues = JSON.parse(out).filter(i => !i.pull_request || !i.draft);
-        } catch { continue; }
-        if (!issues?.length) continue;
-        for (const issue of issues) {
-          const names = issue.labels?.map(l => l.name) || [];
-          console.log(`[poller] labels on #${issue.number}: ${names.join(', ')}`);
-          if (!names.includes(`openab/${agentKey}`)) continue;
-          if (names.includes(`openab/${agentKey}/wip`)) continue;
-          if (names.includes('openab/pr-created')) continue;
-          if (names.includes('openab/done')) continue;
-          if (names.includes(`openab/${agentKey}/failed`)) continue;
-
-          console.log(`[poller] ${agentKey} task on #${issue.number}: ${issue.title}`);
-
-          ensureLabel(`openab/${agentKey}/wip`, LABEL_COLORS.wip);
-          removeLabel(issue.number, `openab/${agentKey}`);
-          addLabel(issue.number, `openab/${agentKey}/wip`);
-
-          const agentName = AGENT_NAMES[agentKey] || agentKey;
-          const agentId = AGENT_MAP[agentKey] || 'unknown';
-          addComment(issue.number,
-            `**OpenAB / ${agentName}** — claimed and working 🚀
-
-> ${issue.title}
-
-Agent <@${agentId}> is on it.
-
----
-*Task claimed automatically by OpenAB poller*`, agentKey);
-
-          await handleTask(issue.number, agentKey);
-        }
-      }
-    } catch (e) { console.error('[poller] cycle error:', e.message); }
-    await new Promise(r => setTimeout(r, 30000));
+async function listOpenIssuesForAgent(agentKey) {
+  try {
+    const out = execSync(
+      `gh api repos/${REPO}/issues?labels=${encodeURIComponent(`openab/${agentKey}`)}&state=open&per_page=100&sort=created&direction=desc`,
+      { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
+    );
+    return JSON.parse(out).filter((issue) => !issue.pull_request || !issue.draft);
+  } catch {
+    return [];
   }
 }
 
@@ -1439,12 +1231,28 @@ for (const [cmd, found] of Object.entries(diagnostics)) {
   console.log(`[server] command ${cmd}: ${found}`);
 }
 
+if (!WEBHOOK_SECRET) {
+  throw new Error('Missing OPENAB_WEBHOOK_SECRET. Refusing to start webhook server without an explicit bearer secret.');
+}
+
 if (!diagnostics.opencode && !diagnostics.codex && !diagnostics.claude) {
   console.warn('[server] WARNING: No coding CLI found (opencode/codex/claude) — --code tasks will fail');
 }
 
 await initDirs();
-startPoller().catch(e => console.error('[server] poller fatal:', e.message));
+startIssuePoller({
+  agentKeys: POLL_AGENTS,
+  intervalMs: 30_000,
+  pollAgent: (agentKey) => pollAgentIssues({
+    agentKey,
+    listOpenIssuesForAgent,
+    ensureLabel,
+    removeLabel,
+    addLabel,
+    addComment,
+    handleTask,
+  }),
+}).catch((e) => console.error('[server] poller fatal:', e.message));
 server.listen(PORT, () => {
   console.log(`OpenAB webhook listening on http://0.0.0.0:${PORT}`);
   console.log(`  POST /webhook   - Receive issue commands`);
