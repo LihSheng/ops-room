@@ -21,7 +21,9 @@ const PORT = parseInt(process.env.OPENAB_WEBHOOK_PORT || '7381', 10);
 const WEBHOOK_SECRET = process.env.OPENAB_WEBHOOK_SECRET || 'dev-secret-change-me';
 const TASKS_DIR = process.env.OPS_ROOM_TASKS_DIR || join(__dirname, '..', '..', '..', 'data', 'ops-room', 'tasks');
 const SHARED_MEMORY = process.env.OPENAB_SHARED_DIR ? join(process.env.OPENAB_SHARED_DIR, 'memory.md') : join(__dirname, '..', '..', '..', 'data', 'shared', 'memory.md');
-const OPENCODE_API = 'https://opencode.ai/zen/v1/chat/completions';
+const OPENCODE_API = 'https://opencode.ai/zen/go/v1/chat/completions';
+const NVIDIA_API = 'https://integrate.api.nvidia.com/v1/chat/completions';
+const NVIDIA_MODEL = process.env.NVIDIA_MODEL || 'meta/llama-3.1-70b-instruct';
 const OPENCODE_MODEL = process.env.OPENCODE_MODEL || 'deepseek-v4-flash';
 const OPENCODE_MAX_TOKEN = parseInt(process.env.OPENCODE_MAX_TOKEN || '4096', 10);
 const REPO = process.env.OPENAB_REPO || 'LihSheng/LinkUp';
@@ -1025,21 +1027,40 @@ async function verifyPrExists(ctx) {
 // ── Chat workflow ───────────────────────────────────────────────────────────
 
 async function askAI(prompt) {
-  const res = await fetch(OPENCODE_API, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.OPENCODE_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: OPENCODE_MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: OPENCODE_MAX_TOKEN,
-    }),
-  });
-  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content || '';
+  const tryProvider = async (apiUrl, apiKey, model) => {
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: OPENCODE_MAX_TOKEN,
+      }),
+    });
+    if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || '';
+  };
+
+  if (process.env.OPENCODE_API_KEY) {
+    try {
+      return await tryProvider(OPENCODE_API, process.env.OPENCODE_API_KEY, OPENCODE_MODEL);
+    } catch (e) {
+      const msg = e.message || '';
+      if (!msg.includes('401') && !msg.includes('Insufficient balance') && !msg.includes('402')) throw e;
+      console.warn(`[poller] OpenCode API error: ${msg}`);
+      console.warn(`[poller] OpenCode API failed, falling back to NVIDIA`);
+    }
+  }
+
+  if (process.env.NVIDIA_API_KEY) {
+    return await tryProvider(NVIDIA_API, process.env.NVIDIA_API_KEY, NVIDIA_MODEL);
+  }
+
+  throw new Error('No API key available (OPENCODE_API_KEY or NVIDIA_API_KEY)');
 }
 
 async function runChatWorkflow(ctx) {
