@@ -1,0 +1,17 @@
+[discord]
+bot_token = "${GEMINI_DISCORD_TOKEN}"
+allowed_channels = ["${DISCORD_CHANNEL_ID}"]
+allow_bot_messages = "mentions"
+
+[agent]
+command = "gemini"
+args = ["--acp"]
+working_dir = "/home/node"
+env = { GEMINI_API_KEY = "${GEMINI_API_KEY}", DISCORD_BOT_TOKEN = "${GEMINI_DISCORD_TOKEN}", GEMINI_CLI_TRUST_WORKSPACE = "true" }
+
+[pool]
+max_sessions = 5
+session_ttl_hours = 24
+
+[reactions]
+enabled = true

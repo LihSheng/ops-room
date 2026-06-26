@@ -1,0 +1,111 @@
+# ------------------------------------------------------------
+# Environment
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ------------------------------------------------------------
+# Secrets / private keys
+# ------------------------------------------------------------
+secrets/*
+!secrets/.gitkeep
+
+*.pem
+*.key
+*-key
+*.private-key.pem
+.auth-config.json
+
+.ssh/
+.ssh-config/
+
+# ------------------------------------------------------------
+# Local config
+# Commit only example config.
+# ------------------------------------------------------------
+config/**/*.local.toml
+config/**/*.local.json
+
+config/agents/*.toml
+config/harness/*.toml
+config/runtime/*.toml
+
+!config/agents/*.example.toml
+!config/harness/*.example.toml
+!config/runtime/*.example.toml
+
+# ------------------------------------------------------------
+# Runtime / generated data
+# ------------------------------------------------------------
+data/agents/*
+!data/agents/.gitkeep
+
+data/workspaces/*
+!data/workspaces/.gitkeep
+
+data/shared/*
+!data/shared/.gitkeep
+
+data/ops-room/logs/*
+!data/ops-room/logs/.gitkeep
+
+data/ops-room/state/*
+!data/ops-room/state/.gitkeep
+
+data/ops-room/tasks/*
+!data/ops-room/tasks/.gitkeep
+
+# Backward compatibility: old Ops Room runtime location.
+ops-room/data/
+!ops-room/data/.gitkeep
+
+# ------------------------------------------------------------
+# Logs / state / task outputs
+# ------------------------------------------------------------
+*.log
+*.pid
+processed-tasks.json
+tasks/*.json
+state/*.json
+
+# ------------------------------------------------------------
+# Dependencies / package managers
+# ------------------------------------------------------------
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+yarn-error.log
+package-lock.json.tmp
+
+# Keep package-lock.json tracked if it belongs to source packages.
+!ops-room/package-lock.json
+
+# ------------------------------------------------------------
+# Build outputs / cache
+# ------------------------------------------------------------
+.next/
+dist/
+build/
+coverage/
+.cache/
+.turbo/
+.vercel/
+out/
+
+# ------------------------------------------------------------
+# Tooling / local caches
+# ------------------------------------------------------------
+.git/
+.local/
+.opencode/
+.DS_Store
+
+# ------------------------------------------------------------
+# Editor / OS
+# ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo

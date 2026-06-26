@@ -1,0 +1,15 @@
+{
+  "name": "@openab/ops-room",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/server/webhook.mjs",
+  "scripts": {
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "start": "node src/server/webhook.mjs",
+    "server": "node src/server/webhook.mjs",
+    "poll": "node src/server/poller.mjs",
+    "claim": "node src/server/claim.mjs",
+    "dev": "node --watch src/server/webhook.mjs"
+  }
+}

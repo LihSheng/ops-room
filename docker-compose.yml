@@ -1,0 +1,145 @@
+services:
+  gemini:
+    image: ghcr.io/openabdev/openab-gemini:latest
+    container_name: openab-gemini
+    restart: unless-stopped
+    entrypoint: ["/scripts/entrypoint.sh"]
+    env_file:
+      - .env
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./config/agents/gemini.toml:/etc/openab/config.toml:ro
+      - ./data/agents/gemini:/home/node
+      - ./data/shared:/home/node/shared
+      - "/home/ubuntu/Documents/Obsidian Vault/:/home/node/obsidian-vault"
+    environment:
+      - GEMINI_DISCORD_TOKEN=${GEMINI_DISCORD_TOKEN}
+      - GEMINI_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_CLI_TRUST_WORKSPACE=true
+
+  opencode-professor:
+    image: ghcr.io/openabdev/openab-opencode:latest
+    container_name: openab-opencode-professor
+    restart: unless-stopped
+    entrypoint: ["/scripts/entrypoint.sh"]
+    env_file:
+      - .env
+    depends_on:
+      - ops-room
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./config/agents/opencode-professor.toml:/etc/openab/config.toml:ro
+      - ./data/agents/opencode-professor:/home/node
+      - ./data/shared:/home/node/shared
+      - "/home/ubuntu/Documents/Obsidian Vault/:/home/node/obsidian-vault"
+      - ./secrets/professor-key.pem:/home/node/.ssh/github-app-key.pem:ro
+      - ./secrets/berlin-key.pem:/home/node/.ssh/berlin-key.pem:ro
+      - ./secrets/tokyo-key.pem:/home/node/.ssh/tokyo-key.pem:ro
+    environment:
+      - GEMINI_DISCORD_TOKEN=${GEMINI_DISCORD_TOKEN}
+      - GEMINI_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - OPENCODE_API_KEY=${OPENCODE_API_KEY}
+      - RUST_LOG=debug
+      - GITHUB_APP_ID=${GITHUB_APP_ID_PROFESSOR}
+      - GITHUB_APP_INSTALLATION_ID=${GITHUB_APP_INSTALLATION_ID_PROFESSOR}
+      - GITHUB_APP_KEY_PATH=/home/node/.ssh/github-app-key.pem
+      - GITHUB_APP_BOT_USER=${GITHUB_APP_BOT_USER_PROFESSOR}
+      - GITHUB_APP_ID_BERLIN=${GITHUB_APP_ID_BERLIN}
+      - GITHUB_APP_INSTALLATION_ID_BERLIN=${GITHUB_APP_INSTALLATION_ID_BERLIN}
+      - GITHUB_APP_KEY_PATH_BERLIN=/home/node/.ssh/berlin-key.pem
+      - GITHUB_APP_BOT_USER_BERLIN=${GITHUB_APP_BOT_USER_BERLIN}
+      - GITHUB_APP_ID_TOKYO=${GITHUB_APP_ID_TOKYO}
+      - GITHUB_APP_INSTALLATION_ID_TOKYO=${GITHUB_APP_INSTALLATION_ID_TOKYO}
+      - GITHUB_APP_KEY_PATH_TOKYO=/home/node/.ssh/tokyo-key.pem
+      - GITHUB_APP_BOT_USER_TOKYO=${GITHUB_APP_BOT_USER_TOKYO}
+    command: >
+      sh -c '
+      mkdir -p /home/node/.local/share/opencode &&
+      KEY="$${OPENCODE_API_KEY}" &&
+      echo "{\"opencode-zen\":{\"type\":\"api\",\"key\":\"$$KEY\"}}" > /home/node/.local/share/opencode/auth.json &&
+      exec openab run -c /etc/openab/config.toml
+      '
+
+  opencode-1:
+    image: ghcr.io/openabdev/openab-opencode:latest
+    container_name: openab-opencode-1
+    restart: unless-stopped
+    entrypoint: ["/scripts/entrypoint.sh"]
+    env_file:
+      - .env
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./config/agents/opencode-1.toml:/etc/openab/config.toml:ro
+      - ./data/agents/opencode-1:/home/node
+      - ./data/shared:/home/node/shared
+      - "/home/ubuntu/Documents/Obsidian Vault/:/home/node/obsidian-vault"
+      - ./secrets/berlin-key.pem:/home/node/.ssh/github-app-key.pem:ro
+    environment:
+      - OPENCODE1_DISCORD_TOKEN=${OPENCODE1_DISCORD_TOKEN}
+      - OPENCODE1_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - OPENCODE_API_KEY=${OPENCODE_API_KEY}
+      - GITHUB_APP_ID=${GITHUB_APP_ID_BERLIN}
+      - GITHUB_APP_INSTALLATION_ID=${GITHUB_APP_INSTALLATION_ID_BERLIN}
+      - GITHUB_APP_KEY_PATH=/home/node/.ssh/github-app-key.pem
+      - GITHUB_APP_BOT_USER=${GITHUB_APP_BOT_USER_BERLIN}
+    command: >
+      sh -c '
+      mkdir -p /home/node/.local/share/opencode &&
+      KEY="$${OPENCODE_API_KEY}" &&
+      echo "{\"opencode-zen\":{\"type\":\"api\",\"key\":\"$$KEY\"}}" > /home/node/.local/share/opencode/auth.json &&
+      exec openab run -c /etc/openab/config.toml
+      '
+
+  opencode-2:
+    image: ghcr.io/openabdev/openab-opencode:latest
+    container_name: openab-opencode-2
+    restart: unless-stopped
+    entrypoint: ["/scripts/entrypoint.sh"]
+    env_file:
+      - .env
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./config/agents/opencode-2.toml:/etc/openab/config.toml:ro
+      - ./data/agents/opencode-2:/home/node
+      - ./data/shared:/home/node/shared
+      - "/home/ubuntu/Documents/Obsidian Vault/:/home/node/obsidian-vault"
+      - ./secrets/tokyo-key.pem:/home/node/.ssh/github-app-key.pem:ro
+    environment:
+      - OPENCODE2_DISCORD_TOKEN=${OPENCODE2_DISCORD_TOKEN}
+      - OPENCODE2_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - OPENCODE_API_KEY=${OPENCODE_API_KEY}
+      - GITHUB_APP_ID=${GITHUB_APP_ID_TOKYO}
+      - GITHUB_APP_INSTALLATION_ID=${GITHUB_APP_INSTALLATION_ID_TOKYO}
+      - GITHUB_APP_KEY_PATH=/home/node/.ssh/github-app-key.pem
+      - GITHUB_APP_BOT_USER=${GITHUB_APP_BOT_USER_TOKYO}
+    command: >
+      sh -c '
+      mkdir -p /home/node/.local/share/opencode &&
+      KEY="$${OPENCODE_API_KEY}" &&
+      echo "{\"opencode-zen\":{\"type\":\"api\",\"key\":\"$$KEY\"}}" > /home/node/.local/share/opencode/auth.json &&
+      exec openab run -c /etc/openab/config.toml
+      '
+
+  ops-room:
+    image: node:20-alpine
+    container_name: openab-ops-room
+    restart: unless-stopped
+    working_dir: /app/ops-room
+    env_file:
+      - .env
+    volumes:
+      - ./ops-room:/app/ops-room
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ./secrets:/app/secrets:ro
+    environment:
+      - OPS_ROOM_STATE_DIR=/app/data/ops-room/state
+      - OPS_ROOM_TASKS_DIR=/app/data/ops-room/tasks
+      - OPS_ROOM_LOGS_DIR=/app/data/ops-room/logs
+      - OPENAB_WORKSPACES_DIR=/app/data/workspaces
+      - OPENAB_SHARED_DIR=/app/data/shared
+      - OPENAB_SECRETS_DIR=/app/secrets
+    ports:
+      - "7381:7381"
+    command: npm run start

@@ -1,0 +1,21 @@
+[server]
+port = 7381
+host = "0.0.0.0"
+
+[poller]
+enabled = true
+interval_seconds = 30
+
+[github]
+app_id_env = "GITHUB_APP_ID"
+installation_id_env = "GITHUB_APP_INSTALLATION_ID"
+private_key_path_env = "GITHUB_APP_KEY_PATH"
+webhook_secret_env = "GITHUB_WEBHOOK_SECRET"
+
+[paths]
+openab_root_env = "OPENAB_ROOT"
+agents_config_dir_env = "OPENAB_AGENTS_CONFIG_DIR"
+data_dir_env = "OPENAB_DATA_DIR"
+workspaces_dir_env = "OPENAB_WORKSPACES_DIR"
+shared_dir_env = "OPENAB_SHARED_DIR"
+secrets_dir_env = "OPENAB_SECRETS_DIR"

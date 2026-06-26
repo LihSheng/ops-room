@@ -1,0 +1,18 @@
+[discord]
+bot_token = "${GEMINI_DISCORD_TOKEN}"
+allowed_channels = ["${DISCORD_CHANNEL_ID}"]
+allow_bot_messages = "mentions"
+allow_user_messages = "multibot-mentions"
+
+[agent]
+command = "opencode"
+args = ["acp"]
+working_dir = "/home/node"
+env = { OPENCODE_API_KEY = "${OPENCODE_API_KEY}" }
+
+[pool]
+max_sessions = 5
+session_ttl_hours = 24
+
+[reactions]
+enabled = true
