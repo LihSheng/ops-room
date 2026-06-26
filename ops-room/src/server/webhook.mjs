@@ -1233,8 +1233,7 @@ function isPrReviewWebhook(body) {
   return Boolean(
     body &&
     body.repository &&
-    Number.isFinite(Number(body.pr)) &&
-    body.trigger === 'issue_comment'
+    Number.isFinite(Number(body.pr))
   );
 }
 

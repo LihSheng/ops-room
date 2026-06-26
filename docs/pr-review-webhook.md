@@ -54,7 +54,7 @@ GitHub PR comment
 `ops-room/src/server/webhook.mjs` now accepts the payload above directly on `POST /webhook`.
 The current server still enforces a single configured repository via `OPENAB_REPO`.
 
-For PR review payloads (`trigger: "issue_comment"` plus `pr`):
+For PR review payloads (any webhook payload with `pr`):
 
 - Ops Room fetches `repos/<repo>/pulls/<pr>` JSON for title/body/base/head/author.
 - Ops Room fetches the raw PR diff from the same endpoint with `Accept: application/vnd.github.v3.diff`.
