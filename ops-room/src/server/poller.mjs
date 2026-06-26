@@ -68,8 +68,8 @@ function gh(args) {
 }
 
 function getIssuesByLabel(label) {
-  const raw = gh(`issue list --label "${label}" --state open --json number,title,url,labels`);
-  return Array.isArray(raw) ? raw : [];
+  const raw = gh(`api repos/${REPO}/issues?labels=${encodeURIComponent(label)}&state=open&per_page=100&sort=created&direction=desc`);
+  return Array.isArray(raw) ? raw.filter(i => !i.pull_request || !i.draft) : [];
 }
 
 function getComments(issueNumber) {

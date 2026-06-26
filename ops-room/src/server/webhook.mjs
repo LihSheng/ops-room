@@ -1364,8 +1364,8 @@ async function startPoller() {
       for (const agentKey of POLL_AGENTS) {
         let issues;
         try {
-          const out = execSync(`gh issue list --label openab/${agentKey} --state open --json number,title,labels --repo ${REPO}`, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
-          issues = JSON.parse(out);
+          const out = execSync(`gh api repos/${REPO}/issues?labels=${encodeURIComponent('openab/' + agentKey)}&state=open&per_page=100&sort=created&direction=desc`, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+          issues = JSON.parse(out).filter(i => !i.pull_request || !i.draft);
         } catch { continue; }
         if (!issues?.length) continue;
         for (const issue of issues) {
