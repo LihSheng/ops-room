@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { execSync, execFileSync } from 'node:child_process';
+import { execSync, execFileSync, spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, readdir, appendFile, rm } from 'node:fs/promises';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -30,6 +30,7 @@ const LOG_DIR = process.env.OPS_ROOM_LOGS_DIR || join(__dirname, '..', '..', '..
 const STATE_DIR = process.env.OPS_ROOM_STATE_DIR || join(__dirname, '..', '..', '..', 'data', 'ops-room', 'state');
 const LOCK_DIR = '/tmp/openab-locks';
 const PROCESSED_TASKS_FILE = join(STATE_DIR, 'processed-tasks.json');
+const DATA_DIR = join(__dirname, '..', '..', '..', 'data');
 
 const AGENT_MAP = {
   professor: '1518980056880517140',
@@ -120,6 +121,7 @@ async function initDirs() {
   await ensureDir(LOG_DIR);
   await ensureDir(STATE_DIR);
   await ensureDir(LOCK_DIR);
+  await ensureDir(join(DATA_DIR, 'task-prompts'));
 }
 
 // ── Auth ────────────────────────────────────────────────────────────────────
@@ -546,34 +548,215 @@ async function execLogged(command, ctx, opts = {}) {
   }
 }
 
+// ── Safe subprocess runner ────────────────────────────────────────────────────
+
+function runCommandWithStdin({ command, args, cwd, stdin, env = process.env, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const timer = timeoutMs
+      ? setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          child.kill('SIGTERM');
+          reject(new Error(`Command timed out after ${timeoutMs}ms: ${command} ${args.join(' ')}`));
+        }, timeoutMs)
+      : null;
+
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    child.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve({ code, signal: signal || null, stdout, stderr });
+    });
+
+    if (stdin) {
+      child.stdin.write(stdin);
+    }
+    child.stdin.end();
+  });
+}
+
+async function runOpencodeWithPrompt(ctx, promptContent) {
+  await writeTaskLog(ctx, ['Invoking opencode CLI via safe stdin runner']);
+  return runCommandWithStdin({
+    command: 'opencode',
+    args: ['run', '-'],
+    cwd: ctx.workspaceDir,
+    stdin: promptContent,
+    env: process.env,
+    timeoutMs: 30 * 60 * 1000,
+  });
+}
+
+async function runCodexWithPrompt(ctx, promptContent) {
+  await writeTaskLog(ctx, ['Invoking codex CLI via safe stdin runner']);
+  return runCommandWithStdin({
+    command: 'codex',
+    args: ['exec', '-'],
+    cwd: ctx.workspaceDir,
+    stdin: promptContent,
+    env: process.env,
+    timeoutMs: 30 * 60 * 1000,
+  });
+}
+
 async function runCodingAgent(ctx) {
-  const promptPath = `${ctx.workspaceDir}/.openab/TASK.md`;
+  const promptPath = join(ctx.workspaceDir, '.openab', 'TASK.md');
   const promptContent = await readFile(promptPath, 'utf-8');
+  const codingTimeout = ctx.codingTimeoutMs || 30 * 60 * 1000;
 
-  if (await commandExists('opencode')) {
-    await writeTaskLog(ctx, ['Invoking opencode CLI']);
-    return execLogged(`cd "${ctx.workspaceDir}" && echo ${JSON.stringify(promptContent)} | opencode run -`, ctx, { allowFailure: true });
+  const backend = await commandExists('opencode') ? 'opencode'
+    : await commandExists('codex') ? 'codex'
+    : await commandExists('claude') ? 'claude'
+    : null;
+
+  if (!backend) {
+    throw new Error("No coding CLI found. Expected one of: opencode, codex, claude.");
   }
 
-  if (await commandExists('codex')) {
-    await writeTaskLog(ctx, ['Invoking codex CLI']);
-    return execLogged(`cd "${ctx.workspaceDir}" && echo ${JSON.stringify(promptContent)} | codex exec -`, ctx, { allowFailure: true });
+  await saveTaskPromptForDebug(ctx, promptContent);
+
+  console.log(`[coding] backend: ${backend}`);
+  console.log(`[coding] cwd: ${ctx.workspaceDir}`);
+
+  let result;
+  if (backend === 'opencode') {
+    result = await runOpencodeWithPrompt(ctx, promptContent);
+  } else if (backend === 'codex') {
+    result = await runCodexWithPrompt(ctx, promptContent);
+  } else {
+    result = await runCommandWithStdin({
+      command: 'claude',
+      args: ['-p', '-'],
+      cwd: ctx.workspaceDir,
+      stdin: promptContent,
+      env: process.env,
+      timeoutMs: codingTimeout,
+    });
   }
 
-  if (await commandExists('claude')) {
-    await writeTaskLog(ctx, ['Invoking claude CLI']);
-    return execLogged(`cd "${ctx.workspaceDir}" && echo ${JSON.stringify(promptContent)} | claude -p -`, ctx, { allowFailure: true });
+  ctx.agentResult = result;
+
+  const stdoutTail = (result.stdout || '').slice(-4000);
+  const stderrTail = (result.stderr || '').slice(-4000);
+
+  await writeTaskLog(ctx, [
+    `Coding backend: ${backend}`,
+    `Exit code: ${result.code}`,
+    `Signal: ${result.signal || 'none'}`,
+    `stdout (tail): ${stdoutTail || '(empty)'}`,
+    `stderr (tail): ${stderrTail || '(empty)'}`,
+  ]);
+
+  console.log(`[coding] exit code: ${result.code}`);
+  console.log(`[coding] signal: ${result.signal || 'none'}`);
+
+  if (result.stdout) {
+    console.log(`[coding] stdout tail: ${stdoutTail}`);
+  }
+  if (result.stderr) {
+    console.log(`[coding] stderr tail: ${stderrTail}`);
   }
 
-  throw new Error("No coding CLI found. Expected one of: opencode, codex, claude.");
+  if (result.code !== 0) {
+    const lines = [
+      `Coding command failed.`,
+      `Backend: ${backend}`,
+      `Exit code: ${result.code}`,
+      `Workspace: ${ctx.workspaceDir}`,
+      `stderr:`,
+      stderrTail || '(empty)',
+      `stdout:`,
+      stdoutTail || '(empty)',
+    ];
+    throw new Error(lines.join('\n'));
+  }
+}
+
+// ── Debug snapshot ────────────────────────────────────────────────────────────
+
+async function collectGitDebugSnapshot(cwd) {
+  const commands = [
+    ['pwd', 'pwd'],
+    ['gitTopLevel', 'git rev-parse --show-toplevel'],
+    ['gitRemote', 'git remote -v'],
+    ['gitBranch', 'git branch --show-current'],
+    ['gitStatus', 'git status --porcelain'],
+    ['gitDiffStat', 'git diff --stat'],
+    ['recentFiles', 'find . -maxdepth 3 -type f -mmin -30 | sort 2>/dev/null || true'],
+  ];
+
+  const snapshot = {};
+  for (const [key, cmd] of commands) {
+    try {
+      const out = execSync(cmd, { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim();
+      snapshot[key] = { ok: true, stdout: out.slice(-4000) };
+    } catch (e) {
+      snapshot[key] = { ok: false, error: (e.stderr || '').slice(-1000) || e.message };
+    }
+  }
+  return snapshot;
+}
+
+// ── Workspace validation ──────────────────────────────────────────────────────
+
+async function validateCodingWorkspace(ctx) {
+  const topLevel = execCapture('git rev-parse --show-toplevel', null, ctx.workspaceDir);
+  if (!topLevel) {
+    throw new Error(`Invalid coding workspace: not a git repo. Path: ${ctx.workspaceDir}`);
+  }
+  const remote = execCapture('git remote -v', null, ctx.workspaceDir);
+  if (!remote.includes(ctx.repo || REPO)) {
+    throw new Error(`Invalid coding workspace: remote does not point to expected repo "${ctx.repo || REPO}". Remote: ${remote.slice(0, 500)}`);
+  }
+  const branch = execCapture('git branch --show-current', null, ctx.workspaceDir);
+  if (!branch) {
+    throw new Error(`Invalid coding workspace: no current branch. Path: ${ctx.workspaceDir}`);
+  }
+  console.log(`[coding] workspace validated: ${topLevel} branch: ${branch}`);
+}
+
+// ── Save prompt for debug ─────────────────────────────────────────────────────
+
+async function saveTaskPromptForDebug(ctx, promptContent) {
+  try {
+    const promptDir = join(DATA_DIR, 'task-prompts');
+    await mkdir(promptDir, { recursive: true });
+    const filePath = join(promptDir, `${ctx.taskId || 'unknown'}.md`);
+    await writeFile(filePath, promptContent, 'utf-8');
+    console.log(`[coding] prompt saved: ${filePath}`);
+  } catch (e) {
+    console.warn(`[coding] failed to save prompt for debug: ${e.message}`);
+  }
 }
 
 // ── Git helpers ─────────────────────────────────────────────────────────────
 
-function execCapture(command, env = null) {
+function execCapture(command, env = null, cwd = null) {
   try {
     const opts = { encoding: 'utf-8', stdio: 'pipe' };
     if (env) opts.env = { ...process.env, ...env };
+    if (cwd) opts.cwd = cwd;
     return execSync(command, opts).trim();
   } catch {
     return '';
@@ -889,10 +1072,32 @@ Answer concisely based on the issue details above. If you need more context, exp
 async function handleCodingFailure(ctx, error) {
   const safeMessage = String(error?.message || error).slice(0, 4000);
 
-  await commentOnIssue(ctx, `**OpenAB / ${AGENT_NAMES[ctx.agent] || ctx.agent}** — coding task failed ❌
+  const isCommandFailure = safeMessage.includes('Coding command failed');
+  const isNoChangeFailure = safeMessage.includes('no file changes') || safeMessage.includes('No changes');
+
+  let failureType = 'coding task failed';
+  if (isCommandFailure) failureType = 'coding command failed';
+  else if (isNoChangeFailure) failureType = 'no source changes detected';
+
+  const branchLine = ctx.branchName ? `- Branch: \`${ctx.branchName}\`\n` : '';
+  const workspaceLine = ctx.workspaceDir ? `- Workspace: \`${ctx.workspaceDir}\`\n` : '';
+
+  let extraHelp = '';
+  if (isCommandFailure) {
+    extraHelp = 'The coding backend did not complete successfully, so no PR was created.\n\nThis usually means the coding command failed before the agent could edit files.';
+  } else if (isNoChangeFailure) {
+    extraHelp = 'The coding backend exited successfully, but no source changes were detected.\n\nPossible causes:\n1. Agent did not edit files.\n2. Agent ran but decided no changes were needed.\n3. Agent edited outside the repo.\n4. Agent only created ignored files.';
+  } else {
+    extraHelp = 'An unexpected harness error occurred.';
+  }
+
+  await commentOnIssue(ctx, `**OpenAB / ${AGENT_NAMES[ctx.agent] || ctx.agent}** — ${failureType} ❌
 
 Issue #${ctx.issueNumber}: ${ctx.issueTitle}
 
+${extraHelp}
+
+${workspaceLine}${branchLine}
 Reason:
 
 \`\`\`txt
@@ -908,7 +1113,7 @@ tail -f data/ops-room/logs/server.log
 \`\`\`
 
 Suggested next action:
-- Fix harness or task issue.
+- Fix the underlying issue.
 - Re-run with a new \`/openab <agent> --code\` comment.
 - The retry will create a fresh branch automatically.`);
 
@@ -917,8 +1122,8 @@ Suggested next action:
     add: [`openab/${ctx.agent}/failed`],
   });
 
-  await writeTaskLog(ctx, [`FAILED: ${safeMessage}`]);
-  console.error(`[poller] Coding task failed on #${ctx.issueNumber}:`, safeMessage.slice(0, 300));
+  await writeTaskLog(ctx, [`FAILED (${failureType}): ${safeMessage}`]);
+  console.error(`[poller] Coding task failed on #${ctx.issueNumber} (${failureType}):`, safeMessage.slice(0, 300));
 }
 
 function commentOnIssue(ctx, body) {
@@ -938,13 +1143,33 @@ I will create a branch, make changes, run checks, and open a PR. This task will 
     await prepareWorkspace(ctx);
     await excludeHarnessFilesFromGit(ctx);
     await writeTaskPrompt(ctx);
+
+    await validateCodingWorkspace(ctx);
+
+    const beforeSnapshot = await collectGitDebugSnapshot(ctx.workspaceDir);
+    console.log('[coding] before snapshot:', JSON.stringify(beforeSnapshot, null, 2));
+
     await runCodingAgent(ctx);
+
+    const afterSnapshot = await collectGitDebugSnapshot(ctx.workspaceDir);
+    console.log('[coding] after snapshot:', JSON.stringify(afterSnapshot, null, 2));
+
     await runChecks(ctx);
 
     const changedFiles = getChangedFiles(ctx);
 
     if (changedFiles.length === 0) {
       throw new Error("Coding agent completed but produced no file changes.");
+    }
+
+    const suspiciousFiles = changedFiles.filter(f =>
+      f.startsWith('.openab/') || f === 'TASK.md' || f.endsWith('.task.md') || (/^[^/]+\.md$/.test(f) && f !== 'README.md')
+    );
+    if (suspiciousFiles.length > 0 && suspiciousFiles.length === changedFiles.length) {
+      throw new Error(
+        `Agent produced only task/markdown files and no real app/source changes. ` +
+        `Files: ${suspiciousFiles.join(', ')}`
+      );
     }
 
     validateChangedFiles(ctx, changedFiles);
@@ -1010,6 +1235,7 @@ function buildContext(issue, comments, agentKey, task, commenter, taskId) {
     requester: commenter,
     task: task,
     taskId: taskId,
+    repo: REPO,
     branchName: buildBranchName(issue.number, issue.title, agentKey),
     workspaceDir: join(WORKSPACE_BASE, `${REPO.replace('/', '-')}-issue-${issue.number}-${agentKey}`),
     startedAt: new Date().toISOString(),

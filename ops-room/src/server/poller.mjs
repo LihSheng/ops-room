@@ -48,6 +48,9 @@ const GITHUB_APP_CONFIG = {
   },
 };
 
+function ts() {
+  return new Date().toISOString().replace('T', ' ').replace(/\.\d{3}Z/, '');
+}
 
 function gh(args) {
   const isApi = args.startsWith('api ');
@@ -58,7 +61,7 @@ function gh(args) {
   } catch (e) {
     const msg = e.stderr?.trim() || e.message;
     if (!msg.includes('not found') && !msg.includes('already exists')) {
-      console.error(`[poller] gh error: ${msg}`);
+      console.error(`[${ts()}] [poller] gh error: ${msg}`);
     }
     return null;
   }
@@ -113,13 +116,13 @@ function addComment(issueNumber, body, agentKey = 'professor') {
   } catch (e) {
     const msg = e.stderr?.toString()?.trim() || e.message;
     if (agentKey !== 'professor' && (msg.includes('403') || msg.includes('Resource not accessible'))) {
-      console.warn(`[poller] ${agentKey} token lacks comment permission, falling back to professor`);
+      console.warn(`[${ts()}] [poller] ${agentKey} token lacks comment permission, falling back to professor`);
       try { return tryPost('professor'); } catch (e2) {
-        console.error(`[poller] addComment fallback also failed on #${issueNumber}:`, e2.stderr?.toString()?.trim() || e2.message);
+        console.error(`[${ts()}] [poller] addComment fallback also failed on #${issueNumber}:`, e2.stderr?.toString()?.trim() || e2.message);
       }
       return null;
     }
-    console.error(`[poller] gh comment error: ${msg}`);
+    console.error(`[${ts()}] [poller] gh comment error: ${msg}`);
     return null;
   }
 }
@@ -173,7 +176,7 @@ async function poll() {
       const hasPending = labels.includes(baseLabel) && !labels.includes(wipLabel);
       if (!hasPending) continue;
 
-      console.log(`[poller] Found task for ${agentKey} on #${issue.number}: ${issue.title}`);
+      console.log(`[${ts()}] [poller] Found task for ${agentKey} on #${issue.number}: ${issue.title}`);
 
       const comments = getComments(issue.number);
       const task = parseTask(comments, agentKey);
@@ -218,30 +221,30 @@ Full pipeline verified:
         removeLabel(issue.number, wipLabel);
         addLabel(issue.number, 'openab/done');
         await logToMemory(`${agentInfo.name} completed simple task on #${issue.number}`);
-        console.log(`[poller] Completed simple task on #${issue.number}`);
+        console.log(`[${ts()}] [poller] Completed simple task on #${issue.number}`);
       } else {
-        console.log(`[poller] Claimed #${issue.number} for ${agentKey} (task: ${taskDesc})`);
+        console.log(`[${ts()}] [poller] Claimed #${issue.number} for ${agentKey} (task: ${taskDesc})`);
       }
     }
   }
 }
 
 // Main loop
-console.log(`[poller] OpenAB poller started — checking every ${POLL_INTERVAL}s for tasks on ${REPO}`);
-console.log(`[poller] Agents: ${Object.keys(AGENT_MAP).join(', ')}`);
+console.log(`[${ts()}] [poller] OpenAB poller started — checking every ${POLL_INTERVAL}s for tasks on ${REPO}`);
+console.log(`[${ts()}] [poller] Agents: ${Object.keys(AGENT_MAP).join(', ')}`);
 
 async function run() {
   while (true) {
     try {
       await poll();
     } catch (err) {
-      console.error('[poller] Error:', err.message);
+      console.error(`[${ts()}] [poller] Error:`, err.message);
     }
     await new Promise(r => setTimeout(r, POLL_INTERVAL * 1000));
   }
 }
 
 run().catch(err => {
-  console.error('[poller] Fatal:', err);
+  console.error(`[${ts()}] [poller] Fatal:`, err);
   process.exit(1);
 });
