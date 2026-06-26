@@ -1,5 +1,5 @@
 [discord]
-bot_token = "${GEMINI_DISCORD_TOKEN}"
+bot_token = "${PROFESSOR_DISCORD_TOKEN}"
 allowed_channels = ["${DISCORD_CHANNEL_ID}"]
 allow_bot_messages = "mentions"
 allow_user_messages = "multibot-mentions"
