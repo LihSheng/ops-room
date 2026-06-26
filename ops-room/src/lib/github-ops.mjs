@@ -1,6 +1,19 @@
 import { execSync, execFileSync } from 'node:child_process';
 
 export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env, logger = console }) {
+  function withAgentFallback(agentKey, work, actionLabel) {
+    try {
+      return work(agentKey);
+    } catch (error) {
+      const msg = (error.stderr && error.stderr.toString()) || error.message;
+      if (agentKey !== 'professor' && (msg.includes('403') || msg.includes('Resource not accessible'))) {
+        logger.warn(`[poller] ${agentKey} token lacks ${actionLabel} permission, falling back to professor`);
+        return work('professor');
+      }
+      throw error;
+    }
+  }
+
   function addComment(issueNumber, body, agentKey = 'professor') {
     const tryPost = (key) => {
       const token = tokenForAgent(key);
@@ -12,18 +25,9 @@ export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env,
     };
 
     try {
-      tryPost(agentKey);
+      withAgentFallback(agentKey, tryPost, 'comment');
     } catch (error) {
       const msg = (error.stderr && error.stderr.toString()) || error.message;
-      if (agentKey !== 'professor' && (msg.includes('403') || msg.includes('Resource not accessible'))) {
-        logger.warn(`[poller] ${agentKey} token lacks comment permission, falling back to professor`);
-        try {
-          tryPost('professor');
-        } catch (fallbackError) {
-          logger.error(`[poller] addComment fallback also failed on #${issueNumber}:`, (fallbackError.stderr && fallbackError.stderr.toString()) || fallbackError.message);
-        }
-        return;
-      }
       logger.error(`[poller] addComment error on #${issueNumber}:`, msg);
     }
   }
@@ -38,6 +42,47 @@ export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env,
       env: { ...processEnv, GH_TOKEN: token },
     });
     return JSON.parse(out);
+  }
+
+  function ghApiText(method, path, agentKey = 'professor', headers = []) {
+    return withAgentFallback(agentKey, (key) => {
+      const token = tokenForAgent(key);
+      const args = ['api'];
+      for (const header of headers) {
+        args.push('-H', header);
+      }
+      args.push(path);
+      if (method !== 'GET') args.push('-X', method);
+      return execFileSync('gh', args, {
+        encoding: 'utf-8',
+        maxBuffer: 20 * 1024 * 1024,
+        env: { ...processEnv, GH_TOKEN: token },
+      });
+    }, 'API');
+  }
+
+  function addPullRequestReview(prNumber, body, event = 'COMMENT', agentKey = 'professor') {
+    return withAgentFallback(agentKey, (key) => {
+      const token = tokenForAgent(key);
+      return execFileSync(
+        'gh',
+        [
+          'api',
+          `repos/${repo}/pulls/${prNumber}/reviews`,
+          '-X',
+          'POST',
+          '-f',
+          `body=${body}`,
+          '-f',
+          `event=${event}`,
+        ],
+        {
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+          env: { ...processEnv, GH_TOKEN: token },
+        },
+      );
+    }, 'pull request review');
   }
 
   function ghExec(args, opts = {}) {
@@ -80,7 +125,9 @@ export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env,
 
   return {
     addComment,
+    addPullRequestReview,
     ghApi,
+    ghApiText,
     ghExec,
     ensureLabel,
     removeLabel,

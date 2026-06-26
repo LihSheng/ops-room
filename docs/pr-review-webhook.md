@@ -48,3 +48,21 @@ GitHub PR comment
   -> Berlin reviews the PR
   -> Ops Room posts the review with Berlin's GitHub App token
 ```
+
+## Current implementation
+
+`ops-room/src/server/webhook.mjs` now accepts the payload above directly on `POST /webhook`.
+The current server still enforces a single configured repository via `OPENAB_REPO`.
+
+For PR review payloads (`trigger: "issue_comment"` plus `pr`):
+
+- Ops Room fetches `repos/<repo>/pulls/<pr>` JSON for title/body/base/head/author.
+- Ops Room fetches the raw PR diff from the same endpoint with `Accept: application/vnd.github.v3.diff`.
+- The review prompt passed to the AI includes that diff under `Changed diff:`.
+- Ops Room posts a real pull request review through `POST /repos/<repo>/pulls/<pr>/reviews`.
+
+Status mapping is derived from the model output:
+
+- `APPROVE` -> GitHub `APPROVE`
+- `REQUEST_CHANGES` -> GitHub `REQUEST_CHANGES`
+- anything else -> GitHub `COMMENT`

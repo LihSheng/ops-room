@@ -9,6 +9,7 @@ import { extractTask, isCodingTask, parseFlags } from '../lib/task-routing.mjs';
 import { getTokenForAgent } from '../lib/github-app.mjs';
 import { createGitHubOps } from '../lib/github-ops.mjs';
 import { pollAgentIssues, startIssuePoller } from '../lib/issue-poller.mjs';
+import { buildPrReviewPrompt } from './pr-review-payload.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -99,7 +100,9 @@ function githubToken(agentKey) {
 }
 const {
   addComment,
+  addPullRequestReview,
   ghApi,
+  ghApiText,
   ensureLabel,
   removeLabel,
   addLabel,
@@ -913,6 +916,72 @@ Answer concisely based on the issue details above. If you need more context, exp
   console.log(`[poller] Chat response posted to #${ctx.issueNumber} for ${ctx.agent}`);
 }
 
+function parseReviewEvent(reviewText) {
+  const upper = String(reviewText || '').toUpperCase();
+  if (upper.includes('REQUEST_CHANGES')) return 'REQUEST_CHANGES';
+  if (upper.includes('APPROVE')) return 'APPROVE';
+  return 'COMMENT';
+}
+
+async function fetchPrReviewContext({ repository, pr, agent }) {
+  const prData = ghApi('GET', `repos/${repository}/pulls/${pr}`, agent);
+  const diff = ghApiText(
+    'GET',
+    `repos/${repository}/pulls/${pr}`,
+    agent,
+    ['Accept: application/vnd.github.v3.diff']
+  );
+
+  return {
+    repository,
+    pr,
+    prTitle: prData.title || '',
+    prBody: prData.body || '',
+    prAuthor: prData.user?.login || 'unknown',
+    baseRef: prData.base?.ref || '',
+    headRef: prData.head?.ref || '',
+    diff,
+  };
+}
+
+async function runPrReviewWorkflow(payload) {
+  const {
+    agent,
+    task,
+    repository,
+    pr,
+    commenter = 'unknown',
+  } = payload;
+
+  const prContext = await fetchPrReviewContext({ repository, pr, agent });
+  const prompt = buildPrReviewPrompt({
+    agent: AGENT_NAMES[agent] || agent,
+    task,
+    repository,
+    pr,
+    ...prContext,
+  });
+
+  const reviewText = (await askAI(prompt)).trim();
+  if (!reviewText) {
+    throw new Error(`PR review generation returned an empty response for ${repository}#${pr}`);
+  }
+
+  const event = parseReviewEvent(reviewText);
+  addPullRequestReview(pr, reviewText, event, agent);
+
+  await appendToMemory(`PR review from ${repository}#${pr} by @${commenter} → **${agent}**: ${task}`);
+  console.log(`[pr-review] Posted ${event} review on ${repository}#${pr} as ${agent}`);
+
+  return {
+    mode: 'pr_review',
+    repository,
+    pr,
+    agent,
+    review_event: event,
+  };
+}
+
 // ── Coding workflow ─────────────────────────────────────────────────────────
 
 async function handleCodingFailure(ctx, error) {
@@ -1160,7 +1229,35 @@ function sendJSON(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+function isPrReviewWebhook(body) {
+  return Boolean(
+    body &&
+    body.repository &&
+    Number.isFinite(Number(body.pr)) &&
+    body.trigger === 'issue_comment'
+  );
+}
+
 async function handleWebhook(body) {
+  if (body.repository !== REPO) {
+    throw new Error(`Unsupported repository: ${body.repository}. Expected ${REPO}`);
+  }
+
+  if (isPrReviewWebhook(body)) {
+    const normalizedAgent = normalizeAgent(body.agent);
+    if (!AGENT_IDS[normalizedAgent]) {
+      throw new Error(`Unknown agent for PR review: ${body.agent}`);
+    }
+
+    return runPrReviewWorkflow({
+      agent: normalizedAgent,
+      task: body.task || 'Please review this pull request and respond based on the PR description, linked issue, and code changes.',
+      repository: body.repository,
+      pr: Number(body.pr),
+      commenter: body.commenter || 'unknown',
+    });
+  }
+
   const { agent, task, repository, issue_number, issue_title, issue_url, commenter } = body;
   const normalizedAgent = normalizeAgent(agent);
   const agentId = AGENT_IDS[normalizedAgent];
@@ -1169,6 +1266,9 @@ async function handleWebhook(body) {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     source: 'github_issue', received_at: new Date().toISOString(),
     agent: agentName, task, repository, issue_number, issue_title, issue_url, commenter, status: 'pending',
+    task_type: body.task_type || 'auto',
+    trigger: body.trigger || 'manual',
+    pr: body.pr ? Number(body.pr) : null,
   };
   await writeFile(join(TASKS_DIR, `${taskEntry.id}.json`), JSON.stringify(taskEntry, null, 2));
   await appendToMemory(`Task from ${repository}#${issue_number} by @${commenter} → **${agentName}**: ${task}`);
@@ -1192,9 +1292,15 @@ const server = createServer(async (req, res) => {
     if (!verifyAuth(auth)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     try {
       const body = await parseBody(req);
-      if (!body.repository || !body.issue_number) { sendJSON(res, 400, { error: 'Missing required fields' }); return; }
+      const hasIssuePayload = body.repository && body.issue_number;
+      const hasPrPayload = isPrReviewWebhook(body);
+      if (!hasIssuePayload && !hasPrPayload) {
+        sendJSON(res, 400, { error: 'Missing required fields' });
+        return;
+      }
       const result = await handleWebhook(body);
-      console.log(`[openab] Received: ${body.repository}#${body.issue_number} → ${result.agent}: ${body.task}`);
+      const targetNumber = body.issue_number || body.pr;
+      console.log(`[openab] Received: ${body.repository}#${targetNumber} → ${result.agent}: ${body.task}`);
       sendJSON(res, 200, { ok: true, ...result });
     } catch (err) { sendJSON(res, 400, { error: err.message }); }
     return;
