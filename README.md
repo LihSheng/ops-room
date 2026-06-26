@@ -45,6 +45,8 @@ cd ops-room && npm run bootstrap
 npm start
 ```
 
+`npm start` loads `../.env` via Node's `--env-file` support and requires `OPENAB_WEBHOOK_SECRET` to be set explicitly.
+
 ## What's Committed vs Local
 
 | Committed to Git | Kept Local |

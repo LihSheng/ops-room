@@ -6,7 +6,7 @@ license: MIT
 
 ## Overview
 
-The OpenAB system uses GitHub issues for task dispatch. A poller (`server.mjs`) inside the `opencode-professor` container detects label-based signals, claims tasks, and auto-responds using the opencode-zen AI API.
+The OpenAB system uses GitHub issues for task dispatch. The current implementation lives in the repo-local `ops-room/` package. `ops-room/src/server/webhook.mjs` starts the HTTP server and an in-process poll loop; `ops-room/src/server/poller.mjs` is the standalone poller entrypoint and now reuses the same shared poll-loop helpers.
 
 ### Flow
 
@@ -22,10 +22,15 @@ The OpenAB system uses GitHub issues for task dispatch. A poller (`server.mjs`) 
 
 ### Key files
 
-- `data/opencode-professor/openab-webhook/server.mjs` — the running poller (contains `addComment`, `ghApi`, `askAI`, `extractTask`, `autoRespond`)
-- `data/opencode-professor/openab-webhook/openab-poller.mjs` — standalone poller (same patterns, not actively used)
-- `scripts/github-app-token.mjs` — generates GitHub App installation tokens
-- `docker-compose.yml` — professor service mounts all three key files and sets their env vars
+- `ops-room/src/server/webhook.mjs` — webhook server + in-process poller + coding/chat task workflows
+- `ops-room/src/server/poller.mjs` — standalone poller entrypoint using the shared poll loop
+- `ops-room/src/server/claim.mjs` — manual claim/list CLI
+- `ops-room/src/server/github-app-token.mjs` — generates GitHub App installation tokens
+- `ops-room/src/lib/config.mjs` — shared agent and label configuration
+- `ops-room/src/lib/task-routing.mjs` — shared task parsing and routing helpers
+- `ops-room/src/lib/github-app.mjs` — shared GitHub App token helper
+- `ops-room/src/lib/github-ops.mjs` — shared comment/label/API helpers
+- `ops-room/src/lib/issue-poller.mjs` — shared poll loop used by both server entrypoints
 
 ## GitHub App authentication
 
@@ -37,7 +42,7 @@ Three GitHub Apps provide per-agent bot identities:
 | Berlin | 4131786 | `lihsheng-berlin[bot]` | `/home/node/.ssh/berlin-key.pem` |
 | Tokyo | 4131816 | `lihsheng-tokyo[bot]` | `/home/node/.ssh/tokyo-key.pem` |
 
-Env vars used by `githubEnvForAgent()` in `server.mjs`:
+Env vars used by `githubEnvForAgent()` in `ops-room/src/lib/github-app.mjs`:
 
 ```javascript
 const GITHUB_APP_CONFIG = {
@@ -49,10 +54,10 @@ const GITHUB_APP_CONFIG = {
 
 ### Token generation
 
-Use `node /scripts/github-app-token.mjs` with the right env vars:
+Use `node ops-room/src/server/github-app-token.mjs` with the right env vars:
 
 ```javascript
-const tokenResult = execFileSync('node', ['/scripts/github-app-token.mjs'], {
+const tokenResult = execFileSync('node', ['ops-room/src/server/github-app-token.mjs'], {
   encoding: 'utf-8',
   env: { ...process.env, ...githubEnvForAgent('tokyo') },
 }).trim();
@@ -230,23 +235,27 @@ async function autoRespond(issueNumber, agentKey) {
 
 ## Poller auto-start
 
-The `server.mjs` poller auto-starts on container boot via the docker-compose command:
+The repo-local startup path is now:
 
 ```bash
-bash /home/node/openab-webhook/start.sh && exec openab run -c /etc/openab/config.toml
+cd ops-room
+npm run bootstrap
+npm start
 ```
 
-Without this, the poller must be started manually:
+Detached start without a shell wrapper:
 
 ```bash
-bash /home/node/openab-webhook/start.sh
-pkill -f "server.mjs"   # to stop
+cd ops-room
+nohup npm start >> ../data/ops-room/logs/server.log 2>&1 &
 ```
+
+`npm start` loads `../.env` via Node `--env-file`. `OPENAB_WEBHOOK_SECRET` must be set explicitly or the server exits on startup.
 
 ## Logs
 
 ```bash
-tail -f /home/node/openab-webhook/server.log
+tail -f data/ops-room/logs/server.log
 ```
 
 Look for:
@@ -258,11 +267,11 @@ Look for:
 - `gh: Validation Failed (HTTP 422)` — usually from label creation (already exists, safe to ignore)
 - `gh: Resource not accessible by integration (HTTP 403)` — app permission issue
 
-## Multi-architecture note
+## Architecture note
 
-There are TWO poller implementations with overlapping `addComment`/`ghApi` logic:
+There are still two entrypoints:
 
-- **`server.mjs`** — live, in-process poller (the one that runs)
-- **`openab-poller.mjs`** — standalone, not actively used
+- `ops-room/src/server/webhook.mjs` — live HTTP server with in-process poller
+- `ops-room/src/server/poller.mjs` — standalone poller
 
-Changes should be mirrored in both or `openab-poller.mjs` should be deprecated if unused.
+The duplicated poll-loop, task-routing, GitHub App auth, and GitHub operations logic has been moved into `ops-room/src/lib/` so changes no longer need to be mirrored manually across both entrypoints.
