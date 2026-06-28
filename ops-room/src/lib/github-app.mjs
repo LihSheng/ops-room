@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { GITHUB_APP_CONFIG } from './config.mjs';
 
+const TOKEN_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const tokenCache = new Map();
+
 export function githubEnvForAgent(agentKey, processEnv = process.env) {
   const cfg = GITHUB_APP_CONFIG[agentKey] || GITHUB_APP_CONFIG.professor;
   const appId = processEnv[cfg.appId];
@@ -20,7 +23,7 @@ export function githubEnvForAgent(agentKey, processEnv = process.env) {
   };
 }
 
-export function getTokenForAgent(agentKey, tokenScriptPath, processEnv = process.env) {
+function fetchTokenForAgent(agentKey, tokenScriptPath, processEnv) {
   const env = githubEnvForAgent(agentKey, processEnv);
   if (!env) throw new Error(`missing GitHub App config for ${agentKey}`);
 
@@ -34,5 +37,25 @@ export function getTokenForAgent(agentKey, tokenScriptPath, processEnv = process
     },
   ).trim();
 
-  return JSON.parse(tokenResult).token;
+  return JSON.parse(tokenResult);
+}
+
+export function getTokenForAgent(agentKey, tokenScriptPath, processEnv = process.env) {
+  const cached = tokenCache.get(agentKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.token;
+  }
+
+  const parsed = fetchTokenForAgent(agentKey, tokenScriptPath, processEnv);
+
+  tokenCache.set(agentKey, {
+    token: parsed.token,
+    expiresAt: Date.now() + TOKEN_CACHE_TTL_MS,
+  });
+
+  return parsed.token;
+}
+
+export function clearTokenCache() {
+  tokenCache.clear();
 }

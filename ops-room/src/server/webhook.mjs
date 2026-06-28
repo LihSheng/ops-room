@@ -140,10 +140,12 @@ function lockPath(ctx) {
 }
 
 function acquireLock(ctx) {
-  const lp = lockPath(ctx);
-  if (existsSync(lp)) return false;
-  writeFileSync(lp, String(process.pid));
-  return true;
+  try {
+    writeFileSync(lockPath(ctx), String(process.pid), { flag: 'wx' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function releaseLock(ctx) {
@@ -283,7 +285,9 @@ async function writeTaskPrompt(ctx) {
   const promptDir = join(ctx.workspaceDir, '.openab');
   await ensureDir(promptDir);
 
-  const comments = await ghApi('GET', `repos/${REPO}/issues/${ctx.issueNumber}/comments`);
+  const comments = ctx.comments && ctx.comments.length > 0
+    ? ctx.comments
+    : await ghApi('GET', `repos/${REPO}/issues/${ctx.issueNumber}/comments`);
   const commentsText = (Array.isArray(comments) ? comments : [])
     .map(c => `- @${c.user?.login || 'unknown'}: ${(c.body || '').slice(0, 500)}`)
     .join('\n');
