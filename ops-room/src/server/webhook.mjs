@@ -10,6 +10,7 @@ import { getTokenForAgent } from '../lib/github-app.mjs';
 import { createGitHubOps } from '../lib/github-ops.mjs';
 import { pollAgentIssues, startIssuePoller } from '../lib/issue-poller.mjs';
 import { buildPrReviewPrompt } from './pr-review-payload.mjs';
+import { notify } from '../lib/notify.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -116,21 +117,29 @@ const {
 
 // ── Processed task tracking ─────────────────────────────────────────────────
 
+const PROCESSED_TASKS_LOG = PROCESSED_TASKS_FILE.replace('.json', '.log');
+
 async function loadProcessedTasks() {
   try {
-    const raw = await readFile(PROCESSED_TASKS_FILE, 'utf-8');
-    return JSON.parse(raw);
+    const text = await readFile(PROCESSED_TASKS_LOG, 'utf-8');
+    const ids = text.trim().split('\n').filter(Boolean);
+    return [...new Set(ids)];
   } catch {
     return [];
   }
 }
 
 async function markTaskProcessed(taskId) {
-  const tasks = await loadProcessedTasks();
-  if (!tasks.includes(taskId)) {
-    tasks.push(taskId);
-    await writeFile(PROCESSED_TASKS_FILE, JSON.stringify(tasks, null, 2));
-  }
+  try {
+    await appendFile(PROCESSED_TASKS_LOG, taskId + '\n');
+  } catch {}
+}
+
+async function compactProcessedTasks() {
+  try {
+    const ids = await loadProcessedTasks();
+    await writeFile(PROCESSED_TASKS_LOG, ids.join('\n') + '\n');
+  } catch {}
 }
 
 // ── Lock file ───────────────────────────────────────────────────────────────
@@ -222,40 +231,44 @@ async function prepareWorkspace(ctx) {
 
   const token = githubToken(ctx.agent);
   const env = { ...process.env, GH_TOKEN: token };
-  const authedUrl = `https://x-access-token:${token}@github.com/${REPO}.git`;
 
-  execSync(`gh repo clone ${REPO} "${workspaceDir}"`, {
+  execFileSync('gh', ['repo', 'clone', REPO, workspaceDir], {
     encoding: 'utf-8',
     stdio: 'pipe',
     env,
   });
 
-  execSync(`cd "${workspaceDir}" && git remote set-url origin "${authedUrl}"`, {
+  execFileSync('git', ['remote', 'set-url', 'origin', `https://x-access-token:${token}@github.com/${REPO}.git`], {
     encoding: 'utf-8',
     stdio: 'pipe',
+    cwd: workspaceDir,
   });
 
-  execSync(`cd "${workspaceDir}" && git fetch origin --prune`, {
+  execFileSync('git', ['fetch', 'origin', '--prune'], {
     encoding: 'utf-8',
     stdio: 'pipe',
+    cwd: workspaceDir,
   });
 
   const defaultBranch = getDefaultBranch(env);
   ctx.defaultBranch = defaultBranch;
 
-  execSync(`cd "${workspaceDir}" && git checkout "${defaultBranch}"`, {
+  execFileSync('git', ['checkout', defaultBranch], {
     encoding: 'utf-8',
     stdio: 'pipe',
+    cwd: workspaceDir,
   });
 
-  execSync(`cd "${workspaceDir}" && git reset --hard "origin/${defaultBranch}"`, {
+  execFileSync('git', ['reset', '--hard', `origin/${defaultBranch}`], {
     encoding: 'utf-8',
     stdio: 'pipe',
+    cwd: workspaceDir,
   });
 
-  execSync(`cd "${workspaceDir}" && git checkout -b "${ctx.branchName}"`, {
+  execFileSync('git', ['checkout', '-b', ctx.branchName], {
     encoding: 'utf-8',
     stdio: 'pipe',
+    cwd: workspaceDir,
   });
 
   await writeTaskLog(ctx, [
@@ -738,8 +751,8 @@ function configureGitAuthor(ctx) {
 
   const agent = ctx.agent;
   const botUser = BOT_USERS[agent] || `lihsheng-${agent}[bot]`;
-  execSync(`git config user.name "${botUser}"`, { cwd: workspaceDir, encoding: 'utf-8' });
-  execSync(`git config user.email "${botUser}@users.noreply.github.com"`, { cwd: workspaceDir, encoding: 'utf-8' });
+  execFileSync('git', ['config', 'user.name', botUser], { cwd: workspaceDir, encoding: 'utf-8' });
+  execFileSync('git', ['config', 'user.email', `${botUser}@users.noreply.github.com`], { cwd: workspaceDir, encoding: 'utf-8' });
 }
 
 async function commitIfChanges(ctx) {
@@ -911,6 +924,8 @@ Answer concisely based on the issue details above. If you need more context, exp
 
   addComment(ctx.issueNumber, `**${agentName}** — response 🤖\n\n${answer}\n\n---\n*Auto-responded by OpenAB poller*`, ctx.agent);
 
+  notify('chat.completed', { issue: ctx.issueNumber, title: ctx.issueTitle, agent: ctx.agent });
+
   await transitionLabels(ctx, {
     remove: [`openab/${ctx.agent}/wip`, `openab/${ctx.agent}`],
     add: ['openab/done'],
@@ -1041,6 +1056,8 @@ Suggested next action:
     add: [`openab/${ctx.agent}/failed`],
   });
 
+  notify('task.failed', { issue: ctx.issueNumber, title: ctx.issueTitle, agent: ctx.agent, error: safeMessage });
+
   await writeTaskLog(ctx, [`FAILED (${failureType}): ${safeMessage}`]);
   console.error(`[poller] Coding task failed on #${ctx.issueNumber} (${failureType}):`, safeMessage.slice(0, 300));
 }
@@ -1058,6 +1075,8 @@ async function runCodingWorkflow(ctx) {
 Issue #${ctx.issueNumber}: ${ctx.issueTitle}
 
 I will create a branch, make changes, run checks, and open a PR. This task will not be marked done unless a PR URL exists.`);
+
+    notify('task.started', { issue: ctx.issueNumber, title: ctx.issueTitle, agent: ctx.agent });
 
     await prepareWorkspace(ctx);
     await excludeHarnessFilesFromGit(ctx);
@@ -1117,6 +1136,8 @@ This task is ready for human review.`);
       remove: [`openab/${ctx.agent}/wip`, `openab/${ctx.agent}`, `openab/${ctx.agent}/failed`],
       add: ['openab/pr-created'],
     });
+
+    notify('pr.created', { issue: ctx.issueNumber, title: ctx.issueTitle, agent: ctx.agent, prUrl: prUrlClean });
 
     await writeTaskLog(ctx, [
       `Coding workflow complete for #${ctx.issueNumber}`,
