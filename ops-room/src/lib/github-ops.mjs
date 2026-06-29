@@ -118,9 +118,13 @@ export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env,
   }
 
   async function transitionLabels(ctx, { remove: removeLabels, add: addLabels }) {
-    for (const label of removeLabels) removeLabel(ctx.issueNumber, label);
     for (const label of addLabels) ensureLabel(label);
-    for (const label of addLabels) addLabel(ctx.issueNumber, label);
+    if (removeLabels.length === 0 && addLabels.length === 0) return;
+    const removeArgs = removeLabels.map(l => `--remove-label "${l}"`).join(' ');
+    const addArgs = addLabels.map(l => `--add-label "${l}"`).join(' ');
+    try {
+      execSync(`gh issue edit ${ctx.issueNumber} ${removeArgs} ${addArgs} --repo "${repo}"`, { encoding: 'utf-8' });
+    } catch {}
   }
 
   return {
