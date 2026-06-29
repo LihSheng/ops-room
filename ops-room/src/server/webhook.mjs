@@ -117,7 +117,7 @@ const {
 
 // ── Processed task tracking ─────────────────────────────────────────────────
 
-const PROCESSED_TASKS_LOG = PROCESSED_TASKS_FILE.replace('.json', '.log');
+const PROCESSED_TASKS_LOG = join(STATE_DIR, 'processed-tasks.log');
 
 async function loadProcessedTasks() {
   try {
