@@ -12,7 +12,7 @@ import '../services/logs.mjs';
 import {
   addComment, ensureLabel, removeLabel, addLabel
 } from '../services/github.mjs';
-import { handleTask } from '../workflows/github-code.mjs';
+import { handleTask, cancelTask } from '../workflows/github-code.mjs';
 import { handleHealth } from '../routes/health.mjs';
 import { handleTaskDetail, handleTasksList } from '../routes/tasks.mjs';
 import { handleLogsList } from '../routes/logs.mjs';
@@ -44,8 +44,19 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Tasks (legacy)
-  if (req.method === 'GET' && pathname === '/tasks') {
+  // Tasks (legacy) and task detail
+  if (req.method === 'GET' && pathname.startsWith('/tasks')) {
+    const auth = req.headers['authorization'];
+    if (!verifyAuth(auth)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    const taskIdMatch = pathname.match(/^\/tasks\/([^/]+)$/);
+    if (taskIdMatch) {
+      try {
+        const data = await handleTaskDetail(decodeURIComponent(taskIdMatch[1]));
+        if (!data) { sendJSON(res, 404, { error: 'Task not found' }); return; }
+        sendJSON(res, 200, data);
+      } catch (err) { sendJSON(res, 500, { error: err.message }); }
+      return;
+    }
     try {
       const data = await handleTasksList();
       sendJSON(res, 200, data);
@@ -118,15 +129,25 @@ const server = createServer(async (req, res) => {
 // ── Poller ──────────────────────────────────────────────────────────────────
 
 async function listOpenIssuesForAgent(agentKey) {
-  try {
-    const out = execSync(
-      `gh api repos/${REPO}/issues?labels=${encodeURIComponent(`openab/${agentKey}`)}&state=open&per_page=100&sort=created&direction=desc`,
-      { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
-    );
-    return JSON.parse(out).filter((issue) => !issue.pull_request || !issue.draft);
-  } catch {
-    return [];
+  const seen = new Set();
+  const results = [];
+  const labelQueries = [`openab/${agentKey}`, 'openab/cancel'];
+  for (const labelQuery of labelQueries) {
+    try {
+      const out = execSync(
+        `gh api repos/${REPO}/issues?labels=${encodeURIComponent(labelQuery)}&state=open&per_page=100&sort=created&direction=desc`,
+        { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
+      );
+      const issues = JSON.parse(out).filter(i => !i.pull_request || !i.draft);
+      for (const issue of issues) {
+        if (!seen.has(issue.number)) {
+          seen.add(issue.number);
+          results.push(issue);
+        }
+      }
+    } catch {}
   }
+  return results;
 }
 
 // ── Start ───────────────────────────────────────────────────────────────────
@@ -149,6 +170,7 @@ startIssuePoller({
     addLabel,
     addComment,
     handleTask,
+    cancelTask,
   }),
 }).catch((e) => console.error('[server] poller fatal:', e.message));
 server.listen(PORT, () => {

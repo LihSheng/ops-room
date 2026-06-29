@@ -2,6 +2,7 @@ import { AGENT_NAMES } from '../lib/config.mjs';
 import { addComment, transitionLabels } from '../services/github.mjs';
 import { OPENCODE_API, NVIDIA_API, OPENCODE_MODEL, NVIDIA_MODEL, OPENCODE_MAX_TOKEN } from '../services/runtime-paths.mjs';
 import { writeTaskLog } from '../services/logs.mjs';
+import { notify } from '../lib/notify.mjs';
 
 async function askAI(prompt) {
   const tryProvider = async (apiUrl, apiKey, model) => {
@@ -55,6 +56,8 @@ Answer concisely based on the issue details above. If you need more context, exp
   if (!answer) return;
 
   addComment(ctx.issueNumber, `**${agentName}** — response 🤖\n\n${answer}\n\n---\n*Auto-responded by OpenAB poller*`, ctx.agent);
+
+  notify('chat.completed', { issue: ctx.issueNumber, title: ctx.issueTitle, agent: ctx.agent });
 
   await transitionLabels(ctx, {
     remove: [`openab/${ctx.agent}/wip`, `openab/${ctx.agent}`],

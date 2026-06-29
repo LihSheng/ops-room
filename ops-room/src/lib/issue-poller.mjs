@@ -22,8 +22,9 @@ export async function pollAgentIssues({
     const names = issue.labels?.map((label) => label.name) || [];
     logger.log(`[poller] labels on #${issue.number}: ${names.join(', ')}`);
 
-    if (names.includes('openab/cancel')) {
-      if (cancelTask) await cancelTask(issue.number, agentKey);
+    if (names.includes('openab/cancel') && cancelTask) {
+      logger.log(`[poller] Cancel requested for #${issue.number} (${agentKey})`);
+      await cancelTask(issue.number, agentKey);
       continue;
     }
     if (!names.includes(`openab/${agentKey}`)) continue;

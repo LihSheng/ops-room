@@ -1,23 +1,31 @@
-import { readFile, writeFile, rm, mkdir, readdir } from 'node:fs/promises';
-import { existsSync, writeFileSync } from 'node:fs';
+import { readFile, writeFile, rm, mkdir, readdir, appendFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { TASKS_DIR, STATE_DIR, PROCESSED_TASKS_FILE, LOCK_DIR, WORKSPACE_BASE, LOG_DIR, PROMPT_DIR } from './runtime-paths.mjs';
+import { TASKS_DIR, STATE_DIR, LOCK_DIR, WORKSPACE_BASE, LOG_DIR, PROMPT_DIR } from './runtime-paths.mjs';
+
+const PROCESSED_TASKS_LOG = join(STATE_DIR, 'processed-tasks.log');
 
 export async function loadProcessedTasks() {
   try {
-    const raw = await readFile(PROCESSED_TASKS_FILE, 'utf-8');
-    return JSON.parse(raw);
+    const text = await readFile(PROCESSED_TASKS_LOG, 'utf-8');
+    const ids = text.trim().split('\n').filter(Boolean);
+    return [...new Set(ids)];
   } catch {
     return [];
   }
 }
 
 export async function markTaskProcessed(taskId) {
-  const tasks = await loadProcessedTasks();
-  if (!tasks.includes(taskId)) {
-    tasks.push(taskId);
-    await writeFile(PROCESSED_TASKS_FILE, JSON.stringify(tasks, null, 2));
-  }
+  try {
+    await appendFile(PROCESSED_TASKS_LOG, taskId + '\n');
+  } catch {}
+}
+
+export async function compactProcessedTasks() {
+  try {
+    const ids = await loadProcessedTasks();
+    await writeFile(PROCESSED_TASKS_LOG, ids.join('\n') + '\n');
+  } catch {}
 }
 
 export function lockPath(ctx) {
@@ -25,10 +33,12 @@ export function lockPath(ctx) {
 }
 
 export function acquireLock(ctx) {
-  const lp = lockPath(ctx);
-  if (existsSync(lp)) return false;
-  writeFileSync(lp, String(process.pid));
-  return true;
+  try {
+    writeFileSync(lockPath(ctx), JSON.stringify({ harnessPid: process.pid, startedAt: Date.now() }), { flag: 'wx' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function releaseLock(ctx) {
@@ -50,6 +60,7 @@ export async function initDirs() {
   await ensureDir(STATE_DIR);
   await ensureDir(LOCK_DIR);
   await ensureDir(PROMPT_DIR);
+  await compactProcessedTasks();
 }
 
 export async function readTasksDir() {
