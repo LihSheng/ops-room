@@ -67,11 +67,7 @@ export async function startIssuePoller({
 
   while (true) {
     const results = await Promise.allSettled(
-      agentKeys.map(agentKey =>
-        pollAgent(agentKey).catch(err => {
-          logger.error(`[poller] ${agentKey} poll error:`, err.message);
-        })
-      )
+      agentKeys.map(agentKey => pollAgent(agentKey))
     );
     for (const result of results) {
       if (result.status === 'rejected') {
