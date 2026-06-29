@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ops Room</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Ops Room</h1>
+  <nav>
+    <button id="refresh-btn" type="button">Refresh</button>
+    <span id="refreshing-indicator" class="hidden">Refreshing...</span>
+    <span id="last-updated"></span>
+  </nav>
+</header>
+
+<main>
+  <section id="health-section" class="section">
+    <h2>System Health</h2>
+    <div id="health-content">
+      <p class="loading">Loading health...</p>
+    </div>
+  </section>
+
+  <section id="instances-section" class="section">
+    <h2>OpenAB Instances</h2>
+    <div id="instances-content">
+      <p class="loading">Loading instances...</p>
+    </div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

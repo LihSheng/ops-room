@@ -18,6 +18,8 @@ import { handleTaskDetail, handleTasksList } from '../routes/tasks.mjs';
 import { handleLogsList } from '../routes/logs.mjs';
 import { handleWebhook, isPrReviewWebhook } from '../routes/webhook-routes.mjs';
 import { handleAgentsList } from '../routes/agents.mjs';
+import { handleOpenABInstances } from '../routes/openab-instances.mjs';
+import { handleStaticApp } from '../routes/static-app.mjs';
 import { sendJSON, verifyAuth, parseBody } from '../routes/helpers.mjs';
 
 // ── Server ──────────────────────────────────────────────────────────────────
@@ -103,6 +105,15 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // API OpenAB Instances
+  if (req.method === 'GET' && pathname === '/api/openab/instances') {
+    try {
+      const data = await handleOpenABInstances();
+      sendJSON(res, 200, data);
+    } catch (err) { sendJSON(res, 500, { error: err.message }); }
+    return;
+  }
+
   // Webhook POST
   if (req.method === 'POST' && pathname === '/webhook') {
     const auth = req.headers['authorization'];
@@ -121,6 +132,12 @@ const server = createServer(async (req, res) => {
       sendJSON(res, 200, { ok: true, ...result });
     } catch (err) { sendJSON(res, 400, { error: err.message }); }
     return;
+  }
+
+  // Static App (Dashboard)
+  if (req.method === 'GET') {
+    const served = handleStaticApp(req, res, pathname);
+    if (served) return;
   }
 
   sendJSON(res, 404, { error: 'Not found' });
@@ -182,5 +199,6 @@ server.listen(PORT, () => {
   console.log(`  GET  /api/tasks   - List tasks`);
   console.log(`  GET  /api/logs    - List bounded redacted logs`);
   console.log(`  GET  /api/agents  - List agents`);
+  console.log(`  GET  /api/openab/instances - OpenAB instance dashboard`);
   console.log(`  WORKSPACE_BASE   - ${WORKSPACE_BASE}`);
 });

@@ -47,6 +47,26 @@ npm start
 
 `npm start` loads `../.env` via Node's `--env-file` support and requires `OPENAB_WEBHOOK_SECRET` to be set explicitly.
 
+## Ops Room Dashboard
+
+Ops Room includes a read-only web dashboard for checking the OpenAB instances running on the host.
+
+- Local URL: `http://127.0.0.1:7381/` when the host systemd service is running.
+- Public URL: `https://ops-room.lihsheng.space/` after Cloudflare Access and the tunnel public hostname are configured.
+- API: `GET /api/openab/instances` returns instance metadata plus best-effort Docker runtime status.
+- UI: agents are shown as status cards with container health, backend, GitHub polling state, restart count, config path, data directory, and quick buttons for logs/tasks.
+- Safety: the dashboard is read-only. It does not expose restart, reload, or config-edit controls.
+
+On the VPS, prefer running Ops Room directly on the host through systemd instead of running this service inside Docker:
+
+```bash
+sudo systemctl status openab-ops-room.service --no-pager
+sudo systemctl restart openab-ops-room.service
+sudo journalctl -u openab-ops-room.service -f
+```
+
+Cloudflare note: the existing `hermes-dashboard` tunnel can serve both `hermes.lihsheng.space` and `ops-room.lihsheng.space`, but `ops-room.lihsheng.space` must be added as a **Tunnel Public Hostname** that points to `http://localhost:7381`. Creating only a Cloudflare Access application is not enough; after login it will still return the tunnel fallback `404` if the public hostname route is missing.
+
 ## What's Committed vs Local
 
 | Committed to Git | Kept Local |

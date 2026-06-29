@@ -136,6 +136,7 @@ services:
       - ./config:/app/config:ro
       - ./data:/app/data
       - ./secrets:/app/secrets:ro
+      - ./.env:/app/.env:ro
     environment:
       - OPS_ROOM_STATE_DIR=/app/data/ops-room/state
       - OPS_ROOM_TASKS_DIR=/app/data/ops-room/tasks
@@ -144,5 +145,5 @@ services:
       - OPENAB_SHARED_DIR=/app/data/shared
       - OPENAB_SECRETS_DIR=/app/secrets
     ports:
-      - "7381:7381"
+      - "127.0.0.1:7381:7381"
     command: npm run start
