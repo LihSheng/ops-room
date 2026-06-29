@@ -12,6 +12,7 @@ export async function pollAgentIssues({
   addLabel,
   addComment,
   handleTask,
+  cancelTask,
   logger = console,
 }) {
   const issues = await listOpenIssuesForAgent(agentKey);
@@ -21,6 +22,10 @@ export async function pollAgentIssues({
     const names = issue.labels?.map((label) => label.name) || [];
     logger.log(`[poller] labels on #${issue.number}: ${names.join(', ')}`);
 
+    if (names.includes('openab/cancel')) {
+      if (cancelTask) await cancelTask(issue.number, agentKey);
+      continue;
+    }
     if (!names.includes(`openab/${agentKey}`)) continue;
     if (names.includes(`openab/${agentKey}/wip`)) continue;
     if (names.includes('openab/pr-created')) continue;
@@ -61,12 +66,17 @@ export async function startIssuePoller({
   logger.log('[poller] poll loop started');
 
   while (true) {
-    try {
-      for (const agentKey of agentKeys) {
-        await pollAgent(agentKey);
+    const results = await Promise.allSettled(
+      agentKeys.map(agentKey =>
+        pollAgent(agentKey).catch(err => {
+          logger.error(`[poller] ${agentKey} poll error:`, err.message);
+        })
+      )
+    );
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        logger.error('[poller] cycle error:', result.reason?.message);
       }
-    } catch (error) {
-      logger.error('[poller] cycle error:', error.message);
     }
 
     await sleep(intervalMs);

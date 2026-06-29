@@ -41,6 +41,8 @@ const LOCK_DIR = '/tmp/openab-locks';
 const PROCESSED_TASKS_FILE = join(STATE_DIR, 'processed-tasks.json');
 const DATA_DIR = join(__dirname, '..', '..', '..', 'data');
 
+const activeProcesses = new Map();
+
 const FORBIDDEN_FILE_PATTERNS = [
   /^\.env/,
   /^\.openab(\/|$)/,
@@ -151,7 +153,7 @@ function lockPath(ctx) {
 
 function acquireLock(ctx) {
   try {
-    writeFileSync(lockPath(ctx), String(process.pid), { flag: 'wx' });
+    writeFileSync(lockPath(ctx), JSON.stringify({ harnessPid: process.pid, startedAt: Date.now() }), { flag: 'wx' });
     return true;
   } catch {
     return false;
@@ -159,7 +161,31 @@ function acquireLock(ctx) {
 }
 
 async function releaseLock(ctx) {
+  activeProcesses.delete(lockPath(ctx));
   try { await rm(lockPath(ctx), { force: true }); } catch { }
+}
+
+function registerAgentProcess(ctx, child) {
+  const lp = lockPath(ctx);
+  activeProcesses.set(lp, child);
+  child.on('exit', () => activeProcesses.delete(lp));
+}
+
+async function cancelTask(issueNumber, agentKey) {
+  const ctx = { issueNumber, agent: agentKey };
+  const lp = lockPath(ctx);
+  const child = activeProcesses.get(lp);
+  if (child) {
+    child.kill('SIGTERM');
+    setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 5000);
+  }
+  try {
+    await rm(lp, { force: true });
+  } catch {}
+  try {
+    execSync(`gh issue edit ${issueNumber} --remove-label "openab/${agentKey}/wip" --remove-label "openab/cancel" --add-label "openab/cancelled" --repo "${REPO}"`, { encoding: 'utf-8' });
+  } catch {}
+  console.log(`[poller] Cancelled task #${issueNumber} for ${agentKey}`);
 }
 
 // ── Per-task logging ────────────────────────────────────────────────────────
@@ -228,7 +254,9 @@ async function prepareWorkspace(ctx) {
   const parent = dirname(workspaceDir);
 
   await ensureDir(parent);
-  await rm(workspaceDir, { recursive: true, force: true });
+  if (!process.env.OPS_ROOM_KEEP_WORKSPACE) {
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
 
   const token = githubToken(ctx.agent);
   const env = { ...process.env, GH_TOKEN: token };
@@ -392,7 +420,7 @@ async function execLogged(command, ctx, opts = {}) {
 
 // ── Safe subprocess runner ────────────────────────────────────────────────────
 
-function runCommandWithStdin({ command, args, cwd, stdin, env = process.env, timeoutMs }) {
+function runCommandWithStdin({ command, args, cwd, stdin, env = process.env, timeoutMs, ctx }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
@@ -400,6 +428,8 @@ function runCommandWithStdin({ command, args, cwd, stdin, env = process.env, tim
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+
+    if (ctx) registerAgentProcess(ctx, child);
 
     let stdout = '';
     let stderr = '';
@@ -447,6 +477,7 @@ async function runOpencodeWithPrompt(ctx, promptContent) {
     stdin: promptContent,
     env: process.env,
     timeoutMs: 30 * 60 * 1000,
+    ctx,
   });
 }
 
@@ -459,6 +490,7 @@ async function runCodexWithPrompt(ctx, promptContent) {
     stdin: promptContent,
     env: process.env,
     timeoutMs: 30 * 60 * 1000,
+    ctx,
   });
 }
 
@@ -1304,7 +1336,27 @@ const server = createServer(async (req, res) => {
   res.setHeader('X-Powered-By', 'OpenAB Webhook');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   if (req.method === 'GET' && req.url === '/health') { sendJSON(res, 200, { status: 'ok', uptime: process.uptime() }); return; }
-  if (req.method === 'GET' && req.url === '/tasks') {
+  if (req.method === 'GET' && req.url.startsWith('/tasks')) {
+    const auth = req.headers['authorization'];
+    if (!verifyAuth(auth)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    const taskIdMatch = req.url.match(/^\/tasks\/([^/]+)$/);
+    if (taskIdMatch) {
+      const taskId = taskIdMatch[1];
+      try {
+        const taskPath = join(TASKS_DIR, `${taskId}.json`);
+        const task = JSON.parse(await readFile(taskPath, 'utf-8'));
+        const logFiles = [];
+        try {
+          const allLogs = await readdir(LOG_DIR);
+          const matchingLogs = allLogs.filter(f => f.startsWith(`${taskId}-`)).sort().slice(-3);
+          for (const logFile of matchingLogs) {
+            logFiles.push({ name: logFile, content: (await readFile(join(LOG_DIR, logFile), 'utf-8')).slice(-5000) });
+          }
+        } catch {}
+        sendJSON(res, 200, { task, logs: logFiles });
+      } catch { sendJSON(res, 404, { error: 'Task not found' }); }
+      return;
+    }
     try {
       const files = await readdir(TASKS_DIR);
       const tasks = await Promise.all(files.filter(f => f.endsWith('.json')).map(f => readFile(join(TASKS_DIR, f), 'utf-8').then(JSON.parse)));
@@ -1336,15 +1388,25 @@ const server = createServer(async (req, res) => {
 // ── Poller ──────────────────────────────────────────────────────────────────
 
 async function listOpenIssuesForAgent(agentKey) {
-  try {
-    const out = execSync(
-      `gh api repos/${REPO}/issues?labels=${encodeURIComponent(`openab/${agentKey}`)}&state=open&per_page=100&sort=created&direction=desc`,
-      { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
-    );
-    return JSON.parse(out).filter((issue) => !issue.pull_request || !issue.draft);
-  } catch {
-    return [];
+  const seen = new Set();
+  const results = [];
+  const labelQueries = [`openab/${agentKey}`, 'openab/cancel'];
+  for (const labelQuery of labelQueries) {
+    try {
+      const out = execSync(
+        `gh api repos/${REPO}/issues?labels=${encodeURIComponent(labelQuery)}&state=open&per_page=100&sort=created&direction=desc`,
+        { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
+      );
+      const issues = JSON.parse(out).filter(i => !i.pull_request || !i.draft);
+      for (const issue of issues) {
+        if (!seen.has(issue.number)) {
+          seen.add(issue.number);
+          results.push(issue);
+        }
+      }
+    } catch {}
   }
+  return results;
 }
 
 // ── Start ───────────────────────────────────────────────────────────────────
@@ -1382,6 +1444,7 @@ startIssuePoller({
     addLabel,
     addComment,
     handleTask,
+    cancelTask,
   }),
 }).catch((e) => console.error('[server] poller fatal:', e.message));
 server.listen(PORT, () => {
