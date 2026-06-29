@@ -68,6 +68,7 @@ async function initDirs() {
   await ensureDir(STATE_DIR);
   await ensureDir(LOCK_DIR);
   await ensureDir(join(DATA_DIR, 'task-prompts'));
+  await compactProcessedTasks();
 }
 
 // ── Auth ────────────────────────────────────────────────────────────────────
