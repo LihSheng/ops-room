@@ -36,6 +36,7 @@ async function fetchPrReviewContext({ repository, pr, agent }) {
     prAuthor: prData.user?.login || 'unknown',
     baseRef: prData.base?.ref || '',
     headRef: prData.head?.ref || '',
+    headSha: prData.head?.sha || null,
     diff,
   };
 }
@@ -46,6 +47,7 @@ export async function runPrReviewWorkflow(payload) {
     task,
     repository,
     pr,
+    mode,
     commenter = 'unknown',
   } = payload;
 
@@ -55,6 +57,7 @@ export async function runPrReviewWorkflow(payload) {
     task,
     repository,
     pr,
+    mode,
     ...prContext,
   });
 
