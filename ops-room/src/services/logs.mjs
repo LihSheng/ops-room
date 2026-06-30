@@ -17,7 +17,10 @@ export function taskLogFile(ctx) {
 export async function writeTaskLog(ctx, lines) {
   try {
     const path = taskLogFile(ctx);
-    const content = lines.map(l => `[${new Date().toISOString()}] ${l}`).join('\n') + '\n';
+    const content = lines
+      .flatMap((line) => String(line ?? '').split(/\r?\n/))
+      .map((line) => `[${new Date().toISOString()}] ${line}`)
+      .join('\n') + '\n';
     await appendFile(path, content);
   } catch { }
 }

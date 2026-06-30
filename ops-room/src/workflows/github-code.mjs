@@ -10,6 +10,7 @@ import {
   REPO, WORKSPACE_BASE, FORBIDDEN_FILE_PATTERNS, LOCK_DIR, PROMPT_DIR
 } from '../services/runtime-paths.mjs';
 import { runChatWorkflow } from './chat-response.mjs';
+import { runPrReviewWorkflow } from './pr-review.mjs';
 import { writeTaskLog } from '../services/logs.mjs';
 import {
   loadProcessedTasks, markTaskProcessed, acquireLock, releaseLock, ensureDir, fileExists
@@ -940,6 +941,13 @@ async function handleTask(issueNumber, agentKey) {
     const commenter = task?.commenter || issue.user?.login || 'someone';
     const extractedTaskId = task?.taskId || `${taskId}-${commenter}-${agentKey}`;
     const metadataTaskType = task?.taskType || null;
+    const labelNames = issue.labels?.map((label) => label.name) || [];
+    const isPrReviewTask = Boolean(
+      issue.pull_request && (
+        labelNames.includes('openab/pr-review') ||
+        labelNames.includes(`openab/${agentKey}/review`)
+      )
+    );
 
     const processed = await loadProcessedTasks();
     if (processed.includes(extractedTaskId)) {
@@ -965,7 +973,16 @@ async function handleTask(issueNumber, agentKey) {
       else isCoding = isCodingTask(taskDesc, issue);
 
       let codingResult;
-      if (isCoding) {
+      if (isPrReviewTask) {
+        console.log(`[poller] Routing #${issueNumber} to PR REVIEW workflow (${agentKey})`);
+        await runPrReviewWorkflow({
+          agent: agentKey,
+          task: task?.task || undefined,
+          repository: REPO,
+          pr: issueNumber,
+          commenter,
+        });
+      } else if (isCoding) {
         console.log(`[poller] Routing #${issueNumber} to CODING workflow (${agentKey})`);
         codingResult = await runCodingWorkflow(ctx);
       } else {
@@ -1005,4 +1022,3 @@ export {
   cancelTask,
   registerAgentProcess,
 };
-
