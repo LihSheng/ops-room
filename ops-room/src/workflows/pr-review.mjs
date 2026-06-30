@@ -1,5 +1,5 @@
 import { AGENT_NAMES } from '../lib/config.mjs';
-import { ghApi, ghApiText, addPullRequestReview } from '../services/github.mjs';
+import { ghApi, ghApiText, addComment, addPullRequestReview } from '../services/github.mjs';
 import { REPO, SHARED_MEMORY } from '../services/runtime-paths.mjs';
 import { appendFile } from 'node:fs/promises';
 import { buildPrReviewPrompt } from '../server/pr-review-payload.mjs';
@@ -45,6 +45,7 @@ export async function runPrReviewWorkflow(payload) {
   const {
     agent,
     task,
+    task_type,
     repository,
     pr,
     mode,
@@ -66,14 +67,22 @@ export async function runPrReviewWorkflow(payload) {
     throw new Error(`PR review generation returned an empty response for ${repository}#${pr}`);
   }
 
-  const event = parseReviewEvent(reviewText);
-  addPullRequestReview(pr, reviewText, event, agent);
+  const responseMode = task_type === 'chat' ? 'chat' : 'review';
+  let event = 'COMMENT';
+
+  if (responseMode === 'chat') {
+    addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
+    console.log(`[pr-review] Posted chat response on ${repository}#${pr} as ${agent}`);
+  } else {
+    event = parseReviewEvent(reviewText);
+    addPullRequestReview(pr, reviewText, event, agent);
+    console.log(`[pr-review] Posted ${event} review on ${repository}#${pr} as ${agent}`);
+  }
 
   await appendToMemory(`PR review from ${repository}#${pr} by @${commenter} → **${agent}**: ${task}`);
-  console.log(`[pr-review] Posted ${event} review on ${repository}#${pr} as ${agent}`);
 
   return {
-    mode: 'pr_review',
+    mode: responseMode === 'chat' ? 'pr_chat' : 'pr_review',
     repository,
     pr,
     agent,

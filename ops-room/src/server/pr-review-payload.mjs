@@ -41,6 +41,7 @@ export function buildPrReviewPayload({
   repository,
   prNumber,
   commenter,
+  commentId,
   headSha,
 }) {
   const parsed = parseOpenAbCommand(commentBody);
@@ -51,6 +52,7 @@ export function buildPrReviewPayload({
     repository,
     pr: Number(prNumber),
     commenter: commenter || 'unknown',
+    comment_id: commentId ? Number(commentId) : null,
     trigger: 'issue_comment',
     source: 'ops-room',
     head_sha: headSha || null,

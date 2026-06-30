@@ -85,6 +85,73 @@ export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env,
     }, 'pull request review');
   }
 
+  function listIssueCommentReactions(commentId, agentKey = 'professor') {
+    return withAgentFallback(agentKey, (key) => {
+      const token = tokenForAgent(key);
+      const out = execFileSync(
+        'gh',
+        [
+          'api',
+          '-H',
+          'Accept: application/vnd.github+json',
+          `repos/${repo}/issues/comments/${commentId}/reactions`,
+        ],
+        {
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+          env: { ...processEnv, GH_TOKEN: token },
+        },
+      );
+      return JSON.parse(out);
+    }, 'comment reactions');
+  }
+
+  function addIssueCommentReaction(commentId, content, agentKey = 'professor') {
+    return withAgentFallback(agentKey, (key) => {
+      const token = tokenForAgent(key);
+      return execFileSync(
+        'gh',
+        [
+          'api',
+          '-H',
+          'Accept: application/vnd.github+json',
+          `repos/${repo}/issues/comments/${commentId}/reactions`,
+          '-X',
+          'POST',
+          '-f',
+          `content=${content}`,
+        ],
+        {
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+          env: { ...processEnv, GH_TOKEN: token },
+        },
+      );
+    }, 'comment reactions');
+  }
+
+  function removeIssueCommentReaction(commentId, reactionId, agentKey = 'professor') {
+    return withAgentFallback(agentKey, (key) => {
+      const token = tokenForAgent(key);
+      return execFileSync(
+        'gh',
+        [
+          'api',
+          '-H',
+          'Accept: application/vnd.github+json',
+          `repos/${repo}/issues/comments/${commentId}/reactions/${reactionId}`,
+          '-X',
+          'DELETE',
+        ],
+        {
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+          env: { ...processEnv, GH_TOKEN: token },
+        },
+      );
+    }, 'comment reactions');
+  }
+
   function ghExec(args, opts = {}) {
     return execSync(`gh ${args} --repo "${repo}"`, {
       encoding: 'utf-8',
@@ -130,6 +197,9 @@ export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env,
   return {
     addComment,
     addPullRequestReview,
+    listIssueCommentReactions,
+    addIssueCommentReaction,
+    removeIssueCommentReaction,
     ghApi,
     ghApiText,
     ghExec,

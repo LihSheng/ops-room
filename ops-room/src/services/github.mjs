@@ -20,6 +20,9 @@ const ops = createGitHubOps({
 export const {
   addComment,
   addPullRequestReview,
+  listIssueCommentReactions,
+  addIssueCommentReaction,
+  removeIssueCommentReaction,
   ghApi,
   ghApiText,
   ensureLabel,

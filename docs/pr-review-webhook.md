@@ -32,6 +32,8 @@ The GitHub workflow should only call the Ops Room webhook with `OPENAB_WEBHOOK_S
   "task": "review this PR",
   "repository": "LihSheng/LinkUp",
   "pr": 24,
+  "comment_id": 1234567890,
+  "head_sha": "abcdef1234567890",
   "commenter": "LihSheng",
   "trigger": "issue_comment"
 }
@@ -43,10 +45,12 @@ The GitHub workflow should only call the Ops Room webhook with `OPENAB_WEBHOOK_S
 GitHub PR comment
   -> GitHub Actions parses command
   -> GitHub Actions POSTs payload to Ops Room
+  -> Ops Room queues the PR task and adds an eyes reaction on the source comment
   -> Ops Room generates Berlin GitHub App installation token
   -> Ops Room fetches PR metadata and diff
-  -> Berlin reviews the PR
-  -> Ops Room posts the review with Berlin's GitHub App token
+  -> Berlin reviews or replies to the PR
+  -> Ops Room posts the final response as the agent
+  -> Ops Room swaps the reaction to rocket on success or confused on failure
 ```
 
 ## Current implementation
@@ -59,7 +63,14 @@ For PR review payloads (any webhook payload with `pr`):
 - Ops Room fetches `repos/<repo>/pulls/<pr>` JSON for title/body/base/head/author.
 - Ops Room fetches the raw PR diff from the same endpoint with `Accept: application/vnd.github.v3.diff`.
 - The review prompt passed to the AI includes that diff under `Changed diff:`.
-- Ops Room posts a real pull request review through `POST /repos/<repo>/pulls/<pr>/reviews`.
+- Ops Room returns quickly after queueing the PR task; processing continues in the background.
+- Ops Room deduplicates PR commands by `pr + comment_id + head_sha + agent`.
+- If `task_type` is `chat`, Ops Room posts a normal PR thread comment.
+- Otherwise Ops Room posts a real pull request review through `POST /repos/<repo>/pulls/<pr>/reviews`.
+- If `comment_id` is provided, Ops Room manages comment reactions for task state:
+  - `eyes` while running
+  - `rocket` on success
+  - `confused` on failure
 
 Status mapping is derived from the model output:
 
