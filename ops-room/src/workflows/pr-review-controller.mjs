@@ -136,6 +136,8 @@ export function createPrReviewController({
       targetUrl: request.target_url,
       context: REVIEW_CONTEXT,
       agent: normalized.agent,
+      dir: request.dir,
+      taskId: task.id,
     });
     await dispatchReview({
       task_id: task.id,

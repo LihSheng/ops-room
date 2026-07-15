@@ -110,6 +110,8 @@ async function executeControllerReview(task) {
       state: status.state,
       description: status.description,
       agent: task.agent,
+      dir: task.dir,
+      taskId: task.task_id,
     });
   } catch (error) {
     const message = error?.message || String(error);
@@ -136,6 +138,8 @@ async function executeControllerReview(task) {
       state: 'error',
       description: 'Review could not complete',
       agent: task.agent,
+      dir: task.dir,
+      taskId: task.task_id,
     });
     console.error(`[pr-review-controller] ${task.repository}#${task.pr} failed:`, message.slice(0, 300));
   }

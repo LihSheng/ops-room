@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { createGitHubReviewStatusService } from '../src/services/github-review-status.mjs';
@@ -36,4 +39,17 @@ test('review status service does not repeat an equivalent latest status', async 
 
   assert.equal(result.written, false);
   assert.equal(writes, 0);
+});
+
+test('review status ledger prevents duplicate external writes for one task', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ops-room-status-ledger-'));
+  let writes = 0;
+  const service = createGitHubReviewStatusService({
+    getCommitStatuses: async () => [],
+    createCommitStatus: async () => { writes += 1; },
+  });
+  const input = { repository: 'LihSheng/LinkUp', sha: 'a'.repeat(40), state: 'pending', description: 'Review in progress', agent: 'professor', dir, taskId: 'review:one' };
+  assert.equal((await service.set(input)).written, true);
+  assert.equal((await service.set(input)).duplicate_effect, true);
+  assert.equal(writes, 1);
 });

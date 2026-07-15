@@ -1,10 +1,12 @@
+import { claimEffect, completeEffect } from './review-effect-ledger.mjs';
+
 export const REVIEW_STATUS_CONTEXT = 'OpenAB PR Review';
 
 export function createGitHubReviewStatusService({ getCommitStatuses, createCommitStatus }) {
   if (typeof getCommitStatuses !== 'function') throw new Error('getCommitStatuses is required');
   if (typeof createCommitStatus !== 'function') throw new Error('createCommitStatus is required');
 
-  async function set({ repository, sha, state, description, targetUrl, agent = 'professor' }) {
+  async function set({ repository, sha, state, description, targetUrl, agent = 'professor', dir, taskId }) {
     const statuses = await getCommitStatuses({ repository, sha, agent });
     const latest = (Array.isArray(statuses) ? statuses : [])
       .find((status) => status.context === REVIEW_STATUS_CONTEXT);
@@ -21,7 +23,18 @@ export function createGitHubReviewStatusService({ getCommitStatuses, createCommi
       context: REVIEW_STATUS_CONTEXT,
       agent,
     };
+    let effect;
+    if (dir && taskId) {
+      effect = await claimEffect({
+        dir,
+        taskId,
+        kind: 'github_commit_status',
+        fingerprint: `${sha}:${REVIEW_STATUS_CONTEXT}:${state}:${description}:${targetUrl || ''}`,
+      });
+      if (!effect.claimed) return { written: false, duplicate_effect: true, effect: effect.effect };
+    }
     await createCommitStatus(payload);
+    if (effect) await completeEffect({ dir, effectId: effect.effect.id, result: { sha, state, description, context: REVIEW_STATUS_CONTEXT } });
     return { written: true, status: payload };
   }
 

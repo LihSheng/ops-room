@@ -64,6 +64,8 @@ test('controller creates one claimed review and pending status for the current S
     targetUrl: undefined,
     context: 'OpenAB PR Review',
     agent: 'professor',
+    dir,
+    taskId: `review:LihSheng-LinkUp:40:${'b'.repeat(40)}:professor:review`,
   }]);
 });
 
