@@ -25,6 +25,8 @@ export const {
   removeIssueCommentReaction,
   ghApi,
   ghApiText,
+  getCommitStatuses,
+  createCommitStatus,
   ensureLabel,
   removeLabel,
   addLabel,

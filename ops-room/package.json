@@ -11,6 +11,7 @@
     "poll": "node --env-file=../.env src/server/poller.mjs",
     "claim": "node --env-file=../.env src/server/claim.mjs",
     "dev": "node --env-file=../.env --watch src/server/webhook.mjs",
+    "test": "node --test test/*.test.mjs",
     "smoke:instances": "node scripts/smoke-openab-instances.mjs"
   }
 }

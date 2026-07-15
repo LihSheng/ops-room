@@ -61,6 +61,28 @@ export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env,
     }, 'API');
   }
 
+  function getCommitStatuses(sha, agentKey = 'professor') {
+    return ghApi('GET', `repos/${repo}/commits/${sha}/statuses`, agentKey);
+  }
+
+  function createCommitStatus({ sha, state, description, targetUrl, context = 'OpenAB PR Review', agentKey = 'professor' }) {
+    return withAgentFallback(agentKey, (key) => {
+      const token = tokenForAgent(key);
+      const args = [
+        'api', `repos/${repo}/statuses/${sha}`, '-X', 'POST',
+        '-f', `state=${state}`,
+        '-f', `context=${context}`,
+        '-f', `description=${description}`,
+      ];
+      if (targetUrl) args.push('-f', `target_url=${targetUrl}`);
+      return execFileSync('gh', args, {
+        encoding: 'utf-8',
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...processEnv, GH_TOKEN: token },
+      });
+    }, 'commit status');
+  }
+
   function addPullRequestReview(prNumber, body, event = 'COMMENT', agentKey = 'professor') {
     return withAgentFallback(agentKey, (key) => {
       const token = tokenForAgent(key);
@@ -202,6 +224,8 @@ export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env,
     removeIssueCommentReaction,
     ghApi,
     ghApiText,
+    getCommitStatuses,
+    createCommitStatus,
     ghExec,
     ensureLabel,
     removeLabel,

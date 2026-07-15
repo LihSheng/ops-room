@@ -1,11 +1,19 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AGENT_IDS, BOT_USERS, normalizeAgent } from '../lib/config.mjs';
-import { REPO, TASKS_DIR } from '../services/runtime-paths.mjs';
+import { REPO, REVIEW_TASKS_DIR, TASKS_DIR } from '../services/runtime-paths.mjs';
 import { addIssueCommentReaction, listIssueCommentReactions, removeIssueCommentReaction } from '../services/github.mjs';
 import { loadProcessedTasks, markTaskProcessed } from '../services/task-store.mjs';
 import { appendToMemory } from './helpers.mjs';
-import { runPrReviewWorkflow } from '../workflows/pr-review.mjs';
+
+let prReviewController = null;
+
+export function configurePrReviewController(controller) {
+  if (!controller || typeof controller.submit !== 'function') {
+    throw new Error('PR review controller must provide submit()');
+  }
+  prReviewController = controller;
+}
 
 const inflightPrTasks = new Set();
 const MANAGED_BOT_USERS = new Set(Object.values(BOT_USERS).map((user) => user.toLowerCase()));
@@ -187,15 +195,16 @@ export async function handleWebhook(body) {
       throw new Error(`Unknown agent for PR review: ${body.agent}`);
     }
 
-    const taskEntry = buildPrTaskEntry(body, normalizedAgent);
-    const processed = await loadProcessedTasks();
-    if (processed.includes(taskEntry.id) || inflightPrTasks.has(taskEntry.id)) {
-      return { id: taskEntry.id, agent: normalizedAgent, status: 'deduped', queued: false };
+    if (!prReviewController) {
+      throw new Error('PR review controller is not configured');
     }
-
-    await writeTaskEntry(taskEntry);
-    startPrReviewTask(taskEntry);
-    return { id: taskEntry.id, agent: normalizedAgent, status: 'queued', queued: true };
+    const result = await prReviewController.submit({
+      ...body,
+      agent: normalizedAgent,
+      dir: REVIEW_TASKS_DIR,
+      policy: body.policy || {},
+    });
+    return { ...result, agent: normalizedAgent };
   }
 
   const { agent, task, repository, issue_number, issue_title, issue_url, commenter } = body;

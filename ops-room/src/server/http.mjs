@@ -10,19 +10,91 @@ import {
 import { initDirs } from '../services/task-store.mjs';
 import '../services/logs.mjs';
 import {
-  addComment, ensureLabel, removeLabel, addLabel
+  addComment, ensureLabel, removeLabel, addLabel, getCommitStatuses, createCommitStatus, ghApi
 } from '../services/github.mjs';
 import { handleTask, cancelTask } from '../workflows/github-code.mjs';
 import { runPrReviewWorkflow } from '../workflows/pr-review.mjs';
 import { ensureReviewLoopDir } from '../services/review-loop-store.mjs';
+import { createGitHubReviewStatusService } from '../services/github-review-status.mjs';
+import { transitionTask } from '../services/review-task-store.mjs';
+import { createPrReviewController } from '../workflows/pr-review-controller.mjs';
 import { handleHealth } from '../routes/health.mjs';
 import { handleTaskDetail, handleTasksList } from '../routes/tasks.mjs';
 import { handleLogsList } from '../routes/logs.mjs';
-import { handleWebhook, isPrReviewWebhook } from '../routes/webhook-routes.mjs';
+import { configurePrReviewController, handleWebhook, isPrReviewWebhook } from '../routes/webhook-routes.mjs';
 import { handleAgentsList } from '../routes/agents.mjs';
 import { handleOpenABInstances } from '../routes/openab-instances.mjs';
 import { handleStaticApp } from '../routes/static-app.mjs';
 import { sendJSON, verifyAuth, parseBody } from '../routes/helpers.mjs';
+
+const reviewStatus = createGitHubReviewStatusService({
+  getCommitStatuses: async ({ sha, agent }) => getCommitStatuses(sha, agent),
+  createCommitStatus: async ({ sha, state, description, targetUrl, context, agent }) => createCommitStatus({
+    sha,
+    state,
+    description,
+    targetUrl,
+    context,
+    agentKey: agent,
+  }),
+});
+
+async function executeControllerReview(task) {
+  try {
+    const result = await runPrReviewWorkflow({
+      agent: task.agent,
+      task: task.task,
+      task_type: 'review',
+      repository: task.repository,
+      pr: task.pr,
+      commenter: task.commenter || 'controller',
+      // Auto-fix remains disabled until the separate child-task workflow exists.
+      mode: 'review',
+      head_sha: task.headSha,
+    });
+    const passed = result.review_event === 'APPROVE';
+    const state = passed ? 'PASSED' : result.review_event === 'REQUEST_CHANGES' ? 'CHANGES_REQUESTED' : 'NEEDS_HUMAN';
+    await transitionTask({
+      dir: task.dir,
+      id: task.task_id,
+      to: state,
+      reason: `review_${String(result.review_event || 'unknown').toLowerCase()}`,
+      patch: { completed_at: new Date().toISOString(), result },
+    });
+    await reviewStatus.set({
+      repository: task.repository,
+      sha: task.headSha,
+      state: passed ? 'success' : result.review_event === 'REQUEST_CHANGES' ? 'failure' : 'error',
+      description: passed ? 'Approved' : result.review_event === 'REQUEST_CHANGES' ? 'Changes requested' : 'Review requires human attention',
+      agent: task.agent,
+    });
+  } catch (error) {
+    const message = error?.message || String(error);
+    await transitionTask({
+      dir: task.dir,
+      id: task.task_id,
+      to: 'ERROR',
+      reason: 'review_execution_error',
+      patch: { completed_at: new Date().toISOString(), error: message.slice(0, 2000) },
+    });
+    await reviewStatus.set({
+      repository: task.repository,
+      sha: task.headSha,
+      state: 'error',
+      description: 'Review could not complete',
+      agent: task.agent,
+    });
+    console.error(`[pr-review-controller] ${task.repository}#${task.pr} failed:`, message.slice(0, 300));
+  }
+}
+
+configurePrReviewController(createPrReviewController({
+  fetchPullRequest: async ({ repository, pr, agent }) => ghApi('GET', `repos/${repository}/pulls/${pr}`, agent),
+  setCommitStatus: (status) => reviewStatus.set(status),
+  dispatchReview: (task) => {
+    setImmediate(() => { executeControllerReview(task).catch((error) => console.error('[pr-review-controller] unhandled execution error:', error)); });
+  },
+}));
 
 // ── Server ──────────────────────────────────────────────────────────────────
 
@@ -281,7 +353,10 @@ startIssuePoller({
     cancelTask,
   }),
 }).catch((e) => console.error('[server] poller fatal:', e.message));
-startPrReviewPoller().catch((e) => console.error('[server] pr-poller fatal:', e.message));
+// PR review work is submitted only through the SHA-aware controller. The old
+// in-process PR scanner remains intentionally disabled; GitHub Actions provides
+// the event and recovery producer.
+console.log('[pr-poller] direct PR auto-review poller disabled; controller ingress is authoritative');
 server.listen(PORT, () => {
   console.log(`OpenAB webhook listening on http://0.0.0.0:${PORT}`);
   console.log(`  POST /webhook   - Receive issue commands`);
