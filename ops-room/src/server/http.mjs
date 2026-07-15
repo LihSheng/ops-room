@@ -16,7 +16,7 @@ import { handleTask, cancelTask } from '../workflows/github-code.mjs';
 import { runPrReviewWorkflow } from '../workflows/pr-review.mjs';
 import { ensureReviewLoopDir } from '../services/review-loop-store.mjs';
 import { createGitHubReviewStatusService } from '../services/github-review-status.mjs';
-import { transitionTask } from '../services/review-task-store.mjs';
+import { requestCancellation, transitionTask } from '../services/review-task-store.mjs';
 import { createPrReviewController } from '../workflows/pr-review-controller.mjs';
 import { createFixChildTask } from '../workflows/fix-task-controller.mjs';
 import { reconcileReviewTasks } from '../services/review-reconciler.mjs';
@@ -166,6 +166,24 @@ const server = createServer(async (req, res) => {
       const data = await handleTasksList();
       sendJSON(res, 200, data);
     } catch { sendJSON(res, 200, { tasks: [] }); }
+    return;
+  }
+
+  const reviewCancelMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/cancel$/);
+  if (req.method === 'POST' && reviewCancelMatch) {
+    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    try {
+      const body = await parseBody(req);
+      const task = await requestCancellation({
+        dir: REVIEW_TASKS_DIR,
+        id: reviewCancelMatch[1],
+        actor: String(body?.actor || 'operator'),
+        reason: String(body?.reason || 'operator_requested'),
+      });
+      sendJSON(res, 202, { task });
+    } catch (error) {
+      sendJSON(res, 409, { error: error?.message || 'Cancellation failed' });
+    }
     return;
   }
 
