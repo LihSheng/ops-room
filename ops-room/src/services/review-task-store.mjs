@@ -133,11 +133,14 @@ export async function transitionTask({ dir, id, to, reason, patch = {} }) {
 }
 
 export async function requestCancellation({ dir, id, actor = 'unknown', reason = 'requested' }) {
+  const current = await readTask({ dir, id });
+  if (!current) throw new Error(`Task not found: ${id}`);
+  const to = current.state === 'QUEUED' || current.state === 'FIX_QUEUED' ? 'CANCELLED' : 'CANCEL_REQUESTED';
   return transitionTask({
     dir,
     id,
-    to: 'CANCEL_REQUESTED',
-    reason: 'cancellation_requested',
+    to,
+    reason: to === 'CANCELLED' ? 'queued_cancellation_requested' : 'cancellation_requested',
     patch: {
       cancellation: { actor, reason, requested_at: now() },
     },

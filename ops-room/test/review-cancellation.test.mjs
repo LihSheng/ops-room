@@ -6,6 +6,16 @@ import test from 'node:test';
 
 import { createOrClaimTask, requestCancellation, transitionTask } from '../src/services/review-task-store.mjs';
 
+test('queued work is cancelled immediately without waiting for a worker', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ops-room-cancel-'));
+  const { task } = await createOrClaimTask({
+    dir,
+    input: { repository: 'LihSheng/LinkUp', pr: 42, headSha: 'b'.repeat(40), agent: 'professor', mode: 'review' },
+  });
+  const cancelled = await requestCancellation({ dir, id: task.id, actor: 'operator', reason: 'obsolete' });
+  assert.equal(cancelled.state, 'CANCELLED');
+});
+
 test('cancellation is cooperative and terminal once acknowledged', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ops-room-cancel-'));
   const { task } = await createOrClaimTask({
