@@ -6,6 +6,10 @@ import { buildPrReviewPrompt } from '../server/pr-review-payload.mjs';
 import { askAI } from './chat-response.mjs';
 import { parseStructuredReview } from './review-result.mjs';
 
+export function isCurrentReviewHead({ expectedSha, currentSha }) {
+  return !expectedSha || expectedSha === currentSha;
+}
+
 export function renderStructuredReview(result) {
   const findings = result.findings.length === 0
     ? 'None.'
@@ -65,6 +69,9 @@ export async function runPrReviewWorkflow(payload) {
   } = payload;
 
   const prContext = await fetchPrReviewContext({ repository, pr, agent });
+  if (!isCurrentReviewHead({ expectedSha: head_sha, currentSha: prContext.headSha })) {
+    return { mode: 'pr_review', repository, pr, agent, review_event: 'SUPERSEDED', reviewed_sha: head_sha, current_sha: prContext.headSha };
+  }
   const prompt = buildPrReviewPrompt({
     agent: AGENT_NAMES[agent] || agent,
     task,
@@ -100,6 +107,11 @@ export async function runPrReviewWorkflow(payload) {
       // One regeneration prevents malformed model output from becoming an accidental approval.
       reviewText = (await askAI(`${prompt}\n\nYour previous response was invalid: ${error.message}. Return valid JSON only.`)).trim();
       structured = parseStructuredReview(reviewText);
+    }
+    const latestPr = ghApi('GET', `repos/${repository}/pulls/${pr}`, agent);
+    const latestSha = latestPr?.head?.sha;
+    if (!isCurrentReviewHead({ expectedSha: head_sha, currentSha: latestSha })) {
+      return { mode: 'pr_review', repository, pr, agent, review_event: 'SUPERSEDED', reviewed_sha: head_sha, current_sha: latestSha };
     }
     event = structured.verdict === 'NEEDS_HUMAN' ? 'COMMENT' : structured.verdict;
     const renderedReview = renderStructuredReview(structured);
