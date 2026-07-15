@@ -73,6 +73,11 @@ export const LABEL_COLORS = {
   done: '0e8a16',
   pr: '0e8a16',
   needsHuman: 'b60205',
+  reviewPending: 'c5def5',
+  changesRequested: 'd73a4a',
+  reviewApproved: '0e8a16',
+  reviewLoop: 'bfdadc',
+  autoFixFailed: 'd73a4a',
 };
 
 export function normalizeAgent(agent) {

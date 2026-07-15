@@ -813,6 +813,11 @@ async function ensureLabels(ctx) {
   ensureLabel('openab/pr-created', LABEL_COLORS.pr);
   ensureLabel('openab/needs-human', LABEL_COLORS.needsHuman);
   ensureLabel('openab/done', LABEL_COLORS.done);
+  ensureLabel('openab/review-pending', LABEL_COLORS.reviewPending);
+  ensureLabel('openab/changes-requested', LABEL_COLORS.changesRequested);
+  ensureLabel('openab/review-approved', LABEL_COLORS.reviewApproved);
+  ensureLabel('openab/review-loop', LABEL_COLORS.reviewLoop);
+  ensureLabel('openab/auto-fix-failed', LABEL_COLORS.autoFixFailed);
 }
 
 // ── Run coding workflow ─────────────────────────────────────────────────────
@@ -1021,4 +1026,11 @@ export {
   buildBranchName,
   cancelTask,
   registerAgentProcess,
+  commitIfChanges,
+  pushBranch,
+  hasGitChanges,
+  getChangedFiles,
+  getGitDiffStat,
+  configureGitAuthor,
+  execLogged,
 };
