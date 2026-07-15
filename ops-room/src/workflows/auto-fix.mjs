@@ -6,6 +6,7 @@ import { AGENT_NAMES, BOT_USERS } from '../lib/config.mjs';
 import { addComment, transitionLabels } from '../services/github.mjs';
 import { updateReviewLoopState, advanceLoopIteration, isLoopExhausted, ensureReviewLoopDir } from '../services/review-loop-store.mjs';
 import { askAI } from './chat-response.mjs';
+import { classifyFixOutcome } from './fix-outcome.mjs';
 
 const MAX_AUTO_FIX_ITERATIONS = parseInt(process.env.OPENAB_MAX_REVIEW_ITERATIONS || '3', 10);
 
@@ -316,7 +317,7 @@ Use the correct file paths from the PR diff above.`;
       console.log(`[auto-fix] AI output preview: ${fixOutput.slice(0, 500)}`);
       await addComment(pr, `**${AGENT_NAMES[fixAgent] || fixAgent}** — couldn't generate fix 🤷\n\nThe AI could not produce parseable file changes. Re-reviewing as-is.`, fixAgent);
       await advanceLoopIteration(repository, pr, { event: 'fix_generation_failed', summary: 'No parseable file changes', fixAgent });
-      return { ok: true, message: 'No fix generated', needsReReview: true };
+      return { ok: false, message: 'No fix generated', outcome: classifyFixOutcome({ kind: 'NO_PARSEABLE_OUTPUT' }) };
     }
 
     // Write files on the host mount (visible inside the container)
@@ -348,7 +349,7 @@ Use the correct file paths from the PR diff above.`;
       console.log('[auto-fix] No source changes produced');
       await addComment(pr, `**${AGENT_NAMES[fixAgent] || fixAgent}** — no changes needed 🤷\n\nThe agent reviewed the feedback but found nothing to fix. Re-reviewing as-is.`, fixAgent);
       await advanceLoopIteration(repository, pr, { event: 'no_changes', summary: 'No source changes', fixAgent });
-      return { ok: true, message: 'No changes needed', needsReReview: true };
+      return { ok: false, message: 'No changes needed', outcome: classifyFixOutcome({ kind: 'NO_SOURCE_CHANGES' }) };
     }
 
     // Commit and push from inside the container
@@ -391,7 +392,7 @@ Use the correct file paths from the PR diff above.`;
       console.error(`[auto-fix] Failed to clean up container workspace:`, e?.message?.slice(0, 200));
     }
 
-    return { ok: true, message: `Fix pushed (${realChanges.length} file(s))`, needsReReview: true };
+    return { ok: true, message: `Fix pushed (${realChanges.length} file(s))`, outcome: classifyFixOutcome({ kind: 'FIX_PUSHED' }) };
 
   } catch (error) {
     const msg = error?.message || String(error);
