@@ -13,10 +13,32 @@ function ts() {
   return new Date().toISOString().replace('T', ' ').replace(/\.\d{3}Z/, '');
 }
 
+/** Sanitize error messages: strip internal file paths, container paths, and sensitive env vars before posting to PR comments. */
+function sanitizeForUser(text) {
+  if (!text) return text;
+  return text
+    // Replace absolute paths with safe placeholders
+    .replace(/\/home\/[^/\s]+(\/[^\s:)]*)?/g, '[internal-path]')
+    .replace(/\/root\/[^\s:)]*/g, '[internal-path]')
+    // Replace container workspace paths
+    .replace(/\/home\/node\/[^\s:)]*/g, '[container-path]')
+    // Replace /tmp/ paths
+    .replace(/\/tmp\/[^\s:)]*/g, '[tmp-path]')
+    // Replace data directory references
+    .replace(/\/data\/[^\s:)]*/g, '[data-path]')
+    // Strip env var values that look like tokens
+    .replace(/(ghp|gho|ghu|ghs)_[A-Za-z0-9]{4,}/g, '[token-redacted]')
+    // Strip docker container names (but keep the service name if useful)
+    .replace(/openab-opencode-(professor|1|2)/g, 'agent-container')
+    ;
+}
+
 async function appendToMemory(entry) {
   try {
     await appendFile(SHARED_MEMORY, `- ${ts()}: [Auto-Fix] ${entry}\n`);
-  } catch { }
+  } catch (e) {
+    console.error(`[auto-fix] Failed to write to shared memory:`, e?.message?.slice(0, 200));
+  }
 }
 
 /**
@@ -129,7 +151,9 @@ async function prepareFixWorkspace(repository, pr, fixAgent, headRef) {
   const containerWorkspace = `/home/node/workspace/pr-${pr}-fix`;
 
   // Clean existing — both host and container sides
-  try { await rm(hostWorkspace, { recursive: true, force: true }); } catch { }
+  try { await rm(hostWorkspace, { recursive: true, force: true }); } catch (e) {
+    console.error(`[auto-fix] Failed to clean host workspace:`, e?.message?.slice(0, 200));
+  }
   await mkdir(hostWorkspace, { recursive: true });
 
   const enc = (cmd) => JSON.stringify(cmd);
@@ -139,7 +163,9 @@ async function prepareFixWorkspace(repository, pr, fixAgent, headRef) {
     execSync(`docker exec ${container} rm -rf "${containerWorkspace}"`, {
       encoding: 'utf-8', timeout: 10_000,
     });
-  } catch { }
+  } catch (e) {
+    console.error(`[auto-fix] Failed to clean container workspace:`, e?.message?.slice(0, 200));
+  }
 
   // Clone via gh auth inside container (sets up git credential helpers automatically)
   console.log(`[auto-fix] Cloning ${repository} inside ${container} (agent: ${fixAgent})...`);
@@ -157,7 +183,8 @@ async function prepareFixWorkspace(repository, pr, fixAgent, headRef) {
     execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git checkout "${branch}"`)}`, {
       encoding: 'utf-8', timeout: 30_000, stdio: 'pipe',
     });
-  } catch {
+  } catch (e) {
+    console.error(`[auto-fix] First checkout failed, trying fetch-from-PR fallback:`, e?.message?.slice(0, 200));
     execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git fetch origin pull/${pr}/head:"${branch}" && git checkout "${branch}"`)}`, {
       encoding: 'utf-8', timeout: 30_000, stdio: 'pipe',
     });
@@ -232,7 +259,9 @@ export async function runAutoFixWorkflow(params) {
     let prDiff = '';
     try {
       prDiff = ghApiText('GET', `repos/${repository}/pulls/${pr}`, reviewAgent, ['Accept: application/vnd.github.v3.diff']);
-    } catch { }
+    } catch (e) {
+      console.error(`[auto-fix] Failed to fetch PR diff:`, e?.message?.slice(0, 200));
+    }
     const safeDiff = (prDiff || '').slice(0, 30000);
 
     const fixPrompt = `You are an expert software engineer fixing code based on a PR review.
@@ -304,7 +333,9 @@ Use the correct file paths from the PR diff above.`;
       statusOut = execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git status --short`)}`, {
         encoding: 'utf-8', timeout: 10_000,
       }).trim();
-    } catch { }
+    } catch (e) {
+      console.error(`[auto-fix] Failed to get git status:`, e?.message?.slice(0, 200));
+    }
 
     const realChanges = statusOut.split('\n')
       .filter(l => l.trim())
@@ -338,8 +369,10 @@ Use the correct file paths from the PR diff above.`;
     } catch (e) {
       const msg = e.stderr?.toString() || e.message;
       console.error(`[auto-fix] Push failed: ${msg.slice(0, 500)}`);
-      await addComment(pr, `**Auto-Fix** — push failed ❌\n\n\`\`\`\n${msg.slice(0, 2000)}\n\`\`\``, reviewAgent);
-      return { ok: false, message: `Push failed: ${msg.slice(0, 200)}` };
+      // Surface a sanitized, user-friendly message in the PR comment
+      const userMsg = sanitizeForUser(msg).slice(0, 500);
+      await addComment(pr, `**Auto-Fix** — push failed ❌\n\nCould not push the fix to the PR branch. The error has been logged.\n\nEscalating.`, reviewAgent);
+      return { ok: false, message: `Push failed` };
     }
 
     await addComment(pr, `**${AGENT_NAMES[fixAgent] || fixAgent}** — fix pushed ✅\n\nI've addressed the review feedback and pushed to \`${headRef}\`. Re-reviewing now.`, fixAgent);
@@ -354,21 +387,24 @@ Use the correct file paths from the PR diff above.`;
     // Cleanup workspace inside container
     try {
       execSync(`docker exec ${container} rm -rf "${containerWorkspace}"`, { encoding: 'utf-8', timeout: 10_000 });
-    } catch { }
+    } catch (e) {
+      console.error(`[auto-fix] Failed to clean up container workspace:`, e?.message?.slice(0, 200));
+    }
 
     return { ok: true, message: `Fix pushed (${realChanges.length} file(s))`, needsReReview: true };
 
   } catch (error) {
     const msg = error?.message || String(error);
     console.error(`[auto-fix] Failed for ${repository}#${pr}:`, msg.slice(0, 500));
-    await addComment(pr, `**Auto-Fix** — fix attempt failed ❌\n\n\`\`\`\n${msg.slice(0, 2000)}\n\`\`\`\n\nEscalating.`, reviewAgent);
+    // Surface only a sanitized, user-friendly message in the PR comment
+    await addComment(pr, `**Auto-Fix** — fix attempt failed ❌\n\nSomething went wrong while applying the fix. The error has been logged internally.\n\nEscalating.`, reviewAgent);
     await updateReviewLoopState(repository, pr, { status: 'failed' });
     await transitionLabels(
       { issueNumber: pr, agent: reviewAgent },
       { remove: ['openab/review-loop'], add: ['openab/needs-human', 'openab/auto-fix-failed'] }
     );
-    await appendToMemory(`Auto-fix FAILED for ${repository}#${pr}: ${msg.slice(0, 200)}`);
-    return { ok: false, message: msg };
+    await appendToMemory(`Auto-fix FAILED for ${repository}#${pr}: ${sanitizeForUser(msg).slice(0, 200)}`);
+    return { ok: false, message: 'Auto-fix failed' };
   }
 }
 

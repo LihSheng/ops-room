@@ -164,7 +164,9 @@ async function listOpenIssuesForAgent(agentKey) {
           results.push(issue);
         }
       }
-    } catch {}
+    } catch (e) {
+      console.error(`[http] Failed to fetch issues for label "${labelQuery}":`, e?.message?.slice(0, 200));
+    }
   }
   return results;
 }

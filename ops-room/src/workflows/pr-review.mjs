@@ -25,7 +25,9 @@ async function appendToMemory(entry) {
   try {
     const ts = new Date().toISOString().replace('T', ' ').replace(/\.\d{3}Z/, '');
     await appendFile(SHARED_MEMORY, `- ${ts}: [GitHub Issue] ${entry}\n`);
-  } catch { }
+  } catch (e) {
+    console.error(`[pr-review] Failed to write to shared memory:`, e?.message?.slice(0, 200));
+  }
 }
 
 async function fetchPrReviewContext({ repository, pr, agent }) {
