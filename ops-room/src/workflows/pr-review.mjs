@@ -5,6 +5,7 @@ import { appendFile } from 'node:fs/promises';
 import { buildPrReviewPrompt } from '../server/pr-review-payload.mjs';
 import { askAI } from './chat-response.mjs';
 import { parseStructuredReview } from './review-result.mjs';
+import { claimEffect, completeEffect } from '../services/review-effect-ledger.mjs';
 
 export function isCurrentReviewHead({ expectedSha, currentSha }) {
   return !expectedSha || expectedSha === currentSha;
@@ -66,6 +67,8 @@ export async function runPrReviewWorkflow(payload) {
     commenter = 'unknown',
     comment_id,
     head_sha,
+    task_id,
+    dir,
   } = payload;
 
   const prContext = await fetchPrReviewContext({ repository, pr, agent });
@@ -117,7 +120,22 @@ export async function runPrReviewWorkflow(payload) {
     structuredReview = structured;
     event = structured.verdict === 'NEEDS_HUMAN' ? 'COMMENT' : structured.verdict;
     const renderedReview = renderStructuredReview(structured);
-    addPullRequestReview(pr, renderedReview, event, agent);
+    if (dir && task_id) {
+      const effect = await claimEffect({
+        dir,
+        taskId: task_id,
+        kind: 'github_review',
+        fingerprint: `${head_sha || prContext.headSha}:${event}:${renderedReview}`,
+      });
+      if (!effect.claimed) {
+        console.warn(`[pr-review] Skipping duplicate GitHub review effect for ${repository}#${pr}`);
+        return { mode: 'pr_review', repository, pr, agent, review_event: event, structured_review: structured, duplicate_effect: true };
+      }
+      addPullRequestReview(pr, renderedReview, event, agent);
+      await completeEffect({ dir, effectId: effect.effect.id, result: { event, sha: head_sha || prContext.headSha } });
+    } else {
+      addPullRequestReview(pr, renderedReview, event, agent);
+    }
     console.log(`[pr-review] Posted ${event} review on ${repository}#${pr} as ${agent}`);
   }
 
