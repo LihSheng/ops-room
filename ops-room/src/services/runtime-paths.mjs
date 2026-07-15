@@ -21,7 +21,7 @@ export const OPENCODE_API = 'https://opencode.ai/zen/go/v1/chat/completions';
 export const NVIDIA_API = 'https://integrate.api.nvidia.com/v1/chat/completions';
 export const NVIDIA_MODEL = process.env.NVIDIA_MODEL || 'meta/llama-3.1-70b-instruct';
 export const OPENCODE_MODEL = process.env.OPENCODE_MODEL || 'deepseek-v4-flash';
-export const OPENCODE_MAX_TOKEN = parseInt(process.env.OPENCODE_MAX_TOKEN || '4096', 10);
+export const OPENCODE_MAX_TOKEN = parseInt(process.env.OPENCODE_MAX_TOKEN || process.env.OPENCODE_MAX_TOKENS || '8192', 10);
 export const REPO = process.env.OPENAB_REPO || 'LihSheng/LinkUp';
 
 export const FORBIDDEN_FILE_PATTERNS = [
