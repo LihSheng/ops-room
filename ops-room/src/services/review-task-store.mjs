@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const TASK_SCHEMA = 'ops-room.review-task.v2';
@@ -69,6 +69,16 @@ export async function readTask({ dir, id }) {
     if (error?.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+export async function listReviewTasks({ dir, limit = 100 }) {
+  let names;
+  try { names = await readdir(dir); } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+  const tasks = (await Promise.all(names.filter((name) => name.endsWith('.json')).map((name) => readTask({ dir, id: name.slice(0, -5) })))).filter(Boolean);
+  return tasks.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, limit);
 }
 
 export async function createOrClaimTask({ dir, input, trigger = 'unknown', policy = {}, parentTaskId = null, kind = 'review' }) {

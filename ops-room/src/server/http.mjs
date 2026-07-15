@@ -16,7 +16,7 @@ import { handleTask, cancelTask } from '../workflows/github-code.mjs';
 import { runPrReviewWorkflow } from '../workflows/pr-review.mjs';
 import { ensureReviewLoopDir } from '../services/review-loop-store.mjs';
 import { createGitHubReviewStatusService } from '../services/github-review-status.mjs';
-import { requestCancellation, transitionTask } from '../services/review-task-store.mjs';
+import { listReviewTasks, requestCancellation, transitionTask } from '../services/review-task-store.mjs';
 import { createPrReviewController } from '../workflows/pr-review-controller.mjs';
 import { createFixChildTask } from '../workflows/fix-task-controller.mjs';
 import { reconcileReviewTasks } from '../services/review-reconciler.mjs';
@@ -177,6 +177,13 @@ const server = createServer(async (req, res) => {
       const data = await handleTasksList();
       sendJSON(res, 200, data);
     } catch { sendJSON(res, 200, { tasks: [] }); }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/review-tasks') {
+    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 100);
+    sendJSON(res, 200, { tasks: await listReviewTasks({ dir: REVIEW_TASKS_DIR, limit }) });
     return;
   }
 
