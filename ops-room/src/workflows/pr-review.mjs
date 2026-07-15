@@ -95,6 +95,7 @@ export async function runPrReviewWorkflow(payload) {
 
   const responseMode = task_type === 'chat' ? 'chat' : 'review';
   let event = 'COMMENT';
+  let structuredReview = null;
 
   if (responseMode === 'chat') {
     addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
@@ -113,6 +114,7 @@ export async function runPrReviewWorkflow(payload) {
     if (!isCurrentReviewHead({ expectedSha: head_sha, currentSha: latestSha })) {
       return { mode: 'pr_review', repository, pr, agent, review_event: 'SUPERSEDED', reviewed_sha: head_sha, current_sha: latestSha };
     }
+    structuredReview = structured;
     event = structured.verdict === 'NEEDS_HUMAN' ? 'COMMENT' : structured.verdict;
     const renderedReview = renderStructuredReview(structured);
     addPullRequestReview(pr, renderedReview, event, agent);
@@ -127,5 +129,6 @@ export async function runPrReviewWorkflow(payload) {
     pr,
     agent,
     review_event: event,
+    structured_review: structuredReview,
   };
 }

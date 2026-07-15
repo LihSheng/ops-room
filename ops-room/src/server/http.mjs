@@ -18,6 +18,7 @@ import { ensureReviewLoopDir } from '../services/review-loop-store.mjs';
 import { createGitHubReviewStatusService } from '../services/github-review-status.mjs';
 import { transitionTask } from '../services/review-task-store.mjs';
 import { createPrReviewController } from '../workflows/pr-review-controller.mjs';
+import { createFixChildTask } from '../workflows/fix-task-controller.mjs';
 import { handleHealth } from '../routes/health.mjs';
 import { handleTaskDetail, handleTasksList } from '../routes/tasks.mjs';
 import { handleLogsList } from '../routes/logs.mjs';
@@ -54,13 +55,31 @@ async function executeControllerReview(task) {
     });
     const passed = result.review_event === 'APPROVE';
     const state = passed ? 'PASSED' : result.review_event === 'REQUEST_CHANGES' ? 'CHANGES_REQUESTED' : 'NEEDS_HUMAN';
-    await transitionTask({
+    const terminalTask = await transitionTask({
       dir: task.dir,
       id: task.task_id,
       to: state,
       reason: `review_${String(result.review_event || 'unknown').toLowerCase()}`,
       patch: { completed_at: new Date().toISOString(), result },
     });
+    if (state === 'CHANGES_REQUESTED' && task.mode === 'auto-fix') {
+      const child = await createFixChildTask({
+        dir: task.dir,
+        repository: task.repository,
+        pr: task.pr,
+        reviewedSha: task.headSha,
+        parentTaskId: task.task_id,
+        agent: task.agent,
+        policy: task.policy,
+      });
+      await transitionTask({
+        dir: task.dir,
+        id: terminalTask.id,
+        to: 'FIX_QUEUED',
+        reason: child.created ? 'fix_child_created' : 'fix_child_deduplicated',
+        patch: { fix_child_task_id: child.task.id },
+      });
+    }
     await reviewStatus.set({
       repository: task.repository,
       sha: task.headSha,
