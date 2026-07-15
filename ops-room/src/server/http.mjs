@@ -51,7 +51,7 @@ async function executeControllerFix({ dir, taskId }) {
     dir,
     id: taskId,
     instanceId: `ops-room-${process.pid}`,
-    runWorker: ({ task }) => runFixChildWorker({ task, deps }),
+    runWorker: ({ task }) => runFixChildWorker({ task, deps, dir }),
   });
 }
 

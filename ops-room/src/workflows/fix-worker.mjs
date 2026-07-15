@@ -1,3 +1,5 @@
+import { claimEffect, completeEffect } from '../services/review-effect-ledger.mjs';
+
 export class FixSupersededError extends Error {
   constructor(reviewedSha, currentSha) {
     super(`Fix task superseded: reviewed SHA ${reviewedSha} is not current SHA ${currentSha}`);
@@ -7,7 +9,7 @@ export class FixSupersededError extends Error {
   }
 }
 
-export async function runFixChildWorker({ task, deps }) {
+export async function runFixChildWorker({ task, deps, dir }) {
   const reviewedSha = task?.reviewed_sha;
   const currentAtStart = await deps.fetchCurrentHead(task);
   assertFixHeadCurrent({ reviewedSha, currentSha: currentAtStart });
@@ -30,8 +32,24 @@ export async function runFixChildWorker({ task, deps }) {
     if (beforePushTask?.state === 'CANCEL_REQUESTED' || beforePushTask?.state === 'CANCELLED') {
       return { outcome: 'CANCELLED' };
     }
+    let pushEffect;
+    if (dir) {
+      pushEffect = await claimEffect({
+        dir,
+        taskId: task.id,
+        kind: 'git_push',
+        fingerprint: `${task.reviewed_sha}:${task.head_ref || ''}`,
+      });
+      if (!pushEffect.claimed) {
+        if (pushEffect.effect?.state === 'COMPLETED' && pushEffect.effect.result?.new_sha) {
+          return { outcome: 'FIX_PUSHED', new_sha: pushEffect.effect.result.new_sha, duplicate_effect: true };
+        }
+        return { outcome: 'NEEDS_HUMAN', reason: 'ambiguous_push_effect' };
+      }
+    }
     const pushed = await deps.pushWorkspace({ task, workspace });
     if (!pushed?.newSha) throw new Error('Fix push did not return a new SHA');
+    if (pushEffect) await completeEffect({ dir, effectId: pushEffect.effect.id, result: { new_sha: pushed.newSha } });
     return { outcome: 'FIX_PUSHED', new_sha: pushed.newSha };
   } finally {
     if (workspace) await deps.cleanupWorkspace?.({ task, workspace });

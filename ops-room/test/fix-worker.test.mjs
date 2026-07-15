@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { FixSupersededError, runFixChildWorker } from '../src/workflows/fix-worker.mjs';
@@ -40,4 +43,16 @@ test('fix child reports no source changes and still cleans the workspace', async
   assert.equal(result.outcome, 'NEEDS_HUMAN');
   assert.ok(d.calls.includes('cleanup'));
   assert.ok(!d.calls.includes('push'));
+});
+
+test('completed push effect prevents a duplicate push and retains the pushed SHA', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ops-room-fix-push-ledger-'));
+  const task = { id: 'fix:1', repository: 'LihSheng/LinkUp', pr: 1, reviewed_sha: 'a'.repeat(40) };
+  const first = deps();
+  await runFixChildWorker({ task, deps: first, dir });
+  const second = deps();
+  const result = await runFixChildWorker({ task, deps: second, dir });
+  assert.deepEqual(result, { outcome: 'FIX_PUSHED', new_sha: 'b'.repeat(40), duplicate_effect: true });
+  assert.ok(!second.calls.includes('push'));
+  assert.ok(second.calls.includes('cleanup'));
 });
