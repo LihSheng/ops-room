@@ -181,7 +181,7 @@ async function listUnreviewedPRs() {
       `gh api repos/${REPO}/pulls?state=open&per_page=50&sort=updated&direction=desc`,
       { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
     );
-    return JSON.parse(out).filter(pr => !pr.draft);
+    return JSON.parse(out);
   } catch {
     return [];
   }
