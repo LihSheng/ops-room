@@ -128,11 +128,18 @@ async function prepareFixWorkspace(repository, pr, fixAgent, headRef) {
   const hostWorkspace = join(dataDir, 'agents', agentHomeName, 'workspace', `pr-${pr}-fix`);
   const containerWorkspace = `/home/node/workspace/pr-${pr}-fix`;
 
-  // Clean existing
+  // Clean existing — both host and container sides
   try { await rm(hostWorkspace, { recursive: true, force: true }); } catch { }
   await mkdir(hostWorkspace, { recursive: true });
 
   const enc = (cmd) => JSON.stringify(cmd);
+
+  // Remove any stale workspace inside the container first
+  try {
+    execSync(`docker exec ${container} rm -rf "${containerWorkspace}"`, {
+      encoding: 'utf-8', timeout: 10_000,
+    });
+  } catch { }
 
   // Clone via gh auth inside container (sets up git credential helpers automatically)
   console.log(`[auto-fix] Cloning ${repository} inside ${container} (agent: ${fixAgent})...`);
