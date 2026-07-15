@@ -133,15 +133,10 @@ async function prepareFixWorkspace(repository, pr, fixAgent, headRef) {
 
   const enc = (cmd) => JSON.stringify(cmd);
 
-  // Clone via gh auth inside container
+  // Clone via gh auth inside container (sets up git credential helpers automatically)
   console.log(`[auto-fix] Cloning ${repository} inside ${container} (agent: ${fixAgent})...`);
   execSync(`docker exec ${container} bash -c ${enc(`cd /home/node && gh repo clone ${repository} "${containerWorkspace}"`)}`, {
     encoding: 'utf-8', timeout: 120_000, stdio: 'pipe',
-  });
-
-  // Set authenticated remote
-  execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git remote set-url origin https://github.com/${repository}.git`)}`, {
-    encoding: 'utf-8', timeout: 30_000,
   });
 
   // Fetch and checkout PR branch
