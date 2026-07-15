@@ -15,8 +15,16 @@ export async function runFixChildWorker({ task, deps, dir }) {
   assertFixHeadCurrent({ reviewedSha, currentSha: currentAtStart });
 
   let workspace;
+  let heartbeatTimer;
   try {
     workspace = await deps.prepareWorkspace(task);
+    const heartbeatIntervalMs = deps.heartbeatIntervalMs || 60_000;
+    if (typeof deps.renewLease === 'function') {
+      heartbeatTimer = setInterval(() => {
+        deps.renewLease(task).catch((error) => console.error(`[fix-worker] lease heartbeat failed for ${task.id}:`, error?.message || error));
+      }, heartbeatIntervalMs);
+      heartbeatTimer.unref?.();
+    }
     await deps.renewLease?.(task);
     const beforeApply = await deps.readTask?.(task);
     if (beforeApply?.state === 'CANCEL_REQUESTED' || beforeApply?.state === 'CANCELLED') {
@@ -52,6 +60,7 @@ export async function runFixChildWorker({ task, deps, dir }) {
     if (pushEffect) await completeEffect({ dir, effectId: pushEffect.effect.id, result: { new_sha: pushed.newSha } });
     return { outcome: 'FIX_PUSHED', new_sha: pushed.newSha };
   } finally {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (workspace) await deps.cleanupWorkspace?.({ task, workspace });
   }
 }
