@@ -20,6 +20,7 @@ import { requestCancellation, transitionTask } from '../services/review-task-sto
 import { createPrReviewController } from '../workflows/pr-review-controller.mjs';
 import { createFixChildTask } from '../workflows/fix-task-controller.mjs';
 import { reconcileReviewTasks } from '../services/review-reconciler.mjs';
+import { commitStatusForReviewEvent, taskStateForReviewEvent } from '../workflows/review-outcome.mjs';
 import { handleHealth } from '../routes/health.mjs';
 import { handleTaskDetail, handleTasksList } from '../routes/tasks.mjs';
 import { handleLogsList } from '../routes/logs.mjs';
@@ -54,8 +55,8 @@ async function executeControllerReview(task) {
       mode: 'review',
       head_sha: task.headSha,
     });
-    const passed = result.review_event === 'APPROVE';
-    const state = passed ? 'PASSED' : result.review_event === 'REQUEST_CHANGES' ? 'CHANGES_REQUESTED' : 'NEEDS_HUMAN';
+    const status = commitStatusForReviewEvent(result.review_event);
+    const state = taskStateForReviewEvent(result.review_event);
     const terminalTask = await transitionTask({
       dir: task.dir,
       id: task.task_id,
@@ -84,8 +85,8 @@ async function executeControllerReview(task) {
     await reviewStatus.set({
       repository: task.repository,
       sha: task.headSha,
-      state: passed ? 'success' : result.review_event === 'REQUEST_CHANGES' ? 'failure' : 'error',
-      description: passed ? 'Approved' : result.review_event === 'REQUEST_CHANGES' ? 'Changes requested' : 'Review requires human attention',
+      state: status.state,
+      description: status.description,
       agent: task.agent,
     });
   } catch (error) {
