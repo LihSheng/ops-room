@@ -16,13 +16,13 @@ test('reconciler recovers expired active review tasks and ignores queued work', 
   await createOrClaimTask({ dir, input: { repository: 'LihSheng/LinkUp', pr: 2, headSha: 'b'.repeat(40), agent: 'professor' } });
 
   const result = await reconcileReviewTasks({ dir, now: '2030-01-01T00:31:00.000Z' });
-  assert.deepEqual(result, { scanned: 2, recovered: [stale.id], corrupt: [] });
-  assert.equal((await readTask({ dir, id: stale.id })).state, 'ERROR');
+  assert.deepEqual(result, { scanned: 2, recovered: [stale.id], re_dispatched: [stale.id], corrupt: [] });
+  assert.equal((await readTask({ dir, id: stale.id })).state, 'QUEUED');
 });
 
 test('reconciler isolates corrupt task records instead of aborting a cycle', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ops-room-reconciler-'));
   await writeFile(join(dir, 'corrupt.json'), '{ definitely not json');
   const result = await reconcileReviewTasks({ dir });
-  assert.deepEqual(result, { scanned: 1, recovered: [], corrupt: ['corrupt'] });
+  assert.deepEqual(result, { scanned: 1, recovered: [], re_dispatched: [], corrupt: ['corrupt'] });
 });

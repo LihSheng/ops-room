@@ -103,7 +103,22 @@ export async function runPrReviewWorkflow(payload) {
   let structuredReview = null;
 
   if (responseMode === 'chat') {
-    await addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
+    if (dir && task_id) {
+      const effect = await claimEffect({
+        dir,
+        taskId: task_id,
+        kind: 'github_issue_comment',
+        fingerprint: `${head_sha || prContext.headSha}:${comment_id || 'chat'}:${reviewText.slice(0, 80)}`,
+      });
+      if (!effect.claimed) {
+        console.warn(`[pr-review] Skipping duplicate comment effect for ${repository}#${pr}`);
+        return { mode: 'pr_chat', repository, pr, agent, review_event: 'COMMENT', duplicate_effect: true };
+      }
+      await addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
+      await completeEffect({ dir, effectId: effect.effect.id, result: { pr, agent, comment_id } });
+    } else {
+      await addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
+    }
     console.log(`[pr-review] Posted chat response on ${repository}#${pr} as ${agent}`);
   } else {
     let structured;

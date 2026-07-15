@@ -4,14 +4,28 @@ import { join } from 'node:path';
 const TASK_SCHEMA = 'ops-room.review-task.v2';
 const SAFE_ID = /^[A-Za-z0-9._:-]+$/;
 
+const ACTIVE_STATES = new Set(['CLAIMED', 'RUNNING', 'FIXING']);
+const CONCURRENCY_STATES = new Set(['CLAIMED', 'RUNNING', 'FIXING']);
+
+const DEFAULT_CONCURRENCY = {
+  global: parseInt(process.env.OPENAB_REVIEW_MAX_GLOBAL || '5', 10),
+  per_repository: parseInt(process.env.OPENAB_REVIEW_MAX_PER_REPO || '3', 10),
+  per_pr: parseInt(process.env.OPENAB_REVIEW_MAX_PER_PR || '1', 10),
+};
+
 const TRANSITIONS = new Map([
-  ['QUEUED', new Set(['CLAIMED', 'SUPERSEDED', 'CANCELLED', 'NEEDS_HUMAN', 'ERROR'])],
-  ['CLAIMED', new Set(['RUNNING', 'FIXING', 'SUPERSEDED', 'CANCEL_REQUESTED', 'ERROR'])],
-  ['RUNNING', new Set(['PASSED', 'CHANGES_REQUESTED', 'SUPERSEDED', 'CANCEL_REQUESTED', 'NEEDS_HUMAN', 'ERROR'])],
+  ['QUEUED', new Set(['CLAIMED', 'SUPERSEDED', 'CANCELLED', 'NEEDS_HUMAN', 'ERROR', 'PAUSED'])],
+  ['FIX_QUEUED', new Set(['CLAIMED', 'SUPERSEDED', 'CANCELLED', 'NEEDS_HUMAN', 'ERROR', 'PAUSED'])],
+  ['PAUSED', new Set(['QUEUED', 'FIX_QUEUED'])],
+  ['CLAIMED', new Set(['RUNNING', 'FIXING', 'SUPERSEDED', 'CANCEL_REQUESTED', 'ERROR', 'QUEUED'])],
+  ['RUNNING', new Set(['PASSED', 'CHANGES_REQUESTED', 'SUPERSEDED', 'CANCEL_REQUESTED', 'NEEDS_HUMAN', 'ERROR', 'QUEUED'])],
   ['CHANGES_REQUESTED', new Set(['FIX_QUEUED', 'NEEDS_HUMAN', 'CANCELLED'])],
-  ['FIX_QUEUED', new Set(['CLAIMED', 'SUPERSEDED', 'CANCELLED', 'NEEDS_HUMAN', 'ERROR'])],
   ['FIXING', new Set(['FIX_PUSHED', 'SUPERSEDED', 'CANCEL_REQUESTED', 'CANCELLED', 'NEEDS_HUMAN', 'ERROR'])],
   ['CANCEL_REQUESTED', new Set(['CANCELLED', 'SUPERSEDED', 'ERROR'])],
+  ['ERROR', new Set(['QUEUED', 'NEEDS_HUMAN'])],
+  ['NEEDS_HUMAN', new Set(['QUEUED'])],
+  ['SUPERSEDED', new Set(['QUEUED'])],
+  ['CANCELLED', new Set(['QUEUED'])],
 ]);
 
 function safePart(value, fallback = 'unknown') {
@@ -125,11 +139,19 @@ export async function createOrClaimTask({ dir, input, trigger = 'unknown', polic
   }
 }
 
-export async function transitionTask({ dir, id, to, reason, patch = {} }) {
+export async function transitionTask({ dir, id, to, reason, patch = {}, leaseEpoch }) {
   const current = await readTask({ dir, id });
   if (!current) throw new Error(`Task not found: ${id}`);
   if (!TRANSITIONS.get(current.state)?.has(to)) {
     throw new Error(`Invalid task transition: ${current.state} -> ${to}`);
+  }
+
+  // Lease epoch fencing: if a lease epoch is provided, reject transitions from
+  // a worker whose lease has been superseded.
+  if (leaseEpoch !== undefined && current.lease?.epoch !== undefined) {
+    if (leaseEpoch < current.lease.epoch) {
+      throw new Error(`Stale lease epoch: presented ${leaseEpoch} < current ${current.lease.epoch}`);
+    }
   }
 
   const updatedAt = now();
@@ -205,7 +227,46 @@ export function isClaimStale(claim, { now: currentTime = now(), staleMinutes = 3
   return currentMs - heartbeatMs > staleMinutes * 60_000;
 }
 
-export async function recoverStaleTask({ dir, id, now: currentTime = now(), staleMinutes = 30, retryLimit = 2 }) {
+export async function releaseClaim({ dir, id }) {
+  await rm(claimPath(dir, id), { force: true });
+}
+
+export async function countActiveTasks({ dir, repository, pr }) {
+  let names;
+  try { names = await readdir(dir); } catch (error) {
+    if (error?.code === 'ENOENT') return { global: 0, repository: 0, pr: 0 };
+    throw error;
+  }
+  let global = 0;
+  let repoCount = 0;
+  let prCount = 0;
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const task = JSON.parse(await readFile(join(dir, name), 'utf-8'));
+      if (CONCURRENCY_STATES.has(task.state)) {
+        global += 1;
+        if (repository && task.repository === repository) {
+          repoCount += 1;
+          if (pr !== undefined && task.pr === Number(pr)) prCount += 1;
+        }
+      }
+    } catch { /* skip corrupt files */ }
+  }
+  return { global, repository: repoCount, pr: prCount };
+}
+
+export function checkConcurrency({ counts, limits = {} }) {
+  const global = limits.global ?? DEFAULT_CONCURRENCY.global;
+  const perRepo = limits.per_repository ?? DEFAULT_CONCURRENCY.per_repository;
+  const perPr = limits.per_pr ?? DEFAULT_CONCURRENCY.per_pr;
+  if (counts.global >= global) return { allowed: false, reason: 'global_concurrency_limit' };
+  if (counts.repository >= perRepo) return { allowed: false, reason: 'repository_concurrency_limit' };
+  if (counts.pr >= perPr) return { allowed: false, reason: 'pr_concurrency_limit' };
+  return { allowed: true };
+}
+
+export async function recoverStaleTask({ dir, id, now: currentTime = now(), staleMinutes = 30, retryLimit = 3 }) {
   const task = await readTask({ dir, id });
   if (!task) throw new Error(`Task not found: ${id}`);
   if (!['CLAIMED', 'RUNNING', 'FIXING'].includes(task.state)) return { recovered: false, reason: 'not_active' };
@@ -219,21 +280,68 @@ export async function recoverStaleTask({ dir, id, now: currentTime = now(), stal
   if (claim && !isClaimStale(claim, { now: currentTime, staleMinutes })) {
     return { recovered: false, reason: 'heartbeat_fresh' };
   }
-  await transitionTask({
-    dir,
-    id,
-    to: 'ERROR',
-    reason: 'stale_lease_recovery',
-    patch: { completed_at: currentTime, error: 'Task lease heartbeat expired', stale_recovery: true },
-  });
   await releaseClaim({ dir, id });
-  return { recovered: true, retry_allowed: task.attempt < retryLimit };
+  const attempt = (task.attempt || 0) + 1;
+  const retryBudget = task.policy?.retry_budget ?? retryLimit;
+  if (attempt > retryBudget) {
+    await transitionTask({
+      dir, id, to: 'NEEDS_HUMAN',
+      reason: 'retry_budget_exhausted',
+      patch: { attempt, completed_at: currentTime, error: 'Retry budget exhausted after stale lease recovery' },
+    });
+    return { recovered: true, retry_allowed: false };
+  }
+  const retried = await transitionTask({
+    dir, id, to: 'QUEUED',
+    reason: 'stale_lease_requeued',
+    patch: { attempt, lease: null, heartbeat_at: null },
+  });
+  return { recovered: true, retry_allowed: true, re_dispatched: true, attempt };
 }
 
-export async function releaseClaim({ dir, id }) {
-  await rm(claimPath(dir, id), { force: true });
+export async function retryTask({ dir, id, reason = 'operator_retry' }) {
+  const task = await readTask({ dir, id });
+  if (!task) throw new Error(`Task not found: ${id}`);
+  const retryableStates = new Set(['ERROR', 'NEEDS_HUMAN', 'SUPERSEDED', 'CANCELLED']);
+  if (!retryableStates.has(task.state)) {
+    throw new Error(`Cannot retry task in state: ${task.state}`);
+  }
+  await releaseClaim({ dir, id });
+  const attempt = (task.attempt || 0) + 1;
+  return transitionTask({
+    dir, id, to: 'QUEUED',
+    reason,
+    patch: { attempt, lease: null, heartbeat_at: null, error: null, cancellation: null },
+  });
+}
+
+export async function pauseTask({ dir, id, reason = 'operator_paused' }) {
+  const task = await readTask({ dir, id });
+  if (!task) throw new Error(`Task not found: ${id}`);
+  const pausableStates = new Set(['QUEUED', 'FIX_QUEUED']);
+  if (!pausableStates.has(task.state)) {
+    throw new Error(`Cannot pause task in state: ${task.state}`);
+  }
+  return transitionTask({
+    dir, id, to: 'PAUSED',
+    reason,
+    patch: { paused_at: now(), pause_reason: reason },
+  });
+}
+
+export async function resumeTask({ dir, id, reason = 'operator_resumed' }) {
+  const task = await readTask({ dir, id });
+  if (!task) throw new Error(`Task not found: ${id}`);
+  if (task.state !== 'PAUSED') {
+    throw new Error(`Cannot resume task in state: ${task.state}`);
+  }
+  return transitionTask({
+    dir, id, to: task.kind === 'fix' ? 'FIX_QUEUED' : 'QUEUED',
+    reason,
+    patch: { paused_at: null, pause_reason: null },
+  });
 }
 
 export function isTerminalState(state) {
-  return !TRANSITIONS.has(state);
+  return !TRANSITIONS.has(state) && state !== 'PAUSED';
 }

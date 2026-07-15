@@ -19,6 +19,8 @@ test('stale running task becomes recoverable only within retry budget', async ()
   const recovered = await recoverStaleTask({ dir, id: task.id, now: '2030-01-01T00:31:00.000Z', staleMinutes: 30, retryLimit: 2 });
   assert.equal(recovered.recovered, true);
   assert.equal(recovered.retry_allowed, true);
-  assert.equal((await readTask({ dir, id: task.id })).state, 'ERROR');
-  assert.equal((await readTask({ dir, id: task.id })).attempt, 1);
+  assert.equal(recovered.re_dispatched, true);
+  assert.equal(recovered.attempt, 2);
+  assert.equal((await readTask({ dir, id: task.id })).state, 'QUEUED');
+  assert.equal((await readTask({ dir, id: task.id })).attempt, 2);
 });

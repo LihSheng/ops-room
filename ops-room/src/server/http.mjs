@@ -14,9 +14,9 @@ import {
 } from '../services/github.mjs';
 import { handleTask, cancelTask } from '../workflows/github-code.mjs';
 import { runPrReviewWorkflow } from '../workflows/pr-review.mjs';
-import { ensureReviewLoopDir } from '../services/review-loop-store.mjs';
 import { createGitHubReviewStatusService } from '../services/github-review-status.mjs';
-import { listReviewTasks, readTask, renewClaim, requestCancellation, transitionTask } from '../services/review-task-store.mjs';
+import { listReviewTasks, readTask, renewClaim, requestCancellation, retryTask, pauseTask, resumeTask, transitionTask } from '../services/review-task-store.mjs';
+import { listEffects, resolveAmbiguousEffect } from '../services/review-effect-ledger.mjs';
 import { createPrReviewController } from '../workflows/pr-review-controller.mjs';
 import { createFixChildTask } from '../workflows/fix-task-controller.mjs';
 import { reconcileReviewTasks } from '../services/review-reconciler.mjs';
@@ -240,6 +240,89 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const reviewRetryMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/retry$/);
+  if (req.method === 'POST' && reviewRetryMatch) {
+    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    try {
+      const body = await parseBody(req);
+      const task = await retryTask({
+        dir: REVIEW_TASKS_DIR,
+        id: reviewRetryMatch[1],
+        reason: String(body?.reason || 'operator_retry'),
+      });
+      sendJSON(res, 202, { task });
+    } catch (error) {
+      sendJSON(res, 409, { error: error?.message || 'Retry failed' });
+    }
+    return;
+  }
+
+  const reviewPauseMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/pause$/);
+  if (req.method === 'POST' && reviewPauseMatch) {
+    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    try {
+      const body = await parseBody(req);
+      const task = await pauseTask({
+        dir: REVIEW_TASKS_DIR,
+        id: reviewPauseMatch[1],
+        reason: String(body?.reason || 'operator_paused'),
+      });
+      sendJSON(res, 202, { task });
+    } catch (error) {
+      sendJSON(res, 409, { error: error?.message || 'Pause failed' });
+    }
+    return;
+  }
+
+  const reviewResumeMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/resume$/);
+  if (req.method === 'POST' && reviewResumeMatch) {
+    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    try {
+      const body = await parseBody(req);
+      const task = await resumeTask({
+        dir: REVIEW_TASKS_DIR,
+        id: reviewResumeMatch[1],
+        reason: String(body?.reason || 'operator_resumed'),
+      });
+      sendJSON(res, 202, { task });
+    } catch (error) {
+      sendJSON(res, 409, { error: error?.message || 'Resume failed' });
+    }
+    return;
+  }
+
+  const reviewEffectsMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/effects$/);
+  if (req.method === 'GET' && reviewEffectsMatch) {
+    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    try {
+      const kind = url.searchParams.get('kind');
+      const state = url.searchParams.get('state') || 'CLAIMED';
+      const effects = await listEffects({ dir: REVIEW_TASKS_DIR, taskId: reviewEffectsMatch[1], kind, state });
+      sendJSON(res, 200, { effects });
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Failed to list effects' });
+    }
+    return;
+  }
+
+  const effectResolveMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/effects\/([a-f0-9]+)\/resolve$/);
+  if (req.method === 'POST' && effectResolveMatch) {
+    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    try {
+      const body = await parseBody(req);
+      const effect = await resolveAmbiguousEffect({
+        dir: REVIEW_TASKS_DIR,
+        effectId: effectResolveMatch[2],
+        resolution: String(body?.resolution || 'abandon'),
+        notes: String(body?.notes || ''),
+      });
+      sendJSON(res, 200, { effect });
+    } catch (error) {
+      sendJSON(res, 409, { error: error?.message || 'Resolution failed' });
+    }
+    return;
+  }
+
   const taskDetailMatch = pathname.match(/^\/api\/tasks\/([^/]+)$/);
   if (req.method === 'GET' && taskDetailMatch) {
     try {
@@ -334,46 +417,10 @@ async function listOpenIssuesForAgent(agentKey) {
   return results;
 }
 
-// ── PR Review Auto-Detection Poller ──────────────────────────────────────────
-//
-// Detects PRs with openab/pr-created label (created by coding agents) that
-// do NOT yet have openab/review-approved, and auto-starts a review by Professor.
-// This closes the loop: coding agent creates PR → auto-review triggers.
-
-async function listUnreviewedPRs() {
-  try {
-    const out = execSync(
-      `gh api repos/${REPO}/pulls?state=open&per_page=50&sort=updated&direction=desc`,
-      { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
-    );
-    return JSON.parse(out);
-  } catch {
-    return [];
-  }
-}
-
 async function runReviewReconciliationCycle() {
   const result = await reconcileReviewTasks({ dir: REVIEW_TASKS_DIR });
   if (result.recovered.length > 0) {
     console.warn(`[review-reconciler] recovered ${result.recovered.length} stale task(s): ${result.recovered.join(', ')}`);
-  }
-}
-
-async function pollUnreviewedPRs() {
-  // Deliberately retained as a no-op compatibility seam. PR discovery belongs to
-  // GitHub Actions; all work must enter through the controller webhook.
-  console.log('[pr-poller] skipped legacy direct PR scan');
-}
-
-// Run the PR review poller every 60 seconds alongside the issue poller
-async function startPrReviewPoller() {
-  while (true) {
-    try {
-      await pollUnreviewedPRs();
-    } catch (error) {
-      console.error('[pr-poller] cycle error:', error?.message);
-    }
-    await new Promise(resolve => setTimeout(resolve, 60_000));
   }
 }
 
@@ -386,7 +433,6 @@ if (!WEBHOOK_SECRET) {
 }
 
 await initDirs();
-await ensureReviewLoopDir();
 startIssuePoller({
   agentKeys: POLL_AGENTS,
   intervalMs: 30_000,

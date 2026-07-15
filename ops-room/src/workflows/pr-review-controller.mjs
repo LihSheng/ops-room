@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import {
   claimTask,
+  checkConcurrency,
+  countActiveTasks,
   createOrClaimTask,
   readTask,
   transitionTask,
@@ -97,6 +99,21 @@ export function createPrReviewController({
         status: task.state,
         queued: false,
         deduplicated: true,
+      };
+    }
+
+    // Concurrency gate: before claiming and dispatching, verify we are within
+    // bounded concurrency limits. If limits are exceeded, leave the task queued
+    // for later pickup by reconciliation.
+    const counts = await countActiveTasks({ dir: request.dir, repository: normalized.repository, pr: normalized.pr });
+    const concurrency = checkConcurrency({ counts, limits: request.policy?.concurrency || {} });
+    if (!concurrency.allowed) {
+      return {
+        task_id: task.id,
+        status: 'QUEUED',
+        queued: true,
+        reason: concurrency.reason,
+        concurrency: counts,
       };
     }
 

@@ -1,12 +1,72 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { relative, resolve, sep } from 'node:path';
+import { relative, resolve, sep, join } from 'node:path';
 
 import { BOT_USERS } from '../lib/config.mjs';
-import { FORBIDDEN_FILE_PATTERNS } from '../services/runtime-paths.mjs';
+import { FORBIDDEN_FILE_PATTERNS, WORKSPACE_BASE } from '../services/runtime-paths.mjs';
 import { ghApi, ghApiText } from '../services/github.mjs';
 import { askAI } from './chat-response.mjs';
-import { prepareFixWorkspace } from './auto-fix.mjs';
+
+// ── Workspace setup (extracted from legacy auto-fix.mjs) ────────────────────
+
+const AGENT_CONTAINER = {
+  berlin: 'openab-opencode-1',
+  tokyo: 'openab-opencode-2',
+  professor: 'openab-opencode-professor',
+};
+
+/**
+ * Checkout an existing PR branch for fixing via Docker exec into the agent's container.
+ */
+export async function prepareFixWorkspace(repository, pr, fixAgent, headRef) {
+  const dataDir = process.env.OPENAB_DATA_DIR || join(WORKSPACE_BASE, '..');
+  const container = AGENT_CONTAINER[fixAgent];
+  if (!container) throw new Error(`Unknown container for agent: ${fixAgent}`);
+
+  const agentHomeName = fixAgent === 'berlin' ? 'opencode-1' : fixAgent === 'tokyo' ? 'opencode-2' : fixAgent;
+  const hostWorkspace = join(dataDir, 'agents', agentHomeName, 'workspace', `pr-${pr}-fix`);
+  const containerWorkspace = `/home/node/workspace/pr-${pr}-fix`;
+
+  try { await rm(hostWorkspace, { recursive: true, force: true }); } catch (e) {
+    console.error(`[fix-workspace] Failed to clean host workspace:`, e?.message?.slice(0, 200));
+  }
+  await mkdir(hostWorkspace, { recursive: true });
+
+  const enc = (cmd) => JSON.stringify(cmd);
+
+  try {
+    execSync(`docker exec ${container} rm -rf "${containerWorkspace}"`, {
+      encoding: 'utf-8', timeout: 10_000,
+    });
+  } catch (e) {
+    console.error(`[fix-workspace] Failed to clean container workspace:`, e?.message?.slice(0, 200));
+  }
+
+  console.log(`[fix-workspace] Cloning ${repository} inside ${container} (agent: ${fixAgent})...`);
+  execSync(`docker exec ${container} bash -c ${enc(`cd /home/node && gh repo clone ${repository} "${containerWorkspace}"`)}`, {
+    encoding: 'utf-8', timeout: 120_000, stdio: 'pipe',
+  });
+
+  execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git fetch origin --prune`)}`, {
+    encoding: 'utf-8', timeout: 60_000,
+  });
+
+  const branch = headRef || `pr-${pr}`;
+  try {
+    execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git checkout "${branch}"`)}`, {
+      encoding: 'utf-8', timeout: 30_000, stdio: 'pipe',
+    });
+  } catch (e) {
+    console.error(`[fix-workspace] First checkout failed, trying fetch-from-PR fallback:`, e?.message?.slice(0, 200));
+    execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git fetch origin pull/${pr}/head:"${branch}" && git checkout "${branch}"`)}`, {
+      encoding: 'utf-8', timeout: 30_000, stdio: 'pipe',
+    });
+  }
+
+  console.log(`[fix-workspace] Workspace ready in ${container}:${containerWorkspace} on ${branch}`);
+
+  return { hostWorkspace, containerWorkspace, container, branchName: branch };
+}
 
 function docker(container, command, timeout = 60_000) {
   return execFileSync('docker', ['exec', container, 'bash', '-c', command], { encoding: 'utf-8', timeout, stdio: 'pipe' });

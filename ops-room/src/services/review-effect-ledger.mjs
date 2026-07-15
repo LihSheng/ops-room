@@ -40,3 +40,41 @@ export async function completeEffect({ dir, effectId: id, result = {} }) {
   await writeAtomic(effectPath(dir, id), effect);
   return effect;
 }
+
+export async function listEffects({ dir, taskId, kind, state }) {
+  const { readdir } = await import('node:fs/promises');
+  const effectsDir = join(dir, 'effects');
+  let names;
+  try { names = await readdir(effectsDir); } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+  const effects = [];
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const effect = JSON.parse(await readFile(join(effectsDir, name), 'utf-8'));
+      if (taskId && effect.task_id !== taskId) continue;
+      if (kind && effect.kind !== kind) continue;
+      if (state && effect.state !== state) continue;
+      effects.push(effect);
+    } catch { /* skip corrupt */ }
+  }
+  return effects.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+}
+
+export async function resolveAmbiguousEffect({ dir, effectId: id, resolution, notes = '' }) {
+  const current = await readEffect(dir, id);
+  if (!current) throw new Error(`Effect not found: ${id}`);
+  if (current.state !== 'CLAIMED') throw new Error(`Can only resolve CLAIMED effects, not ${current.state}`);
+  const resolvedState = resolution === 'complete' ? 'COMPLETED' : resolution === 'abandon' ? 'ABANDONED' : resolution;
+  const effect = {
+    ...current,
+    state: resolvedState,
+    resolved_at: new Date().toISOString(),
+    resolution_notes: notes || `Operator resolved as ${resolvedState}`,
+  };
+  const { writeAtomic } = await import('./review-task-store.mjs');
+  await writeAtomic(effectPath(dir, id), effect);
+  return effect;
+}
