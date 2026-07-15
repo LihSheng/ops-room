@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import { POLL_AGENTS } from '../lib/config.mjs';
 import { pollAgentIssues, startIssuePoller } from '../lib/issue-poller.mjs';
 import {
-  REPO, PORT, WEBHOOK_SECRET, WORKSPACE_BASE,
+  REPO, PORT, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR,
   OPENAB_SERVER_VERSION
 } from '../services/runtime-paths.mjs';
 import { initDirs } from '../services/task-store.mjs';
@@ -19,6 +19,7 @@ import { createGitHubReviewStatusService } from '../services/github-review-statu
 import { transitionTask } from '../services/review-task-store.mjs';
 import { createPrReviewController } from '../workflows/pr-review-controller.mjs';
 import { createFixChildTask } from '../workflows/fix-task-controller.mjs';
+import { reconcileReviewTasks } from '../services/review-reconciler.mjs';
 import { handleHealth } from '../routes/health.mjs';
 import { handleTaskDetail, handleTasksList } from '../routes/tasks.mjs';
 import { handleLogsList } from '../routes/logs.mjs';
@@ -280,6 +281,13 @@ async function listUnreviewedPRs() {
   }
 }
 
+async function runReviewReconciliationCycle() {
+  const result = await reconcileReviewTasks({ dir: REVIEW_TASKS_DIR });
+  if (result.recovered.length > 0) {
+    console.warn(`[review-reconciler] recovered ${result.recovered.length} stale task(s): ${result.recovered.join(', ')}`);
+  }
+}
+
 async function pollUnreviewedPRs() {
   // Deliberately retained as a no-op compatibility seam. PR discovery belongs to
   // GitHub Actions; all work must enter through the controller webhook.
@@ -326,6 +334,10 @@ startIssuePoller({
 // in-process PR scanner remains intentionally disabled; GitHub Actions provides
 // the event and recovery producer.
 console.log('[pr-poller] direct PR auto-review poller disabled; controller ingress is authoritative');
+runReviewReconciliationCycle().catch((error) => console.error('[review-reconciler] initial cycle failed:', error?.message));
+setInterval(() => {
+  runReviewReconciliationCycle().catch((error) => console.error('[review-reconciler] cycle failed:', error?.message));
+}, 60_000).unref();
 server.listen(PORT, () => {
   console.log(`OpenAB webhook listening on http://0.0.0.0:${PORT}`);
   console.log(`  POST /webhook   - Receive issue commands`);
