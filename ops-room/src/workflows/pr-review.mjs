@@ -162,14 +162,19 @@ export async function runPrReviewWorkflow(payload) {
     }
 
     // ── Auto-fix: comment (no explicit approve/changes) ──────────────────
-    // The review was informative. Remove loop labels and leave for human.
+    // The review was informative. Acknowledge and close the loop.
     if (mode === 'auto-fix' && event === 'COMMENT' && task_type !== 'chat') {
       await updateReviewLoopState(repository, pr, { status: 'commented' });
+      
+      // Post a follow-up acknowledging the review
+      const ack = `**${AGENT_NAMES[agent] || agent}** — review complete ✅\n\nI've reviewed this PR. No explicit changes were requested.\n\nPlease review the feedback above and merge if everything looks good.`;
+      addComment(pr, ack, agent);
+      
       await transitionLabels(
         { issueNumber: pr, agent },
         { remove: ['openab/review-pending', 'openab/review-loop'], add: [] }
       );
-      console.log(`[pr-review] PR ${repository}#${pr} reviewed (COMMENT). Loop ended, awaiting human.`);
+      console.log(`[pr-review] PR ${repository}#${pr} reviewed (COMMENT). Acknowledged, loop ended.`);
     }
   }
 
