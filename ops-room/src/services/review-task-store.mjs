@@ -132,6 +132,18 @@ export async function transitionTask({ dir, id, to, reason, patch = {} }) {
   return updated;
 }
 
+export async function requestCancellation({ dir, id, actor = 'unknown', reason = 'requested' }) {
+  return transitionTask({
+    dir,
+    id,
+    to: 'CANCEL_REQUESTED',
+    reason: 'cancellation_requested',
+    patch: {
+      cancellation: { actor, reason, requested_at: now() },
+    },
+  });
+}
+
 export async function claimTask({ dir, id, instanceId, leaseId, leaseEpoch = 1 }) {
   const path = claimPath(dir, id);
   const claim = {
