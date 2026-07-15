@@ -210,10 +210,12 @@ export async function runAutoFixWorkflow(params) {
     const { container, containerWorkspace } = ws;
     const enc = (cmd) => JSON.stringify(cmd);
 
-    // Write prompt file inside container and configure git
-    execSync(`docker exec ${container} bash -c ${enc(`mkdir -p "${containerWorkspace}/.openab" && cat > "${containerWorkspace}/.openab/TASK.md" << 'EOF'\n${prompt}\nEOF`)}`, {
-      encoding: 'utf-8', timeout: 30_000,
-    });
+    // Write prompt file on the HOST path that mirrors into the container
+    const promptHostDir = join(ws.hostWorkspace, '.openab');
+    await mkdir(promptHostDir, { recursive: true });
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(join(promptHostDir, 'TASK.md'), prompt);
+    console.log(`[auto-fix] Prompt written to ${join(ws.hostWorkspace, '.openab', 'TASK.md')}`);
 
     const botUser = BOT_USERS[fixAgent] || `lihsheng-${fixAgent}[bot]`;
     execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git config user.name "${botUser}" && git config user.email "${botUser}@users.noreply.github.com"`)}`, {
