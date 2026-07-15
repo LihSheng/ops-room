@@ -77,9 +77,16 @@ export async function runPrReviewWorkflow(payload) {
     ...prContext,
   });
 
-  const reviewText = (await askAI(prompt)).trim();
+  let reviewText = (await askAI(prompt)).trim();
   if (!reviewText) {
-    throw new Error(`PR review generation returned an empty response for ${repository}#${pr}`);
+    // Retry once — reasoning model may temporarily exhaust token budget
+    console.warn(`[pr-review] Empty response from askAI for ${repository}#${pr}, retrying once...`);
+    const retryText = (await askAI(prompt)).trim();
+    if (!retryText) {
+      throw new Error(`PR review generation returned an empty response for ${repository}#${pr} (retried once)`);
+    }
+    console.log(`[pr-review] Retry succeeded for ${repository}#${pr} (${retryText.length} chars)`);
+    reviewText = retryText;
   }
 
   const responseMode = task_type === 'chat' ? 'chat' : 'review';
