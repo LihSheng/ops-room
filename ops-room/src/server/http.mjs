@@ -60,13 +60,16 @@ async function executeControllerReview(task) {
     const result = await runPrReviewWorkflow({
       agent: task.agent,
       task: task.task,
-      task_type: 'review',
+      task_type: task.taskType,
       repository: task.repository,
       pr: task.pr,
       commenter: task.commenter || 'controller',
+      comment_id: task.commentId,
       // Auto-fix remains disabled until the separate child-task workflow exists.
       mode: 'review',
       head_sha: task.headSha,
+      task_id: task.task_id,
+      dir: task.dir,
     });
     const status = commitStatusForReviewEvent(result.review_event);
     const state = taskStateForReviewEvent(result.review_event);

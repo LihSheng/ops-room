@@ -103,7 +103,7 @@ export async function runPrReviewWorkflow(payload) {
   let structuredReview = null;
 
   if (responseMode === 'chat') {
-    addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
+    await addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
     console.log(`[pr-review] Posted chat response on ${repository}#${pr} as ${agent}`);
   } else {
     let structured;
@@ -134,10 +134,10 @@ export async function runPrReviewWorkflow(payload) {
         console.warn(`[pr-review] Skipping duplicate GitHub review effect for ${repository}#${pr}`);
         return { mode: 'pr_review', repository, pr, agent, review_event: event, structured_review: structured, duplicate_effect: true };
       }
-      addPullRequestReview(pr, renderedReview, event, agent);
+      await addPullRequestReview(pr, renderedReview, event, agent);
       await completeEffect({ dir, effectId: effect.effect.id, result: { event, sha: head_sha || prContext.headSha } });
     } else {
-      addPullRequestReview(pr, renderedReview, event, agent);
+      await addPullRequestReview(pr, renderedReview, event, agent);
     }
     console.log(`[pr-review] Posted ${event} review on ${repository}#${pr} as ${agent}`);
   }

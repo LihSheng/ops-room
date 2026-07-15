@@ -32,6 +32,8 @@ function normalizeRequest(request) {
     mode,
     trigger: request.trigger || 'unknown',
     policy: request.policy || {},
+    taskType: request.task_type || request.taskType || 'review',
+    commentId: request.comment_id || request.commentId || null,
   };
 }
 
