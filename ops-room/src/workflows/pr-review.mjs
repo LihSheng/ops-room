@@ -1,5 +1,5 @@
 import { AGENT_NAMES } from '../lib/config.mjs';
-import { ghApi, ghApiText, addComment, addPullRequestReview } from '../services/github.mjs';
+import { ghApi, ghApiText, addComment, addPullRequestReview, transitionLabels } from '../services/github.mjs';
 import { REPO, SHARED_MEMORY } from '../services/runtime-paths.mjs';
 import { appendFile } from 'node:fs/promises';
 import { buildPrReviewPrompt } from '../server/pr-review-payload.mjs';
@@ -155,6 +155,21 @@ export async function runPrReviewWorkflow(payload) {
 
       await updateReviewLoopState(repository, pr, { status: 'approved' });
       console.log(`[pr-review] PR ${repository}#${pr} approved after auto-fix loop.`);
+      await transitionLabels(
+        { issueNumber: pr, agent },
+        { remove: ['openab/review-pending', 'openab/changes-requested', 'openab/review-loop'], add: ['openab/review-approved'] }
+      );
+    }
+
+    // ── Auto-fix: comment (no explicit approve/changes) ──────────────────
+    // The review was informative. Remove loop labels and leave for human.
+    if (mode === 'auto-fix' && event === 'COMMENT' && task_type !== 'chat') {
+      await updateReviewLoopState(repository, pr, { status: 'commented' });
+      await transitionLabels(
+        { issueNumber: pr, agent },
+        { remove: ['openab/review-pending', 'openab/review-loop'], add: [] }
+      );
+      console.log(`[pr-review] PR ${repository}#${pr} reviewed (COMMENT). Loop ended, awaiting human.`);
     }
   }
 
