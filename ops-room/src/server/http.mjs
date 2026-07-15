@@ -16,7 +16,7 @@ import { handleTask, cancelTask } from '../workflows/github-code.mjs';
 import { runPrReviewWorkflow } from '../workflows/pr-review.mjs';
 import { ensureReviewLoopDir } from '../services/review-loop-store.mjs';
 import { createGitHubReviewStatusService } from '../services/github-review-status.mjs';
-import { listReviewTasks, requestCancellation, transitionTask } from '../services/review-task-store.mjs';
+import { listReviewTasks, readTask, requestCancellation, transitionTask } from '../services/review-task-store.mjs';
 import { createPrReviewController } from '../workflows/pr-review-controller.mjs';
 import { createFixChildTask } from '../workflows/fix-task-controller.mjs';
 import { reconcileReviewTasks } from '../services/review-reconciler.mjs';
@@ -184,6 +184,15 @@ const server = createServer(async (req, res) => {
     if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 100);
     sendJSON(res, 200, { tasks: await listReviewTasks({ dir: REVIEW_TASKS_DIR, limit }) });
+    return;
+  }
+
+  const reviewDetailMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)$/);
+  if (req.method === 'GET' && reviewDetailMatch) {
+    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    const task = await readTask({ dir: REVIEW_TASKS_DIR, id: reviewDetailMatch[1] });
+    if (!task) { sendJSON(res, 404, { error: 'Review task not found' }); return; }
+    sendJSON(res, 200, { task });
     return;
   }
 
