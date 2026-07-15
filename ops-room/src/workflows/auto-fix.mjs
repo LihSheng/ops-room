@@ -1,10 +1,11 @@
 import { execSync } from 'node:child_process';
-import { mkdir, appendFile, rm } from 'node:fs/promises';
+import { mkdir, appendFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { REPO, WORKSPACE_BASE, SHARED_MEMORY } from '../services/runtime-paths.mjs';
 import { AGENT_NAMES, BOT_USERS } from '../lib/config.mjs';
 import { addComment, transitionLabels } from '../services/github.mjs';
 import { updateReviewLoopState, advanceLoopIteration, isLoopExhausted, ensureReviewLoopDir } from '../services/review-loop-store.mjs';
+import { askAI } from './chat-response.mjs';
 
 const MAX_AUTO_FIX_ITERATIONS = parseInt(process.env.OPENAB_MAX_REVIEW_ITERATIONS || '3', 10);
 
@@ -210,41 +211,74 @@ export async function runAutoFixWorkflow(params) {
     const { container, containerWorkspace } = ws;
     const enc = (cmd) => JSON.stringify(cmd);
 
-    // Write prompt file on the HOST path that mirrors into the container
-    const promptHostDir = join(ws.hostWorkspace, '.openab');
-    await mkdir(promptHostDir, { recursive: true });
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(join(promptHostDir, 'TASK.md'), prompt);
-    console.log(`[auto-fix] Prompt written to ${join(ws.hostWorkspace, '.openab', 'TASK.md')}`);
-
+    // Configure git author inside container
     const botUser = BOT_USERS[fixAgent] || `lihsheng-${fixAgent}[bot]`;
     execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git config user.name "${botUser}" && git config user.email "${botUser}@users.noreply.github.com"`)}`, {
       encoding: 'utf-8', timeout: 10_000,
     });
 
-    // Run opencode inside the container (not Codex on the host)
-    console.log(`[auto-fix] Running opencode in ${container}:${containerWorkspace}...`);
-    const startTime = Date.now();
+    // ── Generate fix via API (not OpenCode CLI — container has key issues) ──
+    console.log(`[auto-fix] Generating fix via AI API...`);
+    const fixPrompt = `You are an expert software engineer fixing code based on a PR review.
 
-    try {
-      const result = execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && opencode run "${containerWorkspace}/.openab/TASK.md" 2>&1`)}`, {
-        encoding: 'utf-8',
-        timeout: 30 * 60 * 1000,
-        maxBuffer: 50 * 1024 * 1024,
-      });
-      console.log(`[auto-fix] opencode finished in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
-      const tail = result.slice(-2000);
-      if (tail.trim()) console.log(`[auto-fix] opencode tail: ${tail}`);
-    } catch (e) {
-      const stdout = e.stdout?.toString()?.slice(-2000) || '';
-      const stderr = e.stderr?.toString()?.slice(-2000) || '';
-      console.log(`[auto-fix] opencode exit=${e.status} signal=${e.signal}`);
-      if (stdout) console.log(`[auto-fix] stdout: ${stdout}`);
-      if (stderr) console.log(`[auto-fix] stderr: ${stderr}`);
-      // Continue — opencode may have made changes despite non-zero exit
+Repository: ${repository}
+PR: #${pr}
+Branch: ${headRef}
+
+## Review Feedback
+${reviewText}
+
+## Task
+Fix the issues mentioned in the review. Output ONLY the file changes in this exact format:
+
+### File: <path>
+\\\`\\\`\\\`<language>
+<entire new file content>
+\\\`\\\`\\\`
+
+Include every file that needs to change. Output the COMPLETE file, not a diff.
+Do NOT include any explanation, summary, or commentary outside the file blocks.
+Only fix what was requested — no unrelated changes.`;
+
+    const startTime = Date.now();
+    const fixOutput = (await askAI(fixPrompt)).trim();
+    console.log(`[auto-fix] AI fix generated in ${((Date.now() - startTime) / 1000).toFixed(1)}s (${fixOutput.length} chars)`);
+
+    // Parse file blocks from the AI output
+    const fileBlocks = fixOutput.split(/### File:\s*/).slice(1);
+    const filesToWrite = [];
+
+    for (const block of fileBlocks) {
+      const filePathMatch = block.match(/^(.+?)(?:\n)/);
+      const codeMatch = block.match(/```\w*\n([\s\S]*?)```/);
+      if (filePathMatch && codeMatch) {
+        const filePath = filePathMatch[1].trim();
+        const content = codeMatch[1].trim();
+        if (filePath && content && !filePath.includes('..') && !filePath.startsWith('/')) {
+          filesToWrite.push({ path: filePath, content });
+        }
+      }
     }
 
-    // Check for actual source changes
+    console.log(`[auto-fix] Parsed ${filesToWrite.length} file(s) to fix`);
+
+    if (filesToWrite.length === 0) {
+      console.log('[auto-fix] No parseable file changes in AI output');
+      console.log(`[auto-fix] AI output preview: ${fixOutput.slice(0, 500)}`);
+      await addComment(pr, `**${AGENT_NAMES[fixAgent] || fixAgent}** — couldn't generate fix 🤷\n\nThe AI could not produce parseable file changes. Re-reviewing as-is.`, fixAgent);
+      await advanceLoopIteration(repository, pr, { event: 'fix_generation_failed', summary: 'No parseable file changes', fixAgent });
+      return { ok: true, message: 'No fix generated', needsReReview: true };
+    }
+
+    // Write files on the host mount (visible inside the container)
+    for (const file of filesToWrite) {
+      const hostPath = join(ws.hostWorkspace, file.path);
+      await mkdir(join(hostPath, '..'), { recursive: true });
+      await writeFile(hostPath, file.content + '\n');
+      console.log(`[auto-fix] Written: ${file.path}`);
+    }
+
+    // Verify changes via container
     let statusOut = '';
     try {
       statusOut = execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git status --short`)}`, {
