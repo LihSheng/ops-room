@@ -4,19 +4,20 @@ import { REPO, SHARED_MEMORY } from '../services/runtime-paths.mjs';
 import { appendFile } from 'node:fs/promises';
 import { buildPrReviewPrompt } from '../server/pr-review-payload.mjs';
 import { askAI } from './chat-response.mjs';
+import { parseStructuredReview } from './review-result.mjs';
 
-function parseReviewEvent(reviewText) {
-  const upper = String(reviewText || '').toUpperCase();
-  if (upper.includes('REQUEST_CHANGES')) return 'REQUEST_CHANGES';
-  if (upper.includes('APPROVE')) return 'APPROVE';
-  
-  // Smart heuristic: if the review found issues and listed them, treat as REQUEST_CHANGES
-  // This handles cases where the AI doesn't output the exact magic word
-  if (upper.includes('## ISSUES FOUND') || upper.includes('ISSUE 1:') || upper.includes('**ISSUE')) {
-    return 'REQUEST_CHANGES';
-  }
-  
-  return 'COMMENT';
+export function renderStructuredReview(result) {
+  const findings = result.findings.length === 0
+    ? 'None.'
+    : result.findings.map((finding, index) => [
+      `### ${index + 1}. ${finding.title}`,
+      `- **Severity:** ${finding.severity}`,
+      `- **Location:** ${finding.file}${finding.line ? `:${finding.line}` : ''}`,
+      `- **Description:** ${finding.description}`,
+      `- **Suggestion:** ${finding.suggestion || 'None provided'}`,
+      `- **Auto-fixable:** ${finding.auto_fixable ? 'yes' : 'no'}`,
+    ].join('\n')).join('\n\n');
+  return `## Summary\n${result.summary || '(none)'}\n\n## Findings\n${findings}\n\n## Final Verdict\n${result.verdict}`;
 }
 
 async function appendToMemory(entry) {
@@ -92,8 +93,17 @@ export async function runPrReviewWorkflow(payload) {
     addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
     console.log(`[pr-review] Posted chat response on ${repository}#${pr} as ${agent}`);
   } else {
-    event = parseReviewEvent(reviewText);
-    addPullRequestReview(pr, reviewText, event, agent);
+    let structured;
+    try {
+      structured = parseStructuredReview(reviewText);
+    } catch (error) {
+      // One regeneration prevents malformed model output from becoming an accidental approval.
+      reviewText = (await askAI(`${prompt}\n\nYour previous response was invalid: ${error.message}. Return valid JSON only.`)).trim();
+      structured = parseStructuredReview(reviewText);
+    }
+    event = structured.verdict === 'NEEDS_HUMAN' ? 'COMMENT' : structured.verdict;
+    const renderedReview = renderStructuredReview(structured);
+    addPullRequestReview(pr, renderedReview, event, agent);
     console.log(`[pr-review] Posted ${event} review on ${repository}#${pr} as ${agent}`);
   }
 
