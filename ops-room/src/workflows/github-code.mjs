@@ -979,14 +979,7 @@ async function handleTask(issueNumber, agentKey) {
 
       let codingResult;
       if (isPrReviewTask) {
-        console.log(`[poller] Routing #${issueNumber} to PR REVIEW workflow (${agentKey})`);
-        await runPrReviewWorkflow({
-          agent: agentKey,
-          task: task?.task || undefined,
-          repository: REPO,
-          pr: issueNumber,
-          commenter,
-        });
+        console.log(`[poller] Skipping legacy PR review producer for #${issueNumber}; use the controller webhook path`);
       } else if (isCoding) {
         console.log(`[poller] Routing #${issueNumber} to CODING workflow (${agentKey})`);
         codingResult = await runCodingWorkflow(ctx);

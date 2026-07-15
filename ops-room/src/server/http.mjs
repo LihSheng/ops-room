@@ -262,59 +262,9 @@ async function listUnreviewedPRs() {
 }
 
 async function pollUnreviewedPRs() {
-  const reviewAgent = 'professor';
-  const prs = await listUnreviewedPRs();
-  if (!prs?.length) return;
-
-  for (const pr of prs) {
-    try {
-      // Get labels for this PR (issues API works for PRs too)
-      const labelsOut = execSync(
-        `gh api repos/${REPO}/issues/${pr.number} --jq '.labels[].name'`,
-        { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 },
-      );
-      const labelNames = labelsOut.trim().split('\n').filter(Boolean);
-
-      // Only auto-review PRs created by our coding agents (labeled openab/pr-created)
-      if (!labelNames.includes('openab/pr-created')) continue;
-      // Skip if already reviewed or in review
-      if (labelNames.includes('openab/review-approved')) continue;
-      if (labelNames.includes('openab/review-commented')) continue;
-      if (labelNames.includes('openab/review-loop')) continue;
-      if (labelNames.includes('openab/needs-human')) continue;
-      if (labelNames.includes(`openab/${reviewAgent}/wip`)) continue;
-
-      console.log(`[pr-poller] Unreviewed coding PR detected: #${pr.number} — ${pr.title}`);
-
-      // Add review-pending label
-      await ensureLabel('openab/review-pending', 'c5def5');
-      await ensureLabel('openab/review-loop', 'bfdadc');
-      await addLabel(pr.number, 'openab/review-pending');
-      await addLabel(pr.number, 'openab/review-loop');
-
-      await addComment(
-        pr.number,
-        `**OpenAB / Professor** — auto-review triggered 🤖\n\nThis PR was created by a coding agent. I'll review it automatically.\n\nMode: \`auto-fix\` — if issues are found, I'll attempt to fix them.`,
-        reviewAgent,
-      );
-
-      // Run the review with auto-fix mode
-      await runPrReviewWorkflow({
-        agent: reviewAgent,
-        repository: REPO,
-        pr: pr.number,
-        task_type: 'review',
-        mode: 'auto-fix',
-        task: 'Review this pull request for correctness, security, maintainability, and test/build risk. If issues are found, they will be auto-fixed. Use structured output with ## Issues Found section.',
-        commenter: 'auto-poller',
-      });
-
-      console.log(`[pr-poller] Auto-review completed for #${pr.number}`);
-    } catch (error) {
-      const msg = error?.message || String(error);
-      console.error(`[pr-poller] Error reviewing PR #${pr.number}:`, msg.slice(0, 300));
-    }
-  }
+  // Deliberately retained as a no-op compatibility seam. PR discovery belongs to
+  // GitHub Actions; all work must enter through the controller webhook.
+  console.log('[pr-poller] skipped legacy direct PR scan');
 }
 
 // Run the PR review poller every 60 seconds alongside the issue poller
