@@ -83,3 +83,31 @@ test('controller deduplicates an identical current-SHA request', async () => {
   assert.equal(calls.dispatch, 1);
   assert.equal(calls.statuses.length, 1);
 });
+
+test('controller keeps auto-fix disabled unless policy explicitly allows it', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ops-room-controller-'));
+  const dispatched = [];
+  const controller = createPrReviewController({
+    fetchPullRequest: async () => ({ state: 'open', draft: false, head: { sha: 'c'.repeat(40) } }),
+    setCommitStatus: async () => {},
+    dispatchReview: async (task) => dispatched.push(task),
+    instanceId: 'test-instance',
+  });
+
+  await controller.submit({
+    dir, repository: 'LihSheng/LinkUp', pr: 41, head_sha: 'c'.repeat(40), agent: 'professor', mode: 'auto-fix',
+  });
+  assert.equal(dispatched[0].mode, 'review');
+
+  await controller.submit({
+    dir, repository: 'LihSheng/LinkUp', pr: 42, head_sha: 'c'.repeat(40), agent: 'professor', mode: 'auto-fix',
+    policy: { allow_auto_fix: true, trusted_source: false, same_repository: true },
+  });
+  assert.equal(dispatched[1].mode, 'review');
+
+  await controller.submit({
+    dir, repository: 'LihSheng/LinkUp', pr: 43, head_sha: 'c'.repeat(40), agent: 'professor', mode: 'auto-fix',
+    policy: { allow_auto_fix: true, trusted_source: true, same_repository: true },
+  });
+  assert.equal(dispatched[2].mode, 'auto-fix');
+});

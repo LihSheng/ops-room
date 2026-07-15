@@ -6,6 +6,7 @@ import {
   readTask,
   transitionTask,
 } from '../services/review-task-store.mjs';
+import { evaluateAutoFixPolicy } from '../services/review-policy.mjs';
 
 const REVIEW_CONTEXT = 'OpenAB PR Review';
 
@@ -16,7 +17,8 @@ function normalizeRequest(request) {
   const agent = String(request.agent || '').trim();
   const requestedMode = request.mode === 'auto-fix' ? 'auto-fix' : 'review';
   const policy = request.policy || {};
-  const mode = requestedMode === 'auto-fix' && policy.allow_auto_fix ? 'auto-fix' : 'review';
+  const autoFixPolicy = evaluateAutoFixPolicy({ requestedMode, policy });
+  const mode = autoFixPolicy.allowed ? 'auto-fix' : 'review';
 
   if (!repository || !Number.isInteger(pr) || pr <= 0 || !headSha || !agent) {
     throw new Error('Invalid PR review request: repository, pr, head_sha, and agent are required');
