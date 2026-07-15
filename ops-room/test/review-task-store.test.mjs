@@ -6,8 +6,11 @@ import test from 'node:test';
 
 import {
   buildReviewTaskId,
+  claimTask,
   createOrClaimTask,
+  isClaimStale,
   readTask,
+  renewClaim,
   transitionTask,
 } from '../src/services/review-task-store.mjs';
 
@@ -67,4 +70,20 @@ test('terminal tasks cannot transition back to running', async () => {
     () => transitionTask({ dir, id: task.id, to: 'RUNNING', reason: 'invalid' }),
     /Invalid task transition/,
   );
+});
+
+test('claim renewal updates heartbeat and stale detection is clock-controlled', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ops-room-review-store-'));
+  const input = {
+    repository: 'LihSheng/LinkUp', pr: 40,
+    headSha: 'd8bd1bd9994dbda898ae212ef27145e5edfc90fe', agent: 'professor', mode: 'review',
+  };
+  const { task } = await createOrClaimTask({ dir, input, trigger: 'pull_request' });
+  await claimTask({ dir, id: task.id, instanceId: 'test', leaseId: 'lease-1' });
+  const before = '2026-07-15T00:00:00.000Z';
+  const renewed = await renewClaim({ dir, id: task.id, now: before });
+
+  assert.equal(renewed.heartbeat_at, before);
+  assert.equal(isClaimStale(renewed, { now: '2026-07-15T00:29:59.000Z', staleMinutes: 30 }), false);
+  assert.equal(isClaimStale(renewed, { now: '2026-07-15T00:30:01.000Z', staleMinutes: 30 }), true);
 });

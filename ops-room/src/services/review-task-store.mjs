@@ -156,6 +156,28 @@ export async function claimTask({ dir, id, instanceId, leaseId, leaseEpoch = 1 }
   }
 }
 
+export async function renewClaim({ dir, id, now: heartbeatAt = now() }) {
+  const path = claimPath(dir, id);
+  let current;
+  try {
+    current = JSON.parse(await readFile(path, 'utf-8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw new Error(`Claim not found: ${id}`);
+    throw error;
+  }
+  const renewed = { ...current, heartbeat_at: heartbeatAt };
+  await writeAtomic(path, renewed);
+  return renewed;
+}
+
+export function isClaimStale(claim, { now: currentTime = now(), staleMinutes = 30 } = {}) {
+  if (!claim?.heartbeat_at) return true;
+  const heartbeatMs = Date.parse(claim.heartbeat_at);
+  const currentMs = Date.parse(currentTime);
+  if (!Number.isFinite(heartbeatMs) || !Number.isFinite(currentMs)) return true;
+  return currentMs - heartbeatMs > staleMinutes * 60_000;
+}
+
 export async function releaseClaim({ dir, id }) {
   await rm(claimPath(dir, id), { force: true });
 }
