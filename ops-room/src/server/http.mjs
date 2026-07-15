@@ -90,6 +90,16 @@ async function executeControllerReview(task) {
     });
   } catch (error) {
     const message = error?.message || String(error);
+    if (error?.code === 'REVIEW_CANCELLED') {
+      await transitionTask({
+        dir: task.dir,
+        id: task.task_id,
+        to: 'CANCELLED',
+        reason: 'worker_acknowledged_cancellation',
+        patch: { completed_at: new Date().toISOString() },
+      });
+      return;
+    }
     await transitionTask({
       dir: task.dir,
       id: task.task_id,

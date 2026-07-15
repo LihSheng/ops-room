@@ -6,6 +6,8 @@ import { buildPrReviewPrompt } from '../server/pr-review-payload.mjs';
 import { askAI } from './chat-response.mjs';
 import { parseStructuredReview } from './review-result.mjs';
 import { claimEffect, completeEffect } from '../services/review-effect-ledger.mjs';
+import { readTask } from '../services/review-task-store.mjs';
+import { assertReviewNotCancelled } from './review-worker-guard.mjs';
 
 export function isCurrentReviewHead({ expectedSha, currentSha }) {
   return !expectedSha || expectedSha === currentSha;
@@ -118,6 +120,7 @@ export async function runPrReviewWorkflow(payload) {
       return { mode: 'pr_review', repository, pr, agent, review_event: 'SUPERSEDED', reviewed_sha: head_sha, current_sha: latestSha };
     }
     structuredReview = structured;
+    if (dir && task_id) assertReviewNotCancelled(await readTask({ dir, id: task_id }));
     event = structured.verdict === 'NEEDS_HUMAN' ? 'COMMENT' : structured.verdict;
     const renderedReview = renderStructuredReview(structured);
     if (dir && task_id) {
