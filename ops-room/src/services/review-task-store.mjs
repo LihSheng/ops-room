@@ -190,6 +190,31 @@ export function isClaimStale(claim, { now: currentTime = now(), staleMinutes = 3
   return currentMs - heartbeatMs > staleMinutes * 60_000;
 }
 
+export async function recoverStaleTask({ dir, id, now: currentTime = now(), staleMinutes = 30, retryLimit = 2 }) {
+  const task = await readTask({ dir, id });
+  if (!task) throw new Error(`Task not found: ${id}`);
+  if (!['CLAIMED', 'RUNNING', 'FIXING'].includes(task.state)) return { recovered: false, reason: 'not_active' };
+  let claim;
+  try {
+    claim = JSON.parse(await readFile(claimPath(dir, id), 'utf-8'));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    claim = null;
+  }
+  if (claim && !isClaimStale(claim, { now: currentTime, staleMinutes })) {
+    return { recovered: false, reason: 'heartbeat_fresh' };
+  }
+  await transitionTask({
+    dir,
+    id,
+    to: 'ERROR',
+    reason: 'stale_lease_recovery',
+    patch: { completed_at: currentTime, error: 'Task lease heartbeat expired', stale_recovery: true },
+  });
+  await releaseClaim({ dir, id });
+  return { recovered: true, retry_allowed: task.attempt < retryLimit };
+}
+
 export async function releaseClaim({ dir, id }) {
   await rm(claimPath(dir, id), { force: true });
 }
