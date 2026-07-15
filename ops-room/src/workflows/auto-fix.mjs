@@ -197,7 +197,8 @@ async function prepareFixWorkspace(repository, pr, fixAgent, headRef) {
 }
 
 /**
- * Run the auto-fix workflow: fix issues on the PR branch inside the agent's Docker container, push, re-trigger review.
+ * Run the legacy auto-fix workflow. New controller-owned fix child tasks must use
+ * the SHA-fenced fix worker; this compatibility path must not orchestrate a re-review.
  */
 export async function runAutoFixWorkflow(params) {
   const {
@@ -233,8 +234,8 @@ export async function runAutoFixWorkflow(params) {
   const parsedIssues = parseReviewIssues(reviewText);
   console.log(`[auto-fix] Parsed ${parsedIssues.length} issues from review`);
 
+  let ws;
   try {
-    await updateReviewLoopState(repository, pr, { status: 'fixing', fixAgent, agent: reviewAgent });
 
     await addComment(pr, `**OpenAB / ${AGENT_NAMES[fixAgent] || fixAgent}** — auto-fix in progress 🛠️\n\nI'm fixing the issues flagged in the review inside my container. Will re-review automatically.`, fixAgent);
 
@@ -242,7 +243,7 @@ export async function runAutoFixWorkflow(params) {
     const prompt = buildFixPrompt({ reviewText, parsedIssues, repository, pr, prTitle, prAuthor, headRef, baseRef });
 
     // Prepare workspace inside container
-    const ws = await prepareFixWorkspace(repository, pr, fixAgent, headRef);
+    ws = await prepareFixWorkspace(repository, pr, fixAgent, headRef);
     const { container, containerWorkspace } = ws;
     const enc = (cmd) => JSON.stringify(cmd);
 
@@ -385,13 +386,6 @@ Use the correct file paths from the PR diff above.`;
     });
     await appendToMemory(`Auto-fix pushed to ${repository}#${pr} by ${fixAgent}: ${realChanges.length} file(s)`);
 
-    // Cleanup workspace inside container
-    try {
-      execSync(`docker exec ${container} rm -rf "${containerWorkspace}"`, { encoding: 'utf-8', timeout: 10_000 });
-    } catch (e) {
-      console.error(`[auto-fix] Failed to clean up container workspace:`, e?.message?.slice(0, 200));
-    }
-
     return { ok: true, message: `Fix pushed (${realChanges.length} file(s))`, outcome: classifyFixOutcome({ kind: 'FIX_PUSHED' }) };
 
   } catch (error) {
@@ -399,13 +393,21 @@ Use the correct file paths from the PR diff above.`;
     console.error(`[auto-fix] Failed for ${repository}#${pr}:`, msg.slice(0, 500));
     // Surface only a sanitized, user-friendly message in the PR comment
     await addComment(pr, `**Auto-Fix** — fix attempt failed ❌\n\nSomething went wrong while applying the fix. The error has been logged internally.\n\nEscalating.`, reviewAgent);
-    await updateReviewLoopState(repository, pr, { status: 'failed' });
     await transitionLabels(
       { issueNumber: pr, agent: reviewAgent },
       { remove: ['openab/review-loop'], add: ['openab/needs-human', 'openab/auto-fix-failed'] }
     );
     await appendToMemory(`Auto-fix FAILED for ${repository}#${pr}: ${sanitizeForUser(msg).slice(0, 200)}`);
     return { ok: false, message: 'Auto-fix failed' };
+  } finally {
+    if (ws?.container && ws?.containerWorkspace) {
+      try {
+        execSync(`docker exec ${ws.container} rm -rf "${ws.containerWorkspace}"`, { encoding: 'utf-8', timeout: 10_000 });
+      } catch (cleanupError) {
+        console.error(`[auto-fix] Failed to clean up container workspace:`, cleanupError?.message?.slice(0, 200));
+      }
+    }
+    if (ws?.hostWorkspace) await rm(ws.hostWorkspace, { recursive: true, force: true });
   }
 }
 
