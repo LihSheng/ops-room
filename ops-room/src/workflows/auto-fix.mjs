@@ -141,7 +141,7 @@ const AGENT_CONTAINER = {
 /**
  * Checkout an existing PR branch for fixing via Docker exec into the agent's container.
  */
-async function prepareFixWorkspace(repository, pr, fixAgent, headRef) {
+export async function prepareFixWorkspace(repository, pr, fixAgent, headRef) {
   const dataDir = process.env.OPENAB_DATA_DIR || join(WORKSPACE_BASE, '..');
   const container = AGENT_CONTAINER[fixAgent];
   if (!container) throw new Error(`Unknown container for agent: ${fixAgent}`);

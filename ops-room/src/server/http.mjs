@@ -16,11 +16,14 @@ import { handleTask, cancelTask } from '../workflows/github-code.mjs';
 import { runPrReviewWorkflow } from '../workflows/pr-review.mjs';
 import { ensureReviewLoopDir } from '../services/review-loop-store.mjs';
 import { createGitHubReviewStatusService } from '../services/github-review-status.mjs';
-import { listReviewTasks, readTask, requestCancellation, transitionTask } from '../services/review-task-store.mjs';
+import { listReviewTasks, readTask, renewClaim, requestCancellation, transitionTask } from '../services/review-task-store.mjs';
 import { createPrReviewController } from '../workflows/pr-review-controller.mjs';
 import { createFixChildTask } from '../workflows/fix-task-controller.mjs';
 import { reconcileReviewTasks } from '../services/review-reconciler.mjs';
 import { commitStatusForReviewEvent, taskStateForReviewEvent } from '../workflows/review-outcome.mjs';
+import { executeFixChildTask } from '../workflows/fix-child-executor.mjs';
+import { runFixChildWorker } from '../workflows/fix-worker.mjs';
+import { createFixRuntimeDeps } from '../workflows/fix-runtime.mjs';
 import { handleHealth } from '../routes/health.mjs';
 import { handleTaskDetail, handleTasksList } from '../routes/tasks.mjs';
 import { handleLogsList } from '../routes/logs.mjs';
@@ -41,6 +44,16 @@ const reviewStatus = createGitHubReviewStatusService({
     agentKey: agent,
   }),
 });
+
+async function executeControllerFix({ dir, taskId }) {
+  const deps = createFixRuntimeDeps({ taskDir: dir, renewClaim, readTask });
+  return executeFixChildTask({
+    dir,
+    id: taskId,
+    instanceId: `ops-room-${process.pid}`,
+    runWorker: ({ task }) => runFixChildWorker({ task, deps }),
+  });
+}
 
 async function executeControllerReview(task) {
   try {
@@ -82,6 +95,10 @@ async function executeControllerReview(task) {
         to: 'FIX_QUEUED',
         reason: child.created ? 'fix_child_created' : 'fix_child_deduplicated',
         patch: { fix_child_task_id: child.task.id },
+      });
+      setImmediate(() => {
+        executeControllerFix({ dir: task.dir, taskId: child.task.id })
+          .catch((error) => console.error('[fix-child-controller] unhandled execution error:', error));
       });
     }
     await reviewStatus.set({
