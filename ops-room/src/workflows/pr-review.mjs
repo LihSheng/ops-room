@@ -11,6 +11,13 @@ function parseReviewEvent(reviewText) {
   const upper = String(reviewText || '').toUpperCase();
   if (upper.includes('REQUEST_CHANGES')) return 'REQUEST_CHANGES';
   if (upper.includes('APPROVE')) return 'APPROVE';
+  
+  // Smart heuristic: if the review found issues and listed them, treat as REQUEST_CHANGES
+  // This handles cases where the AI doesn't output the exact magic word
+  if (upper.includes('## ISSUES FOUND') || upper.includes('ISSUE 1:') || upper.includes('**ISSUE')) {
+    return 'REQUEST_CHANGES';
+  }
+  
   return 'COMMENT';
 }
 
@@ -169,10 +176,9 @@ export async function runPrReviewWorkflow(payload) {
       // Post a follow-up acknowledging the review
       const ack = `**${AGENT_NAMES[agent] || agent}** — review complete ✅\n\nI've reviewed this PR. No explicit changes were requested.\n\nPlease review the feedback above and merge if everything looks good.`;
       addComment(pr, ack, agent);
-      
       await transitionLabels(
         { issueNumber: pr, agent },
-        { remove: ['openab/review-pending', 'openab/review-loop'], add: [] }
+        { remove: ['openab/review-pending', 'openab/review-loop'], add: ['openab/review-commented'] }
       );
       console.log(`[pr-review] PR ${repository}#${pr} reviewed (COMMENT). Acknowledged, loop ended.`);
     }

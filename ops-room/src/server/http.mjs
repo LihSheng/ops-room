@@ -205,6 +205,7 @@ async function pollUnreviewedPRs() {
       if (!labelNames.includes('openab/pr-created')) continue;
       // Skip if already reviewed or in review
       if (labelNames.includes('openab/review-approved')) continue;
+      if (labelNames.includes('openab/review-commented')) continue;
       if (labelNames.includes('openab/review-loop')) continue;
       if (labelNames.includes('openab/needs-human')) continue;
       if (labelNames.includes(`openab/${reviewAgent}/wip`)) continue;
