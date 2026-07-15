@@ -1,24 +1,9 @@
-import { execSync, execFileSync } from 'node:child_process';
-import { readFile, writeFile, mkdir, appendFile, rm } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
-import { REPO, WORKSPACE_BASE, SHARED_MEMORY, FORBIDDEN_FILE_PATTERNS } from '../services/runtime-paths.mjs';
+import { execSync } from 'node:child_process';
+import { mkdir, appendFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { REPO, WORKSPACE_BASE, SHARED_MEMORY } from '../services/runtime-paths.mjs';
 import { AGENT_NAMES, BOT_USERS } from '../lib/config.mjs';
-import { githubToken, addComment, transitionLabels, ensureLabel } from '../services/github.mjs';
-import { writeTaskLog } from '../services/logs.mjs';
-import {
-  commandExists,
-  runCodingAgent,
-  execCapture,
-  validateCodingWorkspace,
-  collectGitDebugSnapshot,
-  commitIfChanges,
-  pushBranch,
-  hasGitChanges,
-  getChangedFiles,
-  getGitDiffStat,
-  configureGitAuthor,
-  execLogged,
-} from './github-code.mjs';
+import { addComment, transitionLabels } from '../services/github.mjs';
 import { updateReviewLoopState, advanceLoopIteration, isLoopExhausted, ensureReviewLoopDir } from '../services/review-loop-store.mjs';
 
 const MAX_AUTO_FIX_ITERATIONS = parseInt(process.env.OPENAB_MAX_REVIEW_ITERATIONS || '3', 10);
@@ -123,125 +108,65 @@ ${reviewText || '(none provided)'}
 - Only fix what was flagged.`;
 }
 
+const AGENT_CONTAINER = {
+  berlin: 'openab-opencode-1',
+  tokyo: 'openab-opencode-2',
+  professor: 'openab-opencode-professor',
+};
+
 /**
- * Checkout an existing PR branch for fixing.
- * Returns a ctx-like object for the fix workflow.
+ * Checkout an existing PR branch for fixing via Docker exec into the agent's container.
  */
 async function prepareFixWorkspace(repository, pr, fixAgent, headRef) {
-  const workspaceDir = join(WORKSPACE_BASE, `fix-${repository.replace('/', '-')}-pr-${pr}-${fixAgent}`);
-  const parent = dirname(workspaceDir);
-  
-  // Clean existing workspace
-  try {
-    await rm(workspaceDir, { recursive: true, force: true });
-  } catch { }
-  try {
-    await mkdir(parent, { recursive: true });
-  } catch { }
-  
-  const token = githubToken(fixAgent);
-  const env = { ...process.env, GH_TOKEN: token };
-  
-  console.log(`[auto-fix] Cloning ${repository} for PR #${pr}`);
-  
-  // Clone repo
-  execFileSync('gh', ['repo', 'clone', repository, workspaceDir], {
-    encoding: 'utf-8',
-    stdio: 'pipe',
-    env,
+  const dataDir = process.env.OPENAB_DATA_DIR || join(WORKSPACE_BASE, '..');
+  const container = AGENT_CONTAINER[fixAgent];
+  if (!container) throw new Error(`Unknown container for agent: ${fixAgent}`);
+
+  // Place workspace inside agent's mounted home dir so it's accessible from container
+  const agentHomeName = fixAgent === 'berlin' ? 'opencode-1' : fixAgent === 'tokyo' ? 'opencode-2' : fixAgent;
+  const hostWorkspace = join(dataDir, 'agents', agentHomeName, 'workspace', `pr-${pr}-fix`);
+  const containerWorkspace = `/home/node/workspace/pr-${pr}-fix`;
+
+  // Clean existing
+  try { await rm(hostWorkspace, { recursive: true, force: true }); } catch { }
+  await mkdir(hostWorkspace, { recursive: true });
+
+  const enc = (cmd) => JSON.stringify(cmd);
+
+  // Clone via gh auth inside container
+  console.log(`[auto-fix] Cloning ${repository} inside ${container} (agent: ${fixAgent})...`);
+  execSync(`docker exec ${container} bash -c ${enc(`cd /home/node && gh repo clone ${repository} "${containerWorkspace}"`)}`, {
+    encoding: 'utf-8', timeout: 120_000, stdio: 'pipe',
   });
-  
+
   // Set authenticated remote
-  execFileSync('git', ['remote', 'set-url', 'origin', `https://x-access-token:${token}@github.com/${repository}.git`], {
-    encoding: 'utf-8',
-    stdio: 'pipe',
-    cwd: workspaceDir,
+  execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git remote set-url origin https://github.com/${repository}.git`)}`, {
+    encoding: 'utf-8', timeout: 30_000,
   });
-  
-  // Fetch PR branch
-  execFileSync('git', ['fetch', 'origin', '--prune'], {
-    encoding: 'utf-8',
-    stdio: 'pipe',
-    cwd: workspaceDir,
+
+  // Fetch and checkout PR branch
+  execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git fetch origin --prune`)}`, {
+    encoding: 'utf-8', timeout: 60_000,
   });
-  
-  // Checkout PR branch
-  const branchToCheckout = headRef || `pr/${pr}`;
+
+  const branch = headRef || `pr-${pr}`;
   try {
-    execFileSync('git', ['checkout', branchToCheckout], {
-      encoding: 'utf-8',
-      stdio: 'pipe',
-      cwd: workspaceDir,
+    execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git checkout "${branch}"`)}`, {
+      encoding: 'utf-8', timeout: 30_000, stdio: 'pipe',
     });
   } catch {
-    // Try fetching the PR ref directly
-    try {
-      execSync(`git fetch origin pull/${pr}/head:${branchToCheckout}`, {
-        encoding: 'utf-8',
-        stdio: 'pipe',
-        cwd: workspaceDir,
-      });
-      execFileSync('git', ['checkout', branchToCheckout], {
-        encoding: 'utf-8',
-        stdio: 'pipe',
-        cwd: workspaceDir,
-      });
-    } catch (e) {
-      throw new Error(`Cannot checkout PR branch ${branchToCheckout}: ${e.message}`);
-    }
+    execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git fetch origin pull/${pr}/head:"${branch}" && git checkout "${branch}"`)}`, {
+      encoding: 'utf-8', timeout: 30_000, stdio: 'pipe',
+    });
   }
-  
-  console.log(`[auto-fix] Workspace ready at ${workspaceDir} on branch ${branchToCheckout}`);
-  
-  return {
-    workspaceDir,
-    branchName: branchToCheckout,
-    repo: repository,
-    issueNumber: pr,
-    issueTitle: `PR #${pr} auto-fix`,
-    agent: fixAgent,
-    defaultBranch: 'main',
-  };
+
+  console.log(`[auto-fix] Workspace ready in ${container}:${containerWorkspace} on ${branch}`);
+
+  return { hostWorkspace, containerWorkspace, container, branchName: branch };
 }
 
 /**
- * Build an auto-fix context for the coding agent prompt.
- */
-function buildFixCtx(repository, pr, fixAgent, headRef, workspaceDir, branchName) {
-  return {
-    agent: fixAgent,
-    repo: repository,
-    issueNumber: pr,
-    issueTitle: `Auto-fix for PR #${pr}`,
-    issueBody: 'Auto-fix from review loop',
-    issue: { user: { login: 'auto-fix' } },
-    comments: [],
-    requester: 'auto-fix',
-    task: `Fix issues flagged in review of PR #${pr}`,
-    taskId: `fix-pr-${pr}-${fixAgent}-${Date.now()}`,
-    branchName: branchName || headRef || `fix-pr-${pr}`,
-    workspaceDir,
-    startedAt: new Date().toISOString(),
-    checkResults: [],
-    diffStat: '',
-    codingTimeoutMs: 30 * 60 * 1000,
-  };
-}
-
-/**
- * Run the auto-fix workflow: fix issues on the PR branch, push, re-trigger review.
- * 
- * @param {object} params
- * @param {string} params.repository - e.g. 'LihSheng/LinkUp'
- * @param {number} params.pr - PR number
- * @param {string} params.fixAgent - Agent to do the fixing (e.g. 'berlin')
- * @param {string} params.reviewAgent - Agent that did the review (e.g. 'professor')
- * @param {string} params.reviewText - Full review text
- * @param {string} params.prTitle - PR title
- * @param {string} params.prAuthor - PR author
- * @param {string} params.headRef - PR head branch ref
- * @param {string} params.baseRef - PR base branch ref
- * @returns {Promise<{ok: boolean, message: string}>}
+ * Run the auto-fix workflow: fix issues on the PR branch inside the agent's Docker container, push, re-trigger review.
  */
 export async function runAutoFixWorkflow(params) {
   const {
@@ -256,171 +181,143 @@ export async function runAutoFixWorkflow(params) {
     baseRef = '',
   } = params;
 
-  console.log(`[auto-fix] Starting auto-fix for ${repository}#${pr} (agent: ${fixAgent}, iteration check)`);
+  console.log(`[auto-fix] Starting auto-fix for ${repository}#${pr} (fix: ${fixAgent}, review: ${reviewAgent})`);
 
-  // Ensure review loop directory exists
   await ensureReviewLoopDir();
 
   // Check iteration limit
   if (await isLoopExhausted(repository, pr, MAX_AUTO_FIX_ITERATIONS)) {
-    const msg = `Max auto-fix iterations (${MAX_AUTO_FIX_ITERATIONS}) reached for ${repository}#${pr}. Escalating to human.`;
+    const msg = `Max auto-fix iterations (${MAX_AUTO_FIX_ITERATIONS}) reached for ${repository}#${pr}. Escalating.`;
     console.log(`[auto-fix] ${msg}`);
-    
     await appendToMemory(msg);
-    await addComment(pr, `**Auto-Fix Loop** — max iterations reached ⚠️\n\nThis PR has been through ${MAX_AUTO_FIX_ITERATIONS} review→fix cycles. Manual review is required.\n\nLabel: \`openab/needs-human\``, reviewAgent);
-    
+    await addComment(pr, `**Auto-Fix Loop** — max iterations reached ⚠️\n\nManual review required.\n\nLabel: \`openab/needs-human\``, reviewAgent);
     await transitionLabels(
       { issueNumber: pr, agent: reviewAgent },
       { remove: ['openab/review-loop', 'openab/changes-requested'], add: ['openab/needs-human'] }
     );
-    
     await updateReviewLoopState(repository, pr, { status: 'escalated' });
-    
     return { ok: false, message: 'Max iterations reached, escalated to human' };
   }
 
-  // Parse review issues
   const parsedIssues = parseReviewIssues(reviewText);
   console.log(`[auto-fix] Parsed ${parsedIssues.length} issues from review`);
 
-  // Acquire loop lock
-  // const locked = await acquireReviewLoopLock(repository, pr);
-  // if (!locked) {
-  //   return { ok: false, message: 'Review loop already in progress for this PR' };
-  // }
-  
   try {
-    // Update state to fixing
-    await updateReviewLoopState(repository, pr, {
-      status: 'fixing',
-      fixAgent,
-      agent: reviewAgent,
-    });
+    await updateReviewLoopState(repository, pr, { status: 'fixing', fixAgent, agent: reviewAgent });
 
-    await addComment(pr, `**OpenAB / ${AGENT_NAMES[fixAgent] || fixAgent}** — auto-fix in progress 🛠️\n\nI'm fixing the issues flagged in the review. This will be re-reviewed automatically.`, fixAgent);
+    await addComment(pr, `**OpenAB / ${AGENT_NAMES[fixAgent] || fixAgent}** — auto-fix in progress 🛠️\n\nI'm fixing the issues flagged in the review inside my container. Will re-review automatically.`, fixAgent);
 
     // Build fix prompt
-    const prompt = buildFixPrompt({
-      reviewText,
-      parsedIssues,
-      repository,
-      pr,
-      prTitle,
-      prAuthor,
-      headRef,
-      baseRef,
+    const prompt = buildFixPrompt({ reviewText, parsedIssues, repository, pr, prTitle, prAuthor, headRef, baseRef });
+
+    // Prepare workspace inside container
+    const ws = await prepareFixWorkspace(repository, pr, fixAgent, headRef);
+    const { container, containerWorkspace } = ws;
+    const enc = (cmd) => JSON.stringify(cmd);
+
+    // Write prompt file inside container and configure git
+    execSync(`docker exec ${container} bash -c ${enc(`mkdir -p "${containerWorkspace}/.openab" && cat > "${containerWorkspace}/.openab/TASK.md" << 'EOF'\n${prompt}\nEOF`)}`, {
+      encoding: 'utf-8', timeout: 30_000,
     });
 
-    // Prepare workspace with PR branch checked out
-    console.log(`[auto-fix] Preparing fix workspace for ${repository}#${pr} branch ${headRef}`);
-    const fixCtx = await prepareFixWorkspace(repository, pr, fixAgent, headRef);
-    
-    // Write prompt file for the coding agent
-    const promptDir = join(fixCtx.workspaceDir, '.openab');
-    await mkdir(promptDir, { recursive: true });
-    await writeFile(join(promptDir, 'FIX.md'), prompt);
-    
-    // Build a coding ctx that uses the fix prompt
-    const codingCtx = {
-      ...fixCtx,
-      task: `Fix issues from PR review of #${pr}`,
-      taskId: `auto-fix-${pr}-${fixAgent}-${Date.now()}`,
-      checkResults: [],
-      diffStat: '',
-      codingTimeoutMs: 30 * 60 * 1000,
-    };
+    const botUser = BOT_USERS[fixAgent] || `lihsheng-${fixAgent}[bot]`;
+    execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git config user.name "${botUser}" && git config user.email "${botUser}@users.noreply.github.com"`)}`, {
+      encoding: 'utf-8', timeout: 10_000,
+    });
 
-    // Validate workspace
-    await validateCodingWorkspace(codingCtx);
-    
-    const beforeSnapshot = await collectGitDebugSnapshot(codingCtx.workspaceDir);
-    console.log('[auto-fix] before snapshot:', JSON.stringify(beforeSnapshot, null, 2));
+    // Run opencode inside the container (not Codex on the host)
+    console.log(`[auto-fix] Running opencode in ${container}:${containerWorkspace}...`);
+    const startTime = Date.now();
 
-    // Write the prompt to TASK.md so runCodingAgent picks it up
-    const taskPromptPath = join(codingCtx.workspaceDir, '.openab', 'TASK.md');
-    await writeFile(taskPromptPath, prompt);
-    
-    // Run the coding agent
-    console.log(`[auto-fix] Running ${fixAgent} coding agent on PR #${pr}`);
-    await runCodingAgent(codingCtx);
-    
-    const afterSnapshot = await collectGitDebugSnapshot(codingCtx.workspaceDir);
-    console.log('[auto-fix] after snapshot:', JSON.stringify(afterSnapshot, null, 2));
-
-    // Check for changes
-    const changedFiles = getChangedFiles(codingCtx);
-    console.log(`[auto-fix] Changed files: ${changedFiles.length > 0 ? changedFiles.join(', ') : 'none'}`);
-
-    if (changedFiles.length === 0) {
-      // No changes — agent decided nothing to fix or couldn't fix
-      console.log('[auto-fix] No file changes produced by coding agent');
-      
-      await addComment(pr, `**OpenAB / ${AGENT_NAMES[fixAgent] || fixAgent}** — no changes needed 🤷\n\nThe coding agent found nothing to fix in response to the review. Re-reviewing the PR as-is.`, fixAgent);
-      
-      // Still advance iteration and re-review
-      await advanceLoopIteration(repository, pr, {
-        event: 'no_changes_needed',
-        summary: 'Coding agent produced no changes',
-        fixAgent,
+    try {
+      const result = execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && opencode run "${containerWorkspace}/.openab/TASK.md" 2>&1`)}`, {
+        encoding: 'utf-8',
+        timeout: 30 * 60 * 1000,
+        maxBuffer: 50 * 1024 * 1024,
       });
-      
+      console.log(`[auto-fix] opencode finished in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
+      const tail = result.slice(-2000);
+      if (tail.trim()) console.log(`[auto-fix] opencode tail: ${tail}`);
+    } catch (e) {
+      const stdout = e.stdout?.toString()?.slice(-2000) || '';
+      const stderr = e.stderr?.toString()?.slice(-2000) || '';
+      console.log(`[auto-fix] opencode exit=${e.status} signal=${e.signal}`);
+      if (stdout) console.log(`[auto-fix] stdout: ${stdout}`);
+      if (stderr) console.log(`[auto-fix] stderr: ${stderr}`);
+      // Continue — opencode may have made changes despite non-zero exit
+    }
+
+    // Check for actual source changes
+    let statusOut = '';
+    try {
+      statusOut = execSync(`docker exec ${container} bash -c ${enc(`cd "${containerWorkspace}" && git status --short`)}`, {
+        encoding: 'utf-8', timeout: 10_000,
+      }).trim();
+    } catch { }
+
+    const realChanges = statusOut.split('\n')
+      .filter(l => l.trim())
+      .filter(l => !l.includes('.openab/'))
+      .filter(l => l.startsWith(' M') || l.startsWith('M') || l.startsWith('??') || l.startsWith('A') || l.startsWith(' D') || l.startsWith('D'));
+
+    console.log(`[auto-fix] Git status: ${statusOut ? statusOut.split('\n').length + ' entries' : 'clean'}`);
+
+    if (realChanges.length === 0) {
+      console.log('[auto-fix] No source changes produced');
+      await addComment(pr, `**${AGENT_NAMES[fixAgent] || fixAgent}** — no changes needed 🤷\n\nThe agent reviewed the feedback but found nothing to fix. Re-reviewing as-is.`, fixAgent);
+      await advanceLoopIteration(repository, pr, { event: 'no_changes', summary: 'No source changes', fixAgent });
       return { ok: true, message: 'No changes needed', needsReReview: true };
     }
 
-    // Configure git author
-    configureGitAuthor(codingCtx);
-    
-    // Commit and push
-    const diffStat = getGitDiffStat(codingCtx);
-    console.log(`[auto-fix] Diff stat:\n${diffStat}`);
+    // Commit and push from inside the container
+    console.log(`[auto-fix] Files changed:\n${realChanges.join('\n')}`);
 
-    await execLogged(`cd "${codingCtx.workspaceDir}" && git add .`, codingCtx);
-    await execLogged(`cd "${codingCtx.workspaceDir}" && git commit -m "Auto-fix: address PR review feedback for #${pr}"`, codingCtx);
-    await pushBranch(codingCtx);
+    const gitCommands = [
+      `cd "${containerWorkspace}"`,
+      `git add -A`,
+      `git commit -m "Auto-fix: address PR review feedback for #${pr}"`,
+      `git push origin HEAD:refs/heads/"${headRef}" 2>&1`,
+    ].join(' && ');
 
-    console.log(`[auto-fix] Fix pushed to ${headRef}`);
+    try {
+      const pushResult = execSync(`docker exec ${container} bash -c ${enc(gitCommands)}`, {
+        encoding: 'utf-8', timeout: 60_000,
+      });
+      console.log(`[auto-fix] Push: ${pushResult.trim().slice(0, 500)}`);
+    } catch (e) {
+      const msg = e.stderr?.toString() || e.message;
+      console.error(`[auto-fix] Push failed: ${msg.slice(0, 500)}`);
+      await addComment(pr, `**Auto-Fix** — push failed ❌\n\n\`\`\`\n${msg.slice(0, 2000)}\n\`\`\``, reviewAgent);
+      return { ok: false, message: `Push failed: ${msg.slice(0, 200)}` };
+    }
 
-    // Add a comment on the PR
-    await addComment(pr, `**OpenAB / ${AGENT_NAMES[fixAgent] || fixAgent}** — fix pushed ✅\n\nI've addressed the review feedback and pushed changes to \`${headRef}\`. The PR will be re-reviewed automatically.\n\n${diffStat ? `\n\`\`\`\n${diffStat}\n\`\`\`` : ''}`, fixAgent);
+    await addComment(pr, `**${AGENT_NAMES[fixAgent] || fixAgent}** — fix pushed ✅\n\nI've addressed the review feedback and pushed to \`${headRef}\`. Re-reviewing now.`, fixAgent);
 
-    // Advance iteration counter
     await advanceLoopIteration(repository, pr, {
       event: 'fix_pushed',
-      summary: `Fix pushed by ${fixAgent} with ${changedFiles.length} file(s) changed`,
+      summary: `Fix by ${fixAgent}: ${realChanges.length} file(s)`,
       fixAgent,
-      changedFiles,
     });
+    await appendToMemory(`Auto-fix pushed to ${repository}#${pr} by ${fixAgent}: ${realChanges.length} file(s)`);
 
-    await appendToMemory(`Auto-fix pushed to ${repository}#${pr} by ${fixAgent}: ${changedFiles.length} file(s)`);
+    // Cleanup workspace inside container
+    try {
+      execSync(`docker exec ${container} rm -rf "${containerWorkspace}"`, { encoding: 'utf-8', timeout: 10_000 });
+    } catch { }
 
-    return { ok: true, message: `Fix pushed (${changedFiles.length} file(s) changed)`, needsReReview: true };
+    return { ok: true, message: `Fix pushed (${realChanges.length} file(s))`, needsReReview: true };
 
   } catch (error) {
     const msg = error?.message || String(error);
-    console.error(`[auto-fix] Fix workflow failed for ${repository}#${pr}:`, msg.slice(0, 500));
-    
-    await addComment(pr, `**Auto-Fix Loop** — fix attempt failed ❌\n\n\`\`\`\n${msg.slice(0, 2000)}\n\`\`\`\n\nEscalating for manual review.`, reviewAgent);
-    
+    console.error(`[auto-fix] Failed for ${repository}#${pr}:`, msg.slice(0, 500));
+    await addComment(pr, `**Auto-Fix** — fix attempt failed ❌\n\n\`\`\`\n${msg.slice(0, 2000)}\n\`\`\`\n\nEscalating.`, reviewAgent);
     await updateReviewLoopState(repository, pr, { status: 'failed' });
-    
     await transitionLabels(
       { issueNumber: pr, agent: reviewAgent },
       { remove: ['openab/review-loop'], add: ['openab/needs-human', 'openab/auto-fix-failed'] }
     );
-    
     await appendToMemory(`Auto-fix FAILED for ${repository}#${pr}: ${msg.slice(0, 200)}`);
-    
     return { ok: false, message: msg };
-  } finally {
-    // Release lock
-    // await releaseReviewLoopLock(repository, pr);
-    // Cleanup workspace unless KEEP is set
-    if (!process.env.OPS_ROOM_KEEP_WORKSPACE) {
-      try {
-        const workspaceDir = join(WORKSPACE_BASE, `fix-${repository.replace('/', '-')}-pr-${pr}-${fixAgent}`);
-        await rm(workspaceDir, { recursive: true, force: true });
-      } catch { }
-    }
   }
 }
 
