@@ -217,13 +217,25 @@ export async function runAutoFixWorkflow(params) {
       encoding: 'utf-8', timeout: 10_000,
     });
 
-    // ── Generate fix via API (not OpenCode CLI — container has key issues) ──
+    // ── Generate fix via API ──────────────────────────────────────────────
     console.log(`[auto-fix] Generating fix via AI API...`);
+
+    // Fetch the PR diff for context (so AI knows correct file paths)
+    const { ghApiText } = await import('../services/github.mjs');
+    let prDiff = '';
+    try {
+      prDiff = ghApiText('GET', `repos/${repository}/pulls/${pr}`, reviewAgent, ['Accept: application/vnd.github.v3.diff']);
+    } catch { }
+    const safeDiff = (prDiff || '').slice(0, 30000);
+
     const fixPrompt = `You are an expert software engineer fixing code based on a PR review.
 
 Repository: ${repository}
 PR: #${pr}
 Branch: ${headRef}
+
+## Changed Files (from PR diff)
+${safeDiff || '(no diff available — check the repo directly)'}
 
 ## Review Feedback
 ${reviewText}
@@ -231,14 +243,15 @@ ${reviewText}
 ## Task
 Fix the issues mentioned in the review. Output ONLY the file changes in this exact format:
 
-### File: <path>
-\\\`\\\`\\\`<language>
+### File: <path relative to repo root>
+\`\`\`<language>
 <entire new file content>
-\\\`\\\`\\\`
+\`\`\`
 
 Include every file that needs to change. Output the COMPLETE file, not a diff.
 Do NOT include any explanation, summary, or commentary outside the file blocks.
-Only fix what was requested — no unrelated changes.`;
+Only fix what was requested — no unrelated changes.
+Use the correct file paths from the PR diff above.`;
 
     const startTime = Date.now();
     const fixOutput = (await askAI(fixPrompt)).trim();
