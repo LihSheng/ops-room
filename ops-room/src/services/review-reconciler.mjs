@@ -14,11 +14,18 @@ export async function reconcileReviewTasks({ dir, now, staleMinutes = 30, retryL
   }
   const ids = names.filter((name) => name.endsWith('.json')).map((name) => name.slice(0, -5));
   const recovered = [];
+  const corrupt = [];
   for (const id of ids) {
-    const task = await readTask({ dir, id });
+    let task;
+    try {
+      task = await readTask({ dir, id });
+    } catch (error) {
+      if (error instanceof SyntaxError) { corrupt.push(id); continue; }
+      throw error;
+    }
     if (!task || !ACTIVE_STATES.has(task.state)) continue;
     const result = await recoverStaleTask({ dir, id, now, staleMinutes, retryLimit });
     if (result.recovered) recovered.push(id);
   }
-  return { scanned: ids.length, recovered };
+  return { scanned: ids.length, recovered, corrupt };
 }
