@@ -10,7 +10,7 @@ const TRANSITIONS = new Map([
   ['RUNNING', new Set(['PASSED', 'CHANGES_REQUESTED', 'SUPERSEDED', 'CANCEL_REQUESTED', 'NEEDS_HUMAN', 'ERROR'])],
   ['CHANGES_REQUESTED', new Set(['FIX_QUEUED', 'NEEDS_HUMAN', 'CANCELLED'])],
   ['FIX_QUEUED', new Set(['CLAIMED', 'SUPERSEDED', 'CANCELLED', 'NEEDS_HUMAN', 'ERROR'])],
-  ['FIXING', new Set(['FIX_PUSHED', 'SUPERSEDED', 'CANCEL_REQUESTED', 'NEEDS_HUMAN', 'ERROR'])],
+  ['FIXING', new Set(['FIX_PUSHED', 'SUPERSEDED', 'CANCEL_REQUESTED', 'CANCELLED', 'NEEDS_HUMAN', 'ERROR'])],
   ['CANCEL_REQUESTED', new Set(['CANCELLED', 'SUPERSEDED', 'ERROR'])],
 ]);
 
@@ -103,6 +103,8 @@ export async function createOrClaimTask({ dir, input, trigger = 'unknown', polic
       trigger,
       parent_task_id: parentTaskId,
       policy,
+      review_result: input.review_result || null,
+      head_ref: input.headRef || null,
       state: 'QUEUED',
       attempt: 0,
       created_at: createdAt,

@@ -73,6 +73,8 @@ async function executeControllerReview(task) {
         parentTaskId: task.task_id,
         agent: task.agent,
         policy: task.policy,
+        reviewResult: result.structured_review,
+        headRef: result.head_ref || null,
       });
       await transitionTask({
         dir: task.dir,
