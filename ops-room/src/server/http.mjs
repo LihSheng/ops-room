@@ -19,8 +19,9 @@ import { listReviewTasks, readTask, renewClaim, requestCancellation, retryTask, 
 import { listEffects, resolveAmbiguousEffect } from '../services/review-effect-ledger.mjs';
 import { createPrReviewController } from '../workflows/pr-review-controller.mjs';
 import { createFixChildTask } from '../workflows/fix-task-controller.mjs';
-import { reconcileReviewTasks } from '../services/review-reconciler.mjs';
+import { reconcileReviewTasks, dispatchEligibleTasks } from '../services/review-reconciler.mjs';
 import { commitStatusForReviewEvent, taskStateForReviewEvent } from '../workflows/review-outcome.mjs';
+import { evaluateAutoFixPolicy } from '../services/review-policy.mjs';
 import { executeFixChildTask } from '../workflows/fix-child-executor.mjs';
 import { runFixChildWorker } from '../workflows/fix-worker.mjs';
 import { createFixRuntimeDeps } from '../workflows/fix-runtime.mjs';
@@ -57,20 +58,34 @@ async function executeControllerFix({ dir, taskId }) {
 
 async function executeControllerReview(task) {
   try {
+    const isChat = task.taskType === 'chat';
     const result = await runPrReviewWorkflow({
       agent: task.agent,
-      task: task.task,
+      task: task.task_text || task.task,
       task_type: task.taskType,
       repository: task.repository,
       pr: task.pr,
       commenter: task.commenter || 'controller',
       comment_id: task.commentId,
-      // Auto-fix remains disabled until the separate child-task workflow exists.
       mode: 'review',
       head_sha: task.headSha,
       task_id: task.task_id,
       dir: task.dir,
     });
+
+    // Chat tasks must not write the canonical commit status and should
+    // complete in a dedicated success state without side effects.
+    if (isChat) {
+      await transitionTask({
+        dir: task.dir,
+        id: task.task_id,
+        to: 'PASSED',
+        reason: 'chat_response_completed',
+        patch: { completed_at: new Date().toISOString(), result },
+      });
+      return;
+    }
+
     const status = commitStatusForReviewEvent(result.review_event);
     const state = taskStateForReviewEvent(result.review_event);
     const terminalTask = await transitionTask({
@@ -80,30 +95,55 @@ async function executeControllerReview(task) {
       reason: `review_${String(result.review_event || 'unknown').toLowerCase()}`,
       patch: { completed_at: new Date().toISOString(), result },
     });
+
     if (state === 'CHANGES_REQUESTED' && task.mode === 'auto-fix') {
-      const child = await createFixChildTask({
-        dir: task.dir,
-        repository: task.repository,
-        pr: task.pr,
-        reviewedSha: task.headSha,
-        parentTaskId: task.task_id,
-        agent: task.agent,
-        policy: task.policy,
-        reviewResult: result.structured_review,
-        headRef: result.head_ref || null,
+      // Evaluate auto-fix policy against the actual returned findings BEFORE
+      // creating a fix child. Critical, ambiguous, or explicitly non-auto-fixable
+      // findings block automated fixing.
+      const autoFixPolicy = evaluateAutoFixPolicy({
+        requestedMode: task.mode,
+        policy: task.policy || {},
+        findings: result.structured_review?.findings || [],
       });
-      await transitionTask({
-        dir: task.dir,
-        id: terminalTask.id,
-        to: 'FIX_QUEUED',
-        reason: child.created ? 'fix_child_created' : 'fix_child_deduplicated',
-        patch: { fix_child_task_id: child.task.id },
-      });
-      setImmediate(() => {
-        executeControllerFix({ dir: task.dir, taskId: child.task.id })
-          .catch((error) => console.error('[fix-child-controller] unhandled execution error:', error));
-      });
+
+      if (autoFixPolicy.allowed) {
+        const child = await createFixChildTask({
+          dir: task.dir,
+          repository: task.repository,
+          pr: task.pr,
+          reviewedSha: task.headSha,
+          parentTaskId: task.task_id,
+          agent: task.agent,
+          policy: task.policy,
+          reviewResult: result.structured_review,
+          headRef: result.head_ref || null,
+        });
+
+        // Keep parent terminal as CHANGES_REQUESTED; only store fix_child_task_id
+        // as metadata. The child owns FIX_QUEUED → FIXING → FIX_PUSHED/NEEDS_HUMAN/ERROR.
+        await transitionTask({
+          dir: task.dir,
+          id: terminalTask.id,
+          to: 'CHANGES_REQUESTED',
+          reason: child.created ? 'fix_child_created' : 'fix_child_deduplicated',
+          patch: { fix_child_task_id: child.task.id },
+        });
+
+        setImmediate(() => {
+          executeControllerFix({ dir: task.dir, taskId: child.task.id })
+            .catch((error) => console.error('[fix-child-controller] unhandled execution error:', error));
+        });
+      } else {
+        // Policy blocks auto-fix: move to NEEDS_HUMAN instead of creating fix child.
+        await transitionTask({
+          dir: task.dir,
+          id: terminalTask.id,
+          to: 'NEEDS_HUMAN',
+          reason: `auto_fix_policy_rejected:${autoFixPolicy.reason}`,
+        });
+      }
     }
+
     await reviewStatus.set({
       repository: task.repository,
       sha: task.headSha,
@@ -250,6 +290,33 @@ const server = createServer(async (req, res) => {
         id: reviewRetryMatch[1],
         reason: String(body?.reason || 'operator_retry'),
       });
+      // Immediately attempt dispatch of this (and any other) eligible queued tasks.
+      setImmediate(() => {
+        dispatchEligibleTasks({ dir: REVIEW_TASKS_DIR, instanceId: `ops-room-${process.pid}` })
+          .then((dr) => {
+            for (const t of dr.tasks) {
+              const executor = t.kind === 'fix' ? executeControllerFix : executeControllerReview;
+              executor({
+                dir: REVIEW_TASKS_DIR,
+                task_id: t.id,
+                taskId: t.id,
+                task: t.task_text,
+                task_text: t.task_text,
+                taskType: t.task_type || 'review',
+                commenter: t.commenter,
+                commentId: t.comment_id,
+                headSha: t.reviewed_sha,
+                repository: t.repository,
+                pr: t.pr,
+                agent: t.agent,
+                mode: t.mode,
+                policy: t.policy || {},
+              })
+                .catch((error) => console.error('[operator-dispatch] execution error:', error));
+            }
+          })
+          .catch((error) => console.error('[operator-dispatch] failed:', error?.message));
+      });
       sendJSON(res, 202, { task });
     } catch (error) {
       sendJSON(res, 409, { error: error?.message || 'Retry failed' });
@@ -283,6 +350,33 @@ const server = createServer(async (req, res) => {
         dir: REVIEW_TASKS_DIR,
         id: reviewResumeMatch[1],
         reason: String(body?.reason || 'operator_resumed'),
+      });
+      // Immediately attempt dispatch of eligible queued tasks.
+      setImmediate(() => {
+        dispatchEligibleTasks({ dir: REVIEW_TASKS_DIR, instanceId: `ops-room-${process.pid}` })
+          .then((dr) => {
+            for (const t of dr.tasks) {
+              const executor = t.kind === 'fix' ? executeControllerFix : executeControllerReview;
+              executor({
+                dir: REVIEW_TASKS_DIR,
+                task_id: t.id,
+                taskId: t.id,
+                task: t.task_text,
+                task_text: t.task_text,
+                taskType: t.task_type || 'review',
+                commenter: t.commenter,
+                commentId: t.comment_id,
+                headSha: t.reviewed_sha,
+                repository: t.repository,
+                pr: t.pr,
+                agent: t.agent,
+                mode: t.mode,
+                policy: t.policy || {},
+              })
+                .catch((error) => console.error('[operator-dispatch] execution error:', error));
+            }
+          })
+          .catch((error) => console.error('[operator-dispatch] failed:', error?.message));
       });
       sendJSON(res, 202, { task });
     } catch (error) {
@@ -421,6 +515,34 @@ async function runReviewReconciliationCycle() {
   const result = await reconcileReviewTasks({ dir: REVIEW_TASKS_DIR });
   if (result.recovered.length > 0) {
     console.warn(`[review-reconciler] recovered ${result.recovered.length} stale task(s): ${result.recovered.join(', ')}`);
+  }
+  // Dispatch any QUEUED / FIX_QUEUED tasks that are now eligible (concurrency
+  // freed up, or tasks that were left queued after submission / operator action).
+  const dispatchResult = await dispatchEligibleTasks({ dir: REVIEW_TASKS_DIR, instanceId: `ops-room-${process.pid}` });
+  if (dispatchResult.dispatched > 0) {
+    console.log(`[review-reconciler] dispatched ${dispatchResult.dispatched} eligible task(s)`);
+    for (const task of dispatchResult.tasks) {
+      const executor = task.kind === 'fix' ? executeControllerFix : executeControllerReview;
+      setImmediate(() => {
+        executor({
+          dir: REVIEW_TASKS_DIR,
+          task_id: task.id,
+          taskId: task.id,
+          task: task.task_text,
+          task_text: task.task_text,
+          taskType: task.task_type || 'review',
+          commenter: task.commenter,
+          commentId: task.comment_id,
+          headSha: task.reviewed_sha,
+          repository: task.repository,
+          pr: task.pr,
+          agent: task.agent,
+          mode: task.mode,
+          policy: task.policy || {},
+        })
+          .catch((error) => console.error('[review-reconciler] dispatch execution error:', error));
+      });
+    }
   }
 }
 

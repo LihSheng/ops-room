@@ -19,7 +19,9 @@ const TRANSITIONS = new Map([
   ['PAUSED', new Set(['QUEUED', 'FIX_QUEUED'])],
   ['CLAIMED', new Set(['RUNNING', 'FIXING', 'SUPERSEDED', 'CANCEL_REQUESTED', 'ERROR', 'QUEUED'])],
   ['RUNNING', new Set(['PASSED', 'CHANGES_REQUESTED', 'SUPERSEDED', 'CANCEL_REQUESTED', 'NEEDS_HUMAN', 'ERROR', 'QUEUED'])],
-  ['CHANGES_REQUESTED', new Set(['FIX_QUEUED', 'NEEDS_HUMAN', 'CANCELLED'])],
+  ['CHANGES_REQUESTED', new Set(['CHANGES_REQUESTED', 'FIX_QUEUED', 'NEEDS_HUMAN', 'CANCELLED'])],
+  ['PASSED', new Set(['PASSED'])],
+  ['FIX_PUSHED', new Set(['FIX_PUSHED'])],
   ['FIXING', new Set(['FIX_PUSHED', 'SUPERSEDED', 'CANCEL_REQUESTED', 'CANCELLED', 'NEEDS_HUMAN', 'ERROR'])],
   ['CANCEL_REQUESTED', new Set(['CANCELLED', 'SUPERSEDED', 'ERROR'])],
   ['ERROR', new Set(['QUEUED', 'NEEDS_HUMAN'])],
@@ -47,15 +49,20 @@ function claimPath(dir, id) {
   return join(dir, `${id}.claim`);
 }
 
-export function buildReviewTaskId({ repository, pr, headSha, agent, mode = 'review' }) {
-  return [
-    'review',
+export function buildReviewTaskId({ repository, pr, headSha, agent, mode = 'review', taskType = 'review', commentId = null }) {
+  const prefix = taskType === 'chat' ? 'pr-chat' : 'review';
+  const parts = [
+    prefix,
     safePart(repository),
     Number(pr),
     safePart(headSha, 'missing-sha'),
     safePart(agent),
     safePart(mode, 'review'),
-  ].join(':');
+  ];
+  if (taskType === 'chat' && commentId) {
+    parts.push(safePart(String(commentId), 'chat'));
+  }
+  return parts.join(':');
 }
 
 export function buildFixTaskId({ repository, pr, reviewedSha, parentTaskId, agent }) {
@@ -99,7 +106,7 @@ export async function createOrClaimTask({ dir, input, trigger = 'unknown', polic
   await mkdir(dir, { recursive: true });
   const id = kind === 'fix'
     ? buildFixTaskId({ ...input, parentTaskId, agent: input.agent })
-    : buildReviewTaskId(input);
+    : buildReviewTaskId({ ...input, taskType: input.taskType || input.task_type || 'review', commentId: input.commentId || input.comment_id || null });
   const path = taskPath(dir, id);
 
   try {
@@ -119,6 +126,10 @@ export async function createOrClaimTask({ dir, input, trigger = 'unknown', polic
       policy,
       review_result: input.review_result || null,
       head_ref: input.headRef || null,
+      task_type: input.taskType || input.task_type || 'review',
+      comment_id: input.commentId || input.comment_id || null,
+      commenter: input.commenter || null,
+      task_text: input.task || null,
       state: 'QUEUED',
       attempt: 0,
       created_at: createdAt,
@@ -146,11 +157,12 @@ export async function transitionTask({ dir, id, to, reason, patch = {}, leaseEpo
     throw new Error(`Invalid task transition: ${current.state} -> ${to}`);
   }
 
-  // Lease epoch fencing: if a lease epoch is provided, reject transitions from
-  // a worker whose lease has been superseded.
-  if (leaseEpoch !== undefined && current.lease?.epoch !== undefined) {
-    if (leaseEpoch < current.lease.epoch) {
-      throw new Error(`Stale lease epoch: presented ${leaseEpoch} < current ${current.lease.epoch}`);
+  // Lease epoch fencing: if the task already has a lease, require exact epoch
+  // equality for all state transitions. This prevents a stale worker from
+  // mutating state after its lease has been superseded by a newer claim.
+  if (leaseEpoch !== undefined && current.lease?.lease_epoch !== undefined) {
+    if (leaseEpoch !== current.lease.lease_epoch) {
+      throw new Error(`Lease epoch mismatch: presented ${leaseEpoch}, current ${current.lease.lease_epoch}`);
     }
   }
 
@@ -205,7 +217,7 @@ export async function claimTask({ dir, id, instanceId, leaseId, leaseEpoch = 1 }
   }
 }
 
-export async function renewClaim({ dir, id, now: heartbeatAt = now() }) {
+export async function renewClaim({ dir, id, leaseId, leaseEpoch, now: heartbeatAt = now() }) {
   const path = claimPath(dir, id);
   let current;
   try {
@@ -213,6 +225,13 @@ export async function renewClaim({ dir, id, now: heartbeatAt = now() }) {
   } catch (error) {
     if (error?.code === 'ENOENT') throw new Error(`Claim not found: ${id}`);
     throw error;
+  }
+  // Validate lease ownership: only the current holder can renew.
+  if (leaseId !== undefined && current.lease_id !== leaseId) {
+    throw new Error(`Lease ID mismatch: presented ${leaseId}, current ${current.lease_id}`);
+  }
+  if (leaseEpoch !== undefined && current.lease_epoch !== leaseEpoch) {
+    throw new Error(`Lease epoch mismatch: presented ${leaseEpoch}, current ${current.lease_epoch}`);
   }
   const renewed = { ...current, heartbeat_at: heartbeatAt };
   await writeAtomic(path, renewed);
@@ -291,10 +310,11 @@ export async function recoverStaleTask({ dir, id, now: currentTime = now(), stal
     });
     return { recovered: true, retry_allowed: false };
   }
+  const nextEpoch = (task.lease?.lease_epoch || 0) + 1;
   const retried = await transitionTask({
     dir, id, to: 'QUEUED',
     reason: 'stale_lease_requeued',
-    patch: { attempt, lease: null, heartbeat_at: null },
+    patch: { attempt, lease: { lease_epoch: nextEpoch }, heartbeat_at: null },
   });
   return { recovered: true, retry_allowed: true, re_dispatched: true, attempt };
 }

@@ -15,7 +15,7 @@ export async function executeFixChildTask({ dir, id, instanceId, runWorker }) {
   if (!task) throw new Error(`Fix task not found: ${id}`);
   if (!['QUEUED', 'FIX_QUEUED'].includes(task.state)) return { state: task.state, deduplicated: true };
 
-  const claimed = await claimTask({ dir, id, instanceId, leaseId: randomUUID(), leaseEpoch: (task.lease?.epoch || 0) + 1 });
+  const claimed = await claimTask({ dir, id, instanceId, leaseId: randomUUID(), leaseEpoch: (task.lease?.lease_epoch || 0) + 1 });
   if (!claimed.claimed) return { state: (await readTask({ dir, id }))?.state || 'CLAIMED', deduplicated: true };
   await transitionTask({ dir, id, to: 'CLAIMED', reason: 'fix_child_claimed', patch: { lease: claimed.claim, started_at: new Date().toISOString() } });
   await transitionTask({ dir, id, to: 'FIXING', reason: 'fix_child_started', patch: { heartbeat_at: new Date().toISOString() } });

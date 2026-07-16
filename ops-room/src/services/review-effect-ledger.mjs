@@ -25,10 +25,11 @@ export async function claimEffect({ dir, taskId, kind, fingerprint }) {
   try {
     const handle = await open(path, 'wx');
     try { await handle.writeFile(`${JSON.stringify(effect, null, 2)}\n`); } finally { await handle.close(); }
-    return { claimed: true, effect };
+    return { claimed: true, state: 'CLAIMED', effect };
   } catch (error) {
     if (error?.code !== 'EEXIST') throw error;
-    return { claimed: false, effect: await readEffect(dir, id) };
+    const existing = await readEffect(dir, id);
+    return { claimed: false, state: existing?.state || 'CLAIMED', effect: existing };
   }
 }
 

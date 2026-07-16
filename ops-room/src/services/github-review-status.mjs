@@ -31,7 +31,16 @@ export function createGitHubReviewStatusService({ getCommitStatuses, createCommi
         kind: 'github_commit_status',
         fingerprint: `${sha}:${REVIEW_STATUS_CONTEXT}:${state}:${description}:${targetUrl || ''}`,
       });
-      if (!effect.claimed) return { written: false, duplicate_effect: true, effect: effect.effect };
+      if (!effect.claimed) {
+        // COMPLETED: silently reuse. CLAIMED: ambiguous — return explicit signal.
+        if (effect.state === 'CLAIMED') {
+          return { written: false, ambiguous_effect: true, effect: effect.effect };
+        }
+        if (effect.state === 'COMPLETED') {
+          return { written: false, duplicate_effect: true, effect: effect.effect };
+        }
+        // ABANDONED: fall through to re-attempt.
+      }
     }
     await createCommitStatus(payload);
     if (effect) await completeEffect({ dir, effectId: effect.effect.id, result: { sha, state, description, context: REVIEW_STATUS_CONTEXT } });

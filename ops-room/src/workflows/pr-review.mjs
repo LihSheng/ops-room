@@ -146,8 +146,20 @@ export async function runPrReviewWorkflow(payload) {
         fingerprint: `${head_sha || prContext.headSha}:${event}:${renderedReview}`,
       });
       if (!effect.claimed) {
-        console.warn(`[pr-review] Skipping duplicate GitHub review effect for ${repository}#${pr}`);
-        return { mode: 'pr_review', repository, pr, agent, review_event: event, structured_review: structured, duplicate_effect: true };
+        // Branch on the existing effect's state:
+        // - COMPLETED: reuse the recorded result (duplicate).
+        // - CLAIMED: the external effect may never have been applied; stop with an
+        //   ambiguous outcome requiring human attention.
+        // - ABANDONED: permit a new, uniquely identified attempt (operator-resolved).
+        if (effect.state === 'COMPLETED') {
+          console.warn(`[pr-review] Skipping duplicate GitHub review effect for ${repository}#${pr}`);
+          return { mode: 'pr_review', repository, pr, agent, review_event: event, structured_review: structured, duplicate_effect: true };
+        }
+        if (effect.state === 'CLAIMED') {
+          console.warn(`[pr-review] Existing CLAIMED GitHub review effect for ${repository}#${pr} — ambiguous outcome`);
+          return { mode: 'pr_review', repository, pr, agent, review_event: 'NEEDS_HUMAN', structured_review: structured, ambiguous_effect: true, effect_id: effect.effect?.id };
+        }
+        // ABANDONED: fall through to re-post the review.
       }
       await addPullRequestReview(pr, renderedReview, event, agent);
       await completeEffect({ dir, effectId: effect.effect.id, result: { event, sha: head_sha || prContext.headSha } });

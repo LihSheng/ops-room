@@ -34,6 +34,20 @@ export async function runFixChildWorker({ task, deps, dir }) {
     await deps.renewLease?.(task);
     if (!applied?.changed) return { outcome: 'NEEDS_HUMAN', reason: 'no_source_changes' };
 
+    // Run repository verification commands (tests, lint, typecheck) before
+    // committing and pushing. Failures return NEEDS_HUMAN so an operator can
+    // inspect and decide whether to override.
+    if (typeof deps.verifyWorkspace === 'function') {
+      const verification = await deps.verifyWorkspace({ task, workspace });
+      if (verification.outcome !== 'verified') {
+        return {
+          outcome: 'NEEDS_HUMAN',
+          reason: 'verification_failed',
+          verification,
+        };
+      }
+    }
+
     const beforePush = await deps.fetchCurrentHead(task);
     assertFixHeadCurrent({ reviewedSha, currentSha: beforePush });
     const beforePushTask = await deps.readTask?.(task);

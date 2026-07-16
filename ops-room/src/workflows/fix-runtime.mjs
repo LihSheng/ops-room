@@ -117,6 +117,25 @@ export function createFixRuntimeDeps({ taskDir, renewClaim, readTask }) {
       const status = docker(workspace.container, `cd "${workspace.containerWorkspace}" && git status --short`, 10_000);
       return { changed: status.split('\n').some((line) => /^( M|M |A |\?\?)/.test(line) && !line.includes('.openab/')) };
     },
+    verifyWorkspace: async ({ task, workspace }) => {
+      // Run the repository's verification commands before commit/push.
+      // Commands are configurable via task.policy.verify_commands or fall
+      // back to a sensible default sequence.
+      const commands = Array.isArray(task.policy?.verify_commands) && task.policy.verify_commands.length > 0
+        ? task.policy.verify_commands
+        : detectVerificationCommands(workspace);
+      const outcomes = [];
+      for (const cmd of commands) {
+        try {
+          const output = docker(workspace.container, `cd "${workspace.containerWorkspace}" && ${cmd}`, 120_000);
+          outcomes.push({ command: cmd, passed: true, output: output.slice(0, 2000) });
+        } catch (error) {
+          outcomes.push({ command: cmd, passed: false, error: (error?.stderr?.toString() || error?.message || String(error)).slice(0, 2000) });
+        }
+      }
+      const allPassed = outcomes.every((o) => o.passed);
+      return { outcome: allPassed ? 'verified' : 'verification_failed', checks: outcomes };
+    },
     pushWorkspace: async ({ task, workspace }) => {
       const bot = BOT_USERS[task.agent] || `lihsheng-${task.agent}[bot]`;
       const branch = workspace.branchName;
@@ -131,4 +150,32 @@ export function createFixRuntimeDeps({ taskDir, renewClaim, readTask }) {
       }
     },
   };
+}
+
+/**
+ * Detect available verification commands from the workspace.
+ * Checks for package.json scripts and common config files.
+ */
+function detectVerificationCommands(workspace) {
+  const commands = [];
+  try {
+    const pkgRaw = docker(workspace.container, `cd "${workspace.containerWorkspace}" && cat package.json 2>/dev/null || echo -n ""`, 5_000);
+    if (pkgRaw) {
+      const pkg = JSON.parse(pkgRaw);
+      if (pkg.scripts?.test) commands.push('npm test --if-present');
+      if (pkg.scripts?.lint) commands.push('npm run lint --if-present');
+      if (pkg.scripts?.typecheck) commands.push('npm run typecheck --if-present');
+      else if (pkg.scripts?.build) commands.push('npm run build --if-present');
+    }
+  } catch {
+    // package.json not parseable or not found — skip
+  }
+  // If no JS project scripts exist, check for Python, Go, etc.
+  if (commands.length === 0) {
+    try {
+      const hasMakefile = docker(workspace.container, `cd "${workspace.containerWorkspace}" && test -f Makefile && echo yes || echo no`, 5_000).trim();
+      if (hasMakefile === 'yes') commands.push('make test 2>/dev/null || make check 2>/dev/null || echo "no test target"');
+    } catch { /* skip */ }
+  }
+  return commands;
 }

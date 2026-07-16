@@ -69,7 +69,15 @@ export function createPrReviewController({
 
     const { created, task } = await createOrClaimTask({
       dir: request.dir,
-      input: normalized,
+      input: {
+        ...normalized,
+        headSha: normalized.headSha,
+        reviewedSha: normalized.headSha,
+        taskType: normalized.taskType,
+        commentId: normalized.commentId,
+        task: request.task,
+        commenter: request.commenter,
+      },
       trigger: normalized.trigger,
       policy: normalized.policy,
     });
