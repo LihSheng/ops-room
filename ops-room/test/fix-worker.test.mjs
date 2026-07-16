@@ -1,4 +1,10 @@
-import assert from 'node:assert/strict';\nimport { mkdtemp, mkdir, writeFile } from 'node:fs/promises';\nimport { tmpdir } from 'node:os';\nimport { join } from 'node:path';\nimport test from 'node:test';\n\nimport { FixSupersededError, runFixChildWorker } from '../src/workflows/fix-worker.mjs';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+
+import { FixSupersededError, runFixChildWorker } from '../src/workflows/fix-worker.mjs';
 
 function deps(overrides = {}) {
   const calls = [];
@@ -18,10 +24,9 @@ function deps(overrides = {}) {
 
 const MOCK_LEASE = { lease_id: 'lease-test', lease_epoch: 1 };
 
-/** Create a task file so assertCurrentLease can find it. */
+/** Create a task file at the path where readTask expects it: dir/{id}.json */
 async function seedTaskFile(dir, taskId, lease) {
-  await mkdir(join(dir, 'tasks'), { recursive: true });
-  await writeFile(join(dir, 'tasks', `${taskId}.json`), JSON.stringify({
+  await writeFile(join(dir, `${taskId}.json`), JSON.stringify({
     id: taskId,
     state: 'FIXING',
     lease: { lease_id: lease.lease_id, lease_epoch: lease.lease_epoch },
