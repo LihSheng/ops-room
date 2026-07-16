@@ -240,6 +240,22 @@ export async function renewClaim({ dir, id, leaseId, leaseEpoch, now: heartbeatA
 
 export function isClaimStale(claim, { now: currentTime = now(), staleMinutes = 30 } = {}) {
   if (!claim?.heartbeat_at) return true;
+
+  // Fast path: if the claiming process is dead, the claim is stale immediately.
+  // instance_id is "ops-room-{PID}" — extract PID and check if it still exists.
+  if (claim?.instance_id) {
+    const pid = parseInt(claim.instance_id.split('-').pop(), 10);
+    if (Number.isFinite(pid) && pid > 0) {
+      try {
+        process.kill(pid, 0);  // signal 0 just checks existence, doesn't kill
+      } catch (error) {
+        if (error?.code === 'ESRCH') return true;  // process doesn't exist
+        // EPERM or similar — process exists but we can't signal it. Not stale.
+      }
+    }
+  }
+
+  // Fallback: clock-based staleness check for cases where PID check is inconclusive.
   const heartbeatMs = Date.parse(claim.heartbeat_at);
   const currentMs = Date.parse(currentTime);
   if (!Number.isFinite(heartbeatMs) || !Number.isFinite(currentMs)) return true;
