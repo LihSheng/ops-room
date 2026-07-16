@@ -1,9 +1,12 @@
 {
   "name": "@openab/ops-room",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "src/server/webhook.mjs",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "bootstrap": "node scripts/bootstrap.mjs",
     "start": "node --env-file=../.env src/server/webhook.mjs",
@@ -11,7 +14,30 @@
     "poll": "node --env-file=../.env src/server/poller.mjs",
     "claim": "node --env-file=../.env src/server/claim.mjs",
     "dev": "node --env-file=../.env --watch src/server/webhook.mjs",
+    "dev:dashboard": "vite --config dashboard/vite.config.ts",
+    "build": "npm run build:dashboard",
+    "build:dashboard": "tsc -p dashboard/tsconfig.json && vite build --config dashboard/vite.config.ts",
+    "preview:dashboard": "vite preview --config dashboard/vite.config.ts",
+    "prepare": "npm run build:dashboard",
     "test": "node --test test/*.test.mjs",
     "smoke:instances": "node scripts/smoke-openab-instances.mjs"
+  },
+  "dependencies": {
+    "@mantine/core": "^9.4.1",
+    "@mantine/hooks": "^9.4.1",
+    "@mantine/notifications": "^9.4.1",
+    "@tabler/icons-react": "^3.35.0",
+    "@tanstack/react-query": "^5.83.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^8.1.5"
   }
 }
