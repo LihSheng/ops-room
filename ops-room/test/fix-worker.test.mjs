@@ -1,10 +1,4 @@
-import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import test from 'node:test';
-
-import { FixSupersededError, runFixChildWorker } from '../src/workflows/fix-worker.mjs';
+import assert from 'node:assert/strict';\nimport { mkdtemp, mkdir, writeFile } from 'node:fs/promises';\nimport { tmpdir } from 'node:os';\nimport { join } from 'node:path';\nimport test from 'node:test';\n\nimport { FixSupersededError, runFixChildWorker } from '../src/workflows/fix-worker.mjs';
 
 function deps(overrides = {}) {
   const calls = [];
@@ -23,6 +17,17 @@ function deps(overrides = {}) {
 }
 
 const MOCK_LEASE = { lease_id: 'lease-test', lease_epoch: 1 };
+
+/** Create a task file so assertCurrentLease can find it. */
+async function seedTaskFile(dir, taskId, lease) {
+  await mkdir(join(dir, 'tasks'), { recursive: true });
+  await writeFile(join(dir, 'tasks', `${taskId}.json`), JSON.stringify({
+    id: taskId,
+    state: 'FIXING',
+    lease: { lease_id: lease.lease_id, lease_epoch: lease.lease_epoch },
+    attempt: 1,
+  }, null, 2));
+}
 
 test('fix child fences SHA, heartbeats, pushes once, and always cleans up', async () => {
   const d = deps();
@@ -51,6 +56,7 @@ test('fix child reports no source changes and still cleans the workspace', async
 test('completed push effect prevents a duplicate push and retains the pushed SHA', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ops-room-fix-push-ledger-'));
   const task = { id: 'fix:1', repository: 'LihSheng/LinkUp', pr: 1, reviewed_sha: 'a'.repeat(40) };
+  await seedTaskFile(dir, task.id, MOCK_LEASE);
   const first = deps();
   await runFixChildWorker({ task, deps: first, dir, lease: MOCK_LEASE });
   const second = deps();

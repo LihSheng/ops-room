@@ -30,15 +30,27 @@ async function assertCurrentLease({ dir, taskId, leaseId, leaseEpoch }) {
   try {
     task = await readTask({ dir, id: taskId });
   } catch (error) {
-    if (error?.code === 'ENOENT') return; // task store not yet populated — permissive
+    if (error?.code === 'ENOENT') {
+      throw new Error(`Cannot create effect for task ${taskId}: task record not found`);
+    }
     throw error;
   }
-  if (!task) return;
+  if (!task) {
+    throw new Error(`Cannot create effect for task ${taskId}: task record not found`);
+  }
+  // Fail closed: if the task has no current lease, any supplied lease is stale.
+  if (leaseId && !task.lease?.lease_id) {
+    throw new Error(`Stale lease: task ${taskId} has no current lease, caller has ${leaseId}`);
+  }
+  if (leaseEpoch !== undefined && task.lease?.lease_epoch === undefined) {
+    throw new Error(`Stale lease: task ${taskId} has no current lease epoch, caller has ${leaseEpoch}`);
+  }
+  // Require exact equality.
   if (leaseId && task.lease?.lease_id && task.lease.lease_id !== leaseId) {
-    throw new Error(`Stale lease: task owned by ${task.lease.lease_id}, caller has ${leaseId}`);
+    throw new Error(`Stale lease: task ${taskId} owned by ${task.lease.lease_id}, caller has ${leaseId}`);
   }
   if (leaseEpoch !== undefined && task.lease?.lease_epoch !== undefined && task.lease.lease_epoch !== leaseEpoch) {
-    throw new Error(`Lease epoch mismatch: task has ${task.lease.lease_epoch}, caller has ${leaseEpoch}`);
+    throw new Error(`Stale lease: task ${taskId} has epoch ${task.lease.lease_epoch}, caller has ${leaseEpoch}`);
   }
 }
 
