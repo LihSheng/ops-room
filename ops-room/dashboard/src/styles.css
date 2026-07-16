@@ -1,0 +1,87 @@
+:root {
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background:
+    radial-gradient(circle at 85% -10%, rgba(121, 80, 242, 0.09), transparent 30rem),
+    #f7f7fa;
+}
+
+.app-header {
+  border-bottom: 1px solid var(--mantine-color-gray-2);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(14px);
+}
+
+.app-navbar {
+  border-right: 1px solid var(--mantine-color-gray-2);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.main-content {
+  padding-bottom: 48px;
+}
+
+.page-title {
+  font-size: clamp(1.75rem, 2.5vw, 2.35rem);
+  letter-spacing: -0.045em;
+}
+
+.metric-card {
+  min-height: 150px;
+  background: rgba(255, 255, 255, 0.86);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--mantine-color-gray-3);
+  box-shadow: 0 14px 38px rgba(28, 31, 42, 0.07);
+}
+
+.attention-row {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  border-radius: var(--mantine-radius-md);
+  transition: background-color 140ms ease;
+}
+
+.attention-row:hover {
+  background: var(--mantine-color-gray-0);
+}
+
+.detail-row {
+  border-bottom: 1px solid var(--mantine-color-gray-2);
+}
+
+.log-viewer {
+  border: 1px solid var(--mantine-color-dark-6);
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-dark-8);
+}
+
+.log-viewer code {
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  color: var(--mantine-color-gray-2);
+  background: transparent;
+  white-space: pre;
+}
+
+@media (max-width: 48em) {
+  .main-content {
+    padding-bottom: 24px;
+  }
+}
