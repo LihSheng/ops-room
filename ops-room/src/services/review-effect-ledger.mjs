@@ -18,26 +18,44 @@ async function readEffect(dir, id) {
 }
 
 /**
- * Claim an external effect for a task.  Accepts optional lease parameters:
- *   - leaseId / leaseEpoch: persisted on new effects for later fencing
- *   - taskLeaseId / taskLeaseEpoch: the task's CURRENT lease; if supplied,
- *     a brand-new effect is rejected when the worker's lease doesn't match.
- *     This prevents a stale worker from creating a new effect after a
- *     replacement worker has taken over.
+ * Read the task's durable record and validate that the supplied lease still
+ * owns it.  This is the authoritative check: it reads the actual task file,
+ * not a caller-provided copy.  Throws if the task's current lease does not
+ * match the supplied leaseId/leaseEpoch.
  */
-export async function claimEffect({ dir, taskId, kind, fingerprint, leaseId, leaseEpoch, taskLeaseId, taskLeaseEpoch }) {
+async function assertCurrentLease({ dir, taskId, leaseId, leaseEpoch }) {
+  if (!leaseId && leaseEpoch === undefined) return; // no lease to validate
+  const { readTask } = await import('./review-task-store.mjs');
+  let task;
+  try {
+    task = await readTask({ dir, id: taskId });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return; // task store not yet populated — permissive
+    throw error;
+  }
+  if (!task) return;
+  if (leaseId && task.lease?.lease_id && task.lease.lease_id !== leaseId) {
+    throw new Error(`Stale lease: task owned by ${task.lease.lease_id}, caller has ${leaseId}`);
+  }
+  if (leaseEpoch !== undefined && task.lease?.lease_epoch !== undefined && task.lease.lease_epoch !== leaseEpoch) {
+    throw new Error(`Lease epoch mismatch: task has ${task.lease.lease_epoch}, caller has ${leaseEpoch}`);
+  }
+}
+
+/**
+ * Claim an external effect for a task.  Accepts optional leaseId/leaseEpoch:
+ *   - Before creating a brand-new effect, reads the task's current lease and
+ *     rejects stale workers (whose lease no longer owns the task).
+ *   - Persists lease ownership on new effects for later fencing.
+ *   - For existing effects, fences against the stored lease.
+ */
+export async function claimEffect({ dir, taskId, kind, fingerprint, leaseId, leaseEpoch }) {
   const id = effectId({ taskId, kind, fingerprint });
   const path = effectPath(dir, id);
   await mkdir(join(dir, 'effects'), { recursive: true });
 
-  // If the caller supplied the task's current lease, validate ownership
-  // BEFORE attempting to create a new effect.
-  if (taskLeaseId && leaseId && taskLeaseId !== leaseId) {
-    return { claimed: false, state: null, fenced: true, reason: 'task_lease_mismatch' };
-  }
-  if (taskLeaseEpoch !== undefined && leaseEpoch !== undefined && taskLeaseEpoch !== leaseEpoch) {
-    return { claimed: false, state: null, fenced: true, reason: 'task_lease_epoch_mismatch' };
-  }
+  // Validate against the task's CURRENT durable lease before creating a new effect.
+  await assertCurrentLease({ dir, taskId, leaseId, leaseEpoch });
 
   const effect = {
     id, task_id: taskId, kind, fingerprint, state: 'CLAIMED',
@@ -64,19 +82,28 @@ export async function claimEffect({ dir, taskId, kind, fingerprint, leaseId, lea
 }
 
 /**
- * Complete a previously claimed effect.  If leaseId/leaseEpoch are supplied,
- * the effect's claimed-by lease must match — a stale worker cannot complete
- * an effect created by a superseded worker.
+ * Complete a previously claimed effect.  Validates the lease against both
+ * the effect's stored ownership AND the task's current durable lease before
+ * marking COMPLETED.  A stale worker cannot complete an effect it created
+ * after another worker has taken over.
  */
 export async function completeEffect({ dir, effectId: id, result = {}, leaseId, leaseEpoch }) {
   const current = await readEffect(dir, id);
   if (!current) throw new Error(`Effect not found: ${id}`);
+
+  // Validate against the task's CURRENT lease (authoritative).
+  if (current.task_id) {
+    await assertCurrentLease({ dir, taskId: current.task_id, leaseId, leaseEpoch });
+  }
+
+  // Also validate against the effect's stored ownership.
   if (leaseId && current.claimed_by_lease_id && current.claimed_by_lease_id !== leaseId) {
     throw new Error(`Cannot complete effect claimed by lease ${current.claimed_by_lease_id} with lease ${leaseId}`);
   }
   if (leaseEpoch !== undefined && current.claimed_by_lease_epoch !== undefined && current.claimed_by_lease_epoch !== leaseEpoch) {
     throw new Error(`Cannot complete effect with lease epoch ${current.claimed_by_lease_epoch} using epoch ${leaseEpoch}`);
   }
+
   const effect = { ...current, state: 'COMPLETED', completed_at: new Date().toISOString(), result };
   const { writeAtomic } = await import('./review-task-store.mjs');
   await writeAtomic(effectPath(dir, id), effect);
@@ -124,11 +151,8 @@ export async function resolveAmbiguousEffect({ dir, effectId: id, resolution, no
 /**
  * Atomically transition an ABANDONED effect back to CLAIMED so the caller
  * can retry the external action.  Uses an exclusive reclaim lock file plus
- * re-read-under-lock to prevent two concurrent retries from both observing
- * ABANDONED and both performing the effect.
- *
- * Accepts optional leaseId/leaseEpoch to update the effect's claimed-by
- * lease on reclaim.
+ * re-read-under-lock.  Before reclaiming, validates the lease against the
+ * task's current durable lease.
  */
 export async function reclaimEffect({ dir, effectId: id, leaseId, leaseEpoch }) {
   const { mkdir, open, rm } = await import('node:fs/promises');
@@ -145,12 +169,17 @@ export async function reclaimEffect({ dir, effectId: id, leaseId, leaseEpoch }) 
   }
 
   try {
-    // Re-read under lock to confirm still ABANDONED
     const current = await readEffect(dir, id);
     if (!current) throw new Error(`Effect not found: ${id}`);
     if (current.state !== 'ABANDONED') {
       return { reclaimed: false, reason: `not_abandoned:${current.state}` };
     }
+
+    // Validate against the task's current lease before reclaiming.
+    if (current.task_id) {
+      await assertCurrentLease({ dir, taskId: current.task_id, leaseId, leaseEpoch });
+    }
+
     const effect = {
       ...current,
       state: 'CLAIMED',

@@ -25,8 +25,6 @@ export function createGitHubReviewStatusService({ getCommitStatuses, createCommi
         kind: 'github_commit_status',
         fingerprint: `${sha}:${REVIEW_STATUS_CONTEXT}:${state}:${description}:${targetUrl || ''}`,
         leaseId, leaseEpoch,
-        taskLeaseId: leaseId,
-        taskLeaseEpoch: leaseEpoch,
       });
       if (!effect.claimed) {
         if (effect.state === 'CLAIMED') {

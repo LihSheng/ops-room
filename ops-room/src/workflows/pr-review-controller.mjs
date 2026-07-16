@@ -174,6 +174,8 @@ export function createPrReviewController({
         agent: normalized.agent,
         dir: request.dir,
         taskId: task.id,
+        leaseId: claimed.claim.lease_id,
+        leaseEpoch: claimed.claim.lease_epoch,
       });
     }
 

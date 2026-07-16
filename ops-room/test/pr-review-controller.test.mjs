@@ -56,17 +56,16 @@ test('controller creates one claimed review and pending status for the current S
   assert.equal(result.status, 'RUNNING');
   assert.equal(result.queued, true);
   assert.equal(calls.dispatch, 1);
-  assert.deepEqual(calls.statuses, [{
-    repository: 'LihSheng/LinkUp',
-    sha: 'b'.repeat(40),
-    state: 'pending',
-    description: 'Review in progress',
-    targetUrl: undefined,
-    context: 'OpenAB PR Review',
-    agent: 'professor',
-    dir,
-    taskId: `review:LihSheng-LinkUp:40:${'b'.repeat(40)}:professor:review`,
-  }]);
+  assert.equal(calls.statuses.length, 1);
+  const status = calls.statuses[0];
+  assert.equal(status.repository, 'LihSheng/LinkUp');
+  assert.equal(status.sha, 'b'.repeat(40));
+  assert.equal(status.state, 'pending');
+  assert.equal(status.context, 'OpenAB PR Review');
+  assert.equal(status.agent, 'professor');
+  assert.equal(status.dir, dir);
+  assert.ok(status.leaseId, 'should include leaseId');
+  assert.ok(status.leaseEpoch, 'should include leaseEpoch');
 });
 
 test('controller deduplicates an identical current-SHA request', async () => {

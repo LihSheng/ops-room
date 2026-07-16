@@ -68,8 +68,6 @@ export async function runFixChildWorker({ task, deps, dir, lease }) {
         fingerprint: `${task.reviewed_sha}:${task.head_ref || ''}`,
         leaseId: lease?.lease_id,
         leaseEpoch: lease?.lease_epoch,
-        taskLeaseId: lease?.lease_id,
-        taskLeaseEpoch: lease?.lease_epoch,
       });
       if (!pushEffect.claimed) {
         if (pushEffect.effect?.state === 'COMPLETED' && pushEffect.effect.result?.new_sha) {

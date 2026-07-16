@@ -112,8 +112,6 @@ export async function runPrReviewWorkflow(payload) {
         fingerprint: `${head_sha || prContext.headSha}:${comment_id || 'chat'}:${reviewText.slice(0, 80)}`,
         leaseId: lease?.lease_id,
         leaseEpoch: lease?.lease_epoch,
-        taskLeaseId: lease?.lease_id,
-        taskLeaseEpoch: lease?.lease_epoch,
       });
       if (!effect.claimed) {
         // Branch on the existing effect's state — same semantics as review path.
@@ -167,8 +165,6 @@ export async function runPrReviewWorkflow(payload) {
         fingerprint: `${head_sha || prContext.headSha}:${event}:${renderedReview}`,
         leaseId: lease?.lease_id,
         leaseEpoch: lease?.lease_epoch,
-        taskLeaseId: lease?.lease_id,
-        taskLeaseEpoch: lease?.lease_epoch,
       });
       if (!effect.claimed) {
         // Branch on the existing effect's state:
