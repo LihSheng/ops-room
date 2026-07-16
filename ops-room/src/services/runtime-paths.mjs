@@ -9,6 +9,7 @@ export const PORT = parseInt(process.env.OPENAB_WEBHOOK_PORT || '7381', 10);
 export const WEBHOOK_SECRET = process.env.OPENAB_WEBHOOK_SECRET;
 export const DATA_DIR = _dataDir;
 export const TASKS_DIR = process.env.OPS_ROOM_TASKS_DIR || join(_dataDir, 'ops-room', 'tasks');
+export const REVIEW_TASKS_DIR = process.env.OPS_ROOM_REVIEW_TASKS_DIR || join(_dataDir, 'ops-room', 'review-tasks');
 export const LOG_DIR = process.env.OPS_ROOM_LOGS_DIR || join(_dataDir, 'ops-room', 'logs');
 export const STATE_DIR = process.env.OPS_ROOM_STATE_DIR || join(_dataDir, 'ops-room', 'state');
 export const WORKSPACE_BASE = process.env.OPENAB_WORKSPACES_DIR || process.env.OPENAB_WORKSPACE_BASE || join(_dataDir, 'workspaces');

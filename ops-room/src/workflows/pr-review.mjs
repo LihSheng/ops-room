@@ -4,21 +4,27 @@ import { REPO, SHARED_MEMORY } from '../services/runtime-paths.mjs';
 import { appendFile } from 'node:fs/promises';
 import { buildPrReviewPrompt } from '../server/pr-review-payload.mjs';
 import { askAI } from './chat-response.mjs';
-import { runAutoFixWorkflow } from './auto-fix.mjs';
-import { ensureReviewLoopDir, getReviewLoopState, updateReviewLoopState, advanceLoopIteration } from '../services/review-loop-store.mjs';
+import { parseStructuredReview } from './review-result.mjs';
+import { claimEffect, completeEffect, reclaimEffect } from '../services/review-effect-ledger.mjs';
+import { readTask } from '../services/review-task-store.mjs';
+import { assertReviewNotCancelled } from './review-worker-guard.mjs';
 
-function parseReviewEvent(reviewText) {
-  const upper = String(reviewText || '').toUpperCase();
-  if (upper.includes('REQUEST_CHANGES')) return 'REQUEST_CHANGES';
-  if (upper.includes('APPROVE')) return 'APPROVE';
-  
-  // Smart heuristic: if the review found issues and listed them, treat as REQUEST_CHANGES
-  // This handles cases where the AI doesn't output the exact magic word
-  if (upper.includes('## ISSUES FOUND') || upper.includes('ISSUE 1:') || upper.includes('**ISSUE')) {
-    return 'REQUEST_CHANGES';
-  }
-  
-  return 'COMMENT';
+export function isCurrentReviewHead({ expectedSha, currentSha }) {
+  return !expectedSha || expectedSha === currentSha;
+}
+
+export function renderStructuredReview(result) {
+  const findings = result.findings.length === 0
+    ? 'None.'
+    : result.findings.map((finding, index) => [
+      `### ${index + 1}. ${finding.title}`,
+      `- **Severity:** ${finding.severity}`,
+      `- **Location:** ${finding.file}${finding.line ? `:${finding.line}` : ''}`,
+      `- **Description:** ${finding.description}`,
+      `- **Suggestion:** ${finding.suggestion || 'None provided'}`,
+      `- **Auto-fixable:** ${finding.auto_fixable ? 'yes' : 'no'}`,
+    ].join('\n')).join('\n\n');
+  return `## Summary\n${result.summary || '(none)'}\n\n## Findings\n${findings}\n\n## Final Verdict\n${result.verdict}`;
 }
 
 async function appendToMemory(entry) {
@@ -63,20 +69,15 @@ export async function runPrReviewWorkflow(payload) {
     commenter = 'unknown',
     comment_id,
     head_sha,
+    task_id,
+    dir,
+    lease,
   } = payload;
 
-  // Ensure review loop directory exists
-  await ensureReviewLoopDir();
-
-  // Track the review in loop state if in auto-fix mode
-  if (mode === 'auto-fix') {
-    await updateReviewLoopState(repository, pr, {
-      agent,
-      status: 'reviewing',
-    });
-  }
-
   const prContext = await fetchPrReviewContext({ repository, pr, agent });
+  if (!isCurrentReviewHead({ expectedSha: head_sha, currentSha: prContext.headSha })) {
+    return { mode: 'pr_review', repository, pr, agent, review_event: 'SUPERSEDED', reviewed_sha: head_sha, current_sha: prContext.headSha };
+  }
   const prompt = buildPrReviewPrompt({
     agent: AGENT_NAMES[agent] || agent,
     task,
@@ -100,90 +101,101 @@ export async function runPrReviewWorkflow(payload) {
 
   const responseMode = task_type === 'chat' ? 'chat' : 'review';
   let event = 'COMMENT';
+  let structuredReview = null;
 
   if (responseMode === 'chat') {
-    addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
+    if (dir && task_id) {
+      const effect = await claimEffect({
+        dir,
+        taskId: task_id,
+        kind: 'github_issue_comment',
+        fingerprint: `${head_sha || prContext.headSha}:${comment_id || 'chat'}:${reviewText.slice(0, 80)}`,
+        leaseId: lease?.lease_id,
+        leaseEpoch: lease?.lease_epoch,
+      });
+      if (!effect.claimed) {
+        // Branch on the existing effect's state — same semantics as review path.
+        if (effect.state === 'COMPLETED') {
+          console.warn(`[pr-review] Skipping duplicate comment effect for ${repository}#${pr}`);
+          return { mode: 'pr_chat', repository, pr, agent, review_event: 'COMMENT', duplicate_effect: true };
+        }
+        if (effect.state === 'CLAIMED') {
+          console.warn(`[pr-review] Existing CLAIMED comment effect for ${repository}#${pr} — ambiguous outcome`);
+          return { mode: 'pr_chat', repository, pr, agent, review_event: 'NEEDS_HUMAN', ambiguous_effect: true, effect_id: effect.effect?.id };
+        }
+        // ABANDONED: attempt atomic re-claim before re-posting.
+        const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id, leaseId: lease?.lease_id, leaseEpoch: lease?.lease_epoch });
+        if (!reclaimed.reclaimed) {
+          return { mode: 'pr_chat', repository, pr, agent, review_event: 'NEEDS_HUMAN', ambiguous_effect: true, effect_id: effect.effect?.id };
+        }
+        // Re-claimed successfully — use reclaimed effect for completion.
+        effect.effect = reclaimed.effect;
+        effect.claimed = true;
+        effect.state = 'CLAIMED';
+      }
+      await addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
+      await completeEffect({ dir, effectId: effect.effect.id, result: { pr, agent, comment_id }, leaseId: lease?.lease_id, leaseEpoch: lease?.lease_epoch });
+    } else {
+      await addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
+    }
     console.log(`[pr-review] Posted chat response on ${repository}#${pr} as ${agent}`);
   } else {
-    event = parseReviewEvent(reviewText);
-    addPullRequestReview(pr, reviewText, event, agent);
+    let structured;
+    try {
+      structured = parseStructuredReview(reviewText);
+    } catch (error) {
+      // One regeneration prevents malformed model output from becoming an accidental approval.
+      reviewText = (await askAI(`${prompt}\n\nYour previous response was invalid: ${error.message}. Return valid JSON only.`)).trim();
+      structured = parseStructuredReview(reviewText);
+    }
+    const latestPr = ghApi('GET', `repos/${repository}/pulls/${pr}`, agent);
+    const latestSha = latestPr?.head?.sha;
+    if (!isCurrentReviewHead({ expectedSha: head_sha, currentSha: latestSha })) {
+      return { mode: 'pr_review', repository, pr, agent, review_event: 'SUPERSEDED', reviewed_sha: head_sha, current_sha: latestSha };
+    }
+    structuredReview = structured;
+    if (dir && task_id) assertReviewNotCancelled(await readTask({ dir, id: task_id }));
+    event = structured.verdict === 'NEEDS_HUMAN' ? 'COMMENT' : structured.verdict;
+    const renderedReview = renderStructuredReview(structured);
+    if (dir && task_id) {
+      const effect = await claimEffect({
+        dir,
+        taskId: task_id,
+        kind: 'github_review',
+        fingerprint: `${head_sha || prContext.headSha}:${event}:${renderedReview}`,
+        leaseId: lease?.lease_id,
+        leaseEpoch: lease?.lease_epoch,
+      });
+      if (!effect.claimed) {
+        // Branch on the existing effect's state:
+        // - COMPLETED: reuse the recorded result (duplicate).
+        // - CLAIMED: the external effect may never have been applied; stop with an
+        //   ambiguous outcome requiring human attention.
+        // - ABANDONED: permit a new, uniquely identified attempt (operator-resolved).
+        if (effect.state === 'COMPLETED') {
+          console.warn(`[pr-review] Skipping duplicate GitHub review effect for ${repository}#${pr}`);
+          return { mode: 'pr_review', repository, pr, agent, review_event: event, structured_review: structured, duplicate_effect: true };
+        }
+        if (effect.state === 'CLAIMED') {
+          console.warn(`[pr-review] Existing CLAIMED GitHub review effect for ${repository}#${pr} — ambiguous outcome`);
+          return { mode: 'pr_review', repository, pr, agent, review_event: 'NEEDS_HUMAN', structured_review: structured, ambiguous_effect: true, effect_id: effect.effect?.id };
+        }
+        // ABANDONED: attempt atomic re-claim before re-posting.
+        const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id, leaseId: lease?.lease_id, leaseEpoch: lease?.lease_epoch });
+        if (!reclaimed.reclaimed) {
+          return { mode: 'pr_review', repository, pr, agent, review_event: 'NEEDS_HUMAN', structured_review: structured, ambiguous_effect: true, effect_id: effect.effect?.id };
+        }
+        // Re-claimed successfully — use reclaimed effect for completion.
+        effect.effect = reclaimed.effect;
+        effect.claimed = true;
+        effect.state = 'CLAIMED';
+      }
+      await addPullRequestReview(pr, renderedReview, event, agent);
+      await completeEffect({ dir, effectId: effect.effect.id, result: { event, sha: head_sha || prContext.headSha }, leaseId: lease?.lease_id, leaseEpoch: lease?.lease_epoch });
+    } else {
+      await addPullRequestReview(pr, renderedReview, event, agent);
+    }
     console.log(`[pr-review] Posted ${event} review on ${repository}#${pr} as ${agent}`);
-
-    // ── Auto-fix loop ──────────────────────────────────────────────────────
-    if (mode === 'auto-fix' && event === 'REQUEST_CHANGES') {
-      console.log(`[pr-review] Auto-fix mode: changes requested on ${repository}#${pr}. Dispatching fix...`);
-
-      // Record review in loop state
-      await advanceLoopIteration(repository, pr, {
-        event: 'review_requested_changes',
-        summary: reviewText.slice(0, 500),
-        reviewer: agent,
-      });
-
-      // Run auto-fix
-      const fixResult = await runAutoFixWorkflow({
-        repository,
-        pr,
-        fixAgent: agent,         // Same agent does the fix
-        reviewAgent: agent,
-        reviewText,
-        prTitle: prContext.prTitle,
-        prAuthor: prContext.prAuthor,
-        headRef: prContext.headRef,
-        baseRef: prContext.baseRef,
-      });
-
-      // If fix produced changes, re-trigger review (recursive, next iteration)
-      if (fixResult.ok && fixResult.needsReReview) {
-        console.log(`[pr-review] Auto-fix succeeded on ${repository}#${pr}. Re-reviewing...`);
-
-        // Re-run review recursively (will check iteration limit inside auto-fix on next round)
-        return runPrReviewWorkflow({
-          agent,
-          task: 'Re-review after auto-fix. Check if previous issues were addressed and check for new issues.',
-          task_type: 'review',
-          repository,
-          pr,
-          mode: 'auto-fix',
-          commenter: 'auto-fix-loop',
-        });
-      }
-
-      if (!fixResult.ok) {
-        console.log(`[pr-review] Auto-fix failed on ${repository}#${pr}: ${fixResult.message}`);
-      }
-    }
-
-    // ── Auto-fix: approved ─────────────────────────────────────────────────
-    if (mode === 'auto-fix' && event === 'APPROVE') {
-      await advanceLoopIteration(repository, pr, {
-        event: 'review_approved',
-        summary: 'Review passed — all issues addressed',
-        reviewer: agent,
-      });
-
-      await updateReviewLoopState(repository, pr, { status: 'approved' });
-      console.log(`[pr-review] PR ${repository}#${pr} approved after auto-fix loop.`);
-      await transitionLabels(
-        { issueNumber: pr, agent },
-        { remove: ['openab/review-pending', 'openab/changes-requested', 'openab/review-loop'], add: ['openab/review-approved'] }
-      );
-    }
-
-    // ── Auto-fix: comment (no explicit approve/changes) ──────────────────
-    // The review was informative. Acknowledge and close the loop.
-    if (mode === 'auto-fix' && event === 'COMMENT' && task_type !== 'chat') {
-      await updateReviewLoopState(repository, pr, { status: 'commented' });
-      
-      // Post a follow-up acknowledging the review
-      const ack = `**${AGENT_NAMES[agent] || agent}** — review complete ✅\n\nI've reviewed this PR. No explicit changes were requested.\n\nPlease review the feedback above and merge if everything looks good.`;
-      addComment(pr, ack, agent);
-      await transitionLabels(
-        { issueNumber: pr, agent },
-        { remove: ['openab/review-pending', 'openab/review-loop'], add: ['openab/review-commented'] }
-      );
-      console.log(`[pr-review] PR ${repository}#${pr} reviewed (COMMENT). Acknowledged, loop ended.`);
-    }
   }
 
   await appendToMemory(`PR review from ${repository}#${pr} by @${commenter} → **${agent}**: ${task}`);
@@ -194,5 +206,6 @@ export async function runPrReviewWorkflow(payload) {
     pr,
     agent,
     review_event: event,
+    structured_review: structuredReview,
   };
 }

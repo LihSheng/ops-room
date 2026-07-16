@@ -102,21 +102,25 @@ Changed diff:
 ${safeDiff || '(no diff available)'}
 \`\`\`
 
-Review structure (FOLLOW THIS EXACTLY):
+Return ONLY valid JSON matching this schema; do not wrap it in Markdown:
 
-1. Write a brief summary of the PR.
-2. If you find issues, list them under "## Issues Found" with File, Line, Severity, Description, and Suggestion for each.
-3. End with EXACTLY one of these two lines:
+{
+  "summary": "brief review summary",
+  "verdict": "APPROVE | REQUEST_CHANGES | NEEDS_HUMAN",
+  "requires_human": false,
+  "findings": [
+    {
+      "severity": "low | medium | high | critical",
+      "file": "path relative to repository root",
+      "line": 1,
+      "title": "short finding title",
+      "description": "what is wrong and why it matters",
+      "suggestion": "smallest safe remediation",
+      "auto_fixable": false
+    }
+  ]
+}
 
-## Final Verdict
-APPROVE
-
-or
-
-## Final Verdict
-REQUEST_CHANGES
-
-Do NOT use COMMENT or any other verdict. Use APPROVE if no changes are needed. Use REQUEST_CHANGES if any issue needs fixing — even minor ones. The verdict line MUST be exactly "APPROVE" or "REQUEST_CHANGES" on its own line after "## Final Verdict".
-
-Write the final GitHub PR review comment now.`;
+Use APPROVE only when there are no blocking findings. Use REQUEST_CHANGES only when findings are present. Use NEEDS_HUMAN for ambiguous, security-critical, authorization, deployment, migration, or other findings that require maintainer judgment.
+`;
 }
