@@ -65,9 +65,8 @@ test('reclaimEffect atomically transitions ABANDONED to CLAIMED', async () => {
   assert.equal(reclaimed.reclaimed, true);
   assert.equal(reclaimed.effect.state, 'CLAIMED');
 
-  // Cannot reclaim a non-ABANDONED effect
-  await assert.rejects(
-    () => reclaimEffect({ dir, effectId: first.effect.id }),
-    /Can only reclaim ABANDONED/,
-  );
+  // Cannot reclaim a non-ABANDONED effect (already CLAIMED from first reclaim)
+  const secondAttempt = await reclaimEffect({ dir, effectId: first.effect.id });
+  assert.equal(secondAttempt.reclaimed, false);
+  assert.ok(secondAttempt.reason.includes('not_abandoned'), 'should reject non-ABANDONED reclaim');
 });

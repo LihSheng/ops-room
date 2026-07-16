@@ -9,7 +9,7 @@ export class FixSupersededError extends Error {
   }
 }
 
-export async function runFixChildWorker({ task, deps, dir }) {
+export async function runFixChildWorker({ task, deps, dir, lease }) {
   const reviewedSha = task?.reviewed_sha;
   const currentAtStart = await deps.fetchCurrentHead(task);
   assertFixHeadCurrent({ reviewedSha, currentSha: currentAtStart });
@@ -19,19 +19,22 @@ export async function runFixChildWorker({ task, deps, dir }) {
   try {
     workspace = await deps.prepareWorkspace(task);
     const heartbeatIntervalMs = deps.heartbeatIntervalMs || 60_000;
-    if (typeof deps.renewLease === 'function') {
+    if (typeof deps.renewLease === 'function' && lease) {
       heartbeatTimer = setInterval(() => {
-        deps.renewLease(task).catch((error) => console.error(`[fix-worker] lease heartbeat failed for ${task.id}:`, error?.message || error));
+        deps.renewLease({ dir, id: task.id, leaseId: lease.lease_id, leaseEpoch: lease.lease_epoch })
+          .catch((error) => console.error(`[fix-worker] lease heartbeat failed for ${task.id}:`, error?.message || error));
       }, heartbeatIntervalMs);
       heartbeatTimer.unref?.();
     }
-    await deps.renewLease?.(task);
+    if (lease) {
+      await deps.renewLease?.({ dir, id: task.id, leaseId: lease.lease_id, leaseEpoch: lease.lease_epoch });
+    }
     const beforeApply = await deps.readTask?.(task);
     if (beforeApply?.state === 'CANCEL_REQUESTED' || beforeApply?.state === 'CANCELLED') {
       return { outcome: 'CANCELLED' };
     }
     const applied = await deps.applyFix({ task, workspace });
-    await deps.renewLease?.(task);
+    if (lease) await deps.renewLease?.({ dir, id: task.id, leaseId: lease.lease_id, leaseEpoch: lease.lease_epoch });
     if (!applied?.changed) return { outcome: 'NEEDS_HUMAN', reason: 'no_source_changes' };
 
     // Run repository verification commands (tests, lint, typecheck) before
@@ -61,6 +64,8 @@ export async function runFixChildWorker({ task, deps, dir }) {
         taskId: task.id,
         kind: 'git_push',
         fingerprint: `${task.reviewed_sha}:${task.head_ref || ''}`,
+        leaseId: lease?.lease_id,
+        leaseEpoch: lease?.lease_epoch,
       });
       if (!pushEffect.claimed) {
         if (pushEffect.effect?.state === 'COMPLETED' && pushEffect.effect.result?.new_sha) {

@@ -61,6 +61,21 @@ async function executeControllerReview(task) {
   try {
     const isChat = task.taskType === 'chat';
     const lease = task.lease; // pre-claimed lease from dispatcher (optional)
+
+    // For reconciler-dispatched reviews that skipped the initial controller
+    // path, write the pending status BEFORE invoking the model workflow.
+    if (!isChat && lease) {
+      await reviewStatus.set({
+        repository: task.repository,
+        sha: task.headSha,
+        state: 'pending',
+        description: 'Review in progress',
+        agent: task.agent,
+        dir: task.dir,
+        taskId: task.task_id,
+      });
+    }
+
     const result = await runPrReviewWorkflow({
       agent: task.agent,
       task: task.task_text || task.task,
@@ -73,6 +88,7 @@ async function executeControllerReview(task) {
       head_sha: task.headSha,
       task_id: task.task_id,
       dir: task.dir,
+      lease,
     });
 
     // Chat tasks must not write the canonical commit status and should
@@ -89,21 +105,33 @@ async function executeControllerReview(task) {
       return;
     }
 
-    // For reconciler-dispatched reviews that skipped the initial controller
-    // path, write the pending status now before posting the final result.
-    if (lease) {
-      await reviewStatus.set({
-        repository: task.repository,
-        sha: task.headSha,
-        state: 'pending',
-        description: 'Review in progress',
-        agent: task.agent,
+    // Write the final commit status BEFORE committing the terminal task state.
+    // This avoids marking the task PASSED / CHANGES_REQUESTED when the GitHub
+    // status is ambiguous (e.g. a pre-existing CLAIMED effect).
+    const status = commitStatusForReviewEvent(result.review_event);
+    const statusResult = await reviewStatus.set({
+      repository: task.repository,
+      sha: task.headSha,
+      state: status.state,
+      description: status.description,
+      agent: task.agent,
+      dir: task.dir,
+      taskId: task.task_id,
+    });
+
+    if (statusResult.ambiguous_effect) {
+      // External status is ambiguous — do NOT mark the task as terminal.
+      await transitionTask({
         dir: task.dir,
-        taskId: task.task_id,
+        id: task.task_id,
+        to: 'NEEDS_HUMAN',
+        reason: 'ambiguous_commit_status_effect',
+        patch: { completed_at: new Date().toISOString(), result },
+        leaseEpoch: lease?.lease_epoch,
       });
+      return;
     }
 
-    const status = commitStatusForReviewEvent(result.review_event);
     const state = taskStateForReviewEvent(result.review_event);
     const terminalTask = await transitionTask({
       dir: task.dir,
@@ -164,26 +192,8 @@ async function executeControllerReview(task) {
       }
     }
 
-    const statusResult = await reviewStatus.set({
-      repository: task.repository,
-      sha: task.headSha,
-      state: status.state,
-      description: status.description,
-      agent: task.agent,
-      dir: task.dir,
-      taskId: task.task_id,
-    });
-    // If the commit status effect was ambiguous, move the task to NEEDS_HUMAN
-    // since the external state may never have been applied.
-    if (statusResult.ambiguous_effect) {
-      await transitionTask({
-        dir: task.dir,
-        id: task.task_id,
-        to: 'NEEDS_HUMAN',
-        reason: 'ambiguous_commit_status_effect',
-        leaseEpoch: lease?.lease_epoch,
-      });
     }
+
   } catch (error) {
     const message = error?.message || String(error);
     if (error?.code === 'REVIEW_CANCELLED') {
@@ -193,6 +203,7 @@ async function executeControllerReview(task) {
         to: 'CANCELLED',
         reason: 'worker_acknowledged_cancellation',
         patch: { completed_at: new Date().toISOString() },
+        leaseEpoch: lease?.lease_epoch,
       });
       return;
     }
@@ -202,6 +213,7 @@ async function executeControllerReview(task) {
       to: 'ERROR',
       reason: 'review_execution_error',
       patch: { completed_at: new Date().toISOString(), error: message.slice(0, 2000) },
+      leaseEpoch: lease?.lease_epoch,
     });
     await reviewStatus.set({
       repository: task.repository,

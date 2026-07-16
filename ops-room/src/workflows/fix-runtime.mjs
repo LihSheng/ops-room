@@ -95,7 +95,7 @@ export function createFixRuntimeDeps({ taskDir, renewClaim, readTask }) {
   return {
     fetchCurrentHead: async (task) => (await ghApi('GET', `repos/${task.repository}/pulls/${task.pr}`, task.agent)).head.sha,
     readTask: async (task) => readTask({ dir: taskDir, id: task.id }),
-    renewLease: async (task) => renewClaim({ dir: taskDir, id: task.id }),
+    renewLease: async ({ dir, id, leaseId, leaseEpoch }) => renewClaim({ dir, id, leaseId, leaseEpoch }),
     prepareWorkspace: async (task) => {
       const pr = await ghApi('GET', `repos/${task.repository}/pulls/${task.pr}`, task.agent);
       return prepareFixWorkspace(task.repository, task.pr, task.agent, pr.head.ref);

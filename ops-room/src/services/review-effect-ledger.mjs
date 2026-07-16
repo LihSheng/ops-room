@@ -17,7 +17,7 @@ async function readEffect(dir, id) {
   }
 }
 
-export async function claimEffect({ dir, taskId, kind, fingerprint }) {
+export async function claimEffect({ dir, taskId, kind, fingerprint, leaseId, leaseEpoch }) {
   const id = effectId({ taskId, kind, fingerprint });
   const path = effectPath(dir, id);
   await mkdir(join(dir, 'effects'), { recursive: true });
@@ -29,6 +29,14 @@ export async function claimEffect({ dir, taskId, kind, fingerprint }) {
   } catch (error) {
     if (error?.code !== 'EEXIST') throw error;
     const existing = await readEffect(dir, id);
+    // Fence: if a lease is supplied and the existing effect carries one,
+    // reject claims from a stale worker whose lease was superseded.
+    if (leaseId && existing?.claimed_by_lease_id && existing.claimed_by_lease_id !== leaseId) {
+      return { claimed: false, state: existing?.state || 'CLAIMED', effect: existing, fenced: true, reason: 'stale_lease' };
+    }
+    if (leaseEpoch !== undefined && existing?.claimed_by_lease_epoch !== undefined && existing.claimed_by_lease_epoch > leaseEpoch) {
+      return { claimed: false, state: existing?.state || 'CLAIMED', effect: existing, fenced: true, reason: 'superseded_epoch' };
+    }
     return { claimed: false, state: existing?.state || 'CLAIMED', effect: existing };
   }
 }
@@ -82,17 +90,37 @@ export async function resolveAmbiguousEffect({ dir, effectId: id, resolution, no
 
 /**
  * Atomically transition an ABANDONED effect back to CLAIMED so the caller
- * can retry the external action.  Uses writeAtomic to prevent two concurrent
- * retries from both observing ABANDONED and both performing the effect.
+ * can retry the external action.  Uses an exclusive reclaim lock file plus
+ * re-read-under-lock to prevent two concurrent retries from both observing
+ * ABANDONED and both performing the effect.
  */
 export async function reclaimEffect({ dir, effectId: id }) {
-  const current = await readEffect(dir, id);
-  if (!current) throw new Error(`Effect not found: ${id}`);
-  if (current.state !== 'ABANDONED') {
-    throw new Error(`Can only reclaim ABANDONED effects, not ${current.state}`);
+  const { mkdir, open, rm } = await import('node:fs/promises');
+  const reclaimLockDir = join(dir, 'effects', '.reclaim-locks');
+  await mkdir(reclaimLockDir, { recursive: true });
+  const lockPath = join(reclaimLockDir, `${id}.lock`);
+
+  let lockHandle;
+  try {
+    lockHandle = await open(lockPath, 'wx');
+  } catch (error) {
+    if (error?.code === 'EEXIST') return { reclaimed: false, reason: 'concurrent_reclaim' };
+    throw error;
   }
-  const effect = { ...current, state: 'CLAIMED', reclaimed_at: new Date().toISOString() };
-  const { writeAtomic } = await import('./review-task-store.mjs');
-  await writeAtomic(effectPath(dir, id), effect);
-  return { reclaimed: true, effect };
+
+  try {
+    // Re-read under lock to confirm still ABANDONED
+    const current = await readEffect(dir, id);
+    if (!current) throw new Error(`Effect not found: ${id}`);
+    if (current.state !== 'ABANDONED') {
+      return { reclaimed: false, reason: `not_abandoned:${current.state}` };
+    }
+    const effect = { ...current, state: 'CLAIMED', reclaimed_at: new Date().toISOString() };
+    const { writeAtomic } = await import('./review-task-store.mjs');
+    await writeAtomic(effectPath(dir, id), effect);
+    return { reclaimed: true, effect };
+  } finally {
+    await lockHandle.close();
+    try { await rm(lockPath, { force: true }); } catch { /* best-effort */ }
+  }
 }

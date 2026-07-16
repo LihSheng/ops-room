@@ -1,4 +1,4 @@
-import { claimEffect, completeEffect } from './review-effect-ledger.mjs';
+import { claimEffect, completeEffect, reclaimEffect } from './review-effect-ledger.mjs';
 
 export const REVIEW_STATUS_CONTEXT = 'OpenAB PR Review';
 
@@ -32,18 +32,25 @@ export function createGitHubReviewStatusService({ getCommitStatuses, createCommi
         fingerprint: `${sha}:${REVIEW_STATUS_CONTEXT}:${state}:${description}:${targetUrl || ''}`,
       });
       if (!effect.claimed) {
-        // COMPLETED: silently reuse. CLAIMED: ambiguous — return explicit signal.
         if (effect.state === 'CLAIMED') {
           return { written: false, ambiguous_effect: true, effect: effect.effect };
         }
         if (effect.state === 'COMPLETED') {
           return { written: false, duplicate_effect: true, effect: effect.effect };
         }
-        // ABANDONED: fall through to re-attempt.
+        // ABANDONED: attempt atomic re-claim before re-posting.
+        if (effect.state === 'ABANDONED') {
+          const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id });
+          if (!reclaimed.reclaimed) {
+            return { written: false, ambiguous_effect: true, effect: effect.effect };
+          }
+          // Re-claimed — store the new effect reference and fall through.
+          effect = reclaimed;
+        }
       }
     }
     await createCommitStatus(payload);
-    if (effect) await completeEffect({ dir, effectId: effect.effect.id, result: { sha, state, description, context: REVIEW_STATUS_CONTEXT } });
+    if (effect?.effect) await completeEffect({ dir, effectId: effect.effect.id, result: { sha, state, description, context: REVIEW_STATUS_CONTEXT } });
     return { written: true, status: payload };
   }
 
