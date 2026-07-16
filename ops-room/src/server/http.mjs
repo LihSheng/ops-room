@@ -197,8 +197,6 @@ async function executeControllerReview(task) {
       }
     }
 
-    }
-
   } catch (error) {
     const message = error?.message || String(error);
     if (error?.code === 'REVIEW_CANCELLED') {
