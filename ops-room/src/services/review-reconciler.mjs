@@ -1,5 +1,6 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, mkdir, open, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 
 import {
   countActiveTasks,
@@ -44,9 +45,36 @@ export async function reconcileReviewTasks({ dir, now, staleMinutes = 30, retryL
 }
 
 /**
+ * Acquire a short-lived slot reservation lock.  Two processes that both see
+ * available concurrency cannot both claim and exceed the limit because only
+ * one can acquire the lock at a time.
+ */
+async function acquireSlotLock(dir, slotKey) {
+  const locksDir = join(dir, '.locks');
+  await mkdir(locksDir, { recursive: true });
+  // Sanitize the slot key: replace '/' that would create nested directories.
+  const safeKey = slotKey.replace(/\//g, '_');
+  const lockPath = join(locksDir, `${safeKey}.lock`);
+  try {
+    const handle = await open(lockPath, 'wx');
+    await handle.close();
+    return { acquired: true, path: lockPath };
+  } catch (error) {
+    if (error?.code === 'EEXIST') return { acquired: false };
+    throw error;
+  }
+}
+
+async function releaseSlotLock(lockPath) {
+  try { await rm(lockPath, { force: true }); } catch { /* best-effort */ }
+}
+
+/**
  * Scan QUEUED and FIX_QUEUED tasks, atomically claim them within
- * concurrency limits, and dispatch by task.kind.  Returns the list
- * of tasks that were claimed and should be dispatched by the caller.
+ * concurrency limits using a slot reservation lock, then dispatch by
+ * task.kind.  Tasks are left in CLAIMED state with the lease attached;
+ * the caller must pass the lease to the executor so it can own the
+ * transition to RUNNING / FIXING and terminal states.
  *
  * This is the single durable dispatch path: it ensures queued work
  * does not stay stuck forever when concurrency frees up or after
@@ -72,40 +100,42 @@ export async function dispatchEligibleTasks({ dir, instanceId }) {
     }
     if (!task || !DISPATCHABLE_STATES.has(task.state)) continue;
 
-    // Concurrency gate
-    const counts = await countActiveTasks({ dir, repository: task.repository, pr: task.pr });
-    const concurrency = checkConcurrency({ counts, limits: task.policy?.concurrency || {} });
-    if (!concurrency.allowed) continue;
+    // Slot reservation prevents two processes from both seeing capacity and
+    // claiming beyond the limit.
+    const slotKey = `${task.kind}:${task.repository}:${task.pr}`;
+    const lock = await acquireSlotLock(dir, slotKey);
+    if (!lock.acquired) continue;
 
-    // Atomically claim
-    const leaseEpoch = (task.lease?.lease_epoch || 0) + 1;
-    const claimed = await claimTask({
-      dir,
-      id: task.id,
-      instanceId,
-      leaseId: randomUUID(),
-      leaseEpoch,
-    });
-    if (!claimed.claimed) continue;
+    try {
+      // Re-read inside the lock to get accurate counts
+      const counts = await countActiveTasks({ dir, repository: task.repository, pr: task.pr });
+      const concurrency = checkConcurrency({ counts, limits: task.policy?.concurrency || {} });
+      if (!concurrency.allowed) continue;
 
-    // Transition to the right active state
-    const activeState = task.kind === 'fix' ? 'FIXING' : 'RUNNING';
-    const claimedTask = await transitionTask({
-      dir,
-      id: task.id,
-      to: 'CLAIMED',
-      reason: 'reconciler_claimed',
-      patch: { lease: claimed.claim, attempt: (task.attempt || 0) + 1 },
-    });
-    const running = await transitionTask({
-      dir,
-      id: claimedTask.id,
-      to: activeState,
-      reason: 'reconciler_dispatched',
-      patch: { started_at: new Date().toISOString(), heartbeat_at: new Date().toISOString() },
-      leaseEpoch: claimed.claim.lease_epoch,
-    });
-    dispatched.push({ ...running, lease: claimed.claim });
+      const leaseEpoch = (task.lease?.lease_epoch || 0) + 1;
+      const claimed = await claimTask({
+        dir,
+        id: task.id,
+        instanceId,
+        leaseId: randomUUID(),
+        leaseEpoch,
+      });
+      if (!claimed.claimed) continue;
+
+      // Transition to CLAIMED — the caller's executor will move to RUNNING/FIXING.
+      // Only increment attempt once (the CLAIMED transition sets it; no second
+      // increment in the RUNNING transition).
+      const claimedTask = await transitionTask({
+        dir,
+        id: task.id,
+        to: 'CLAIMED',
+        reason: 'reconciler_claimed',
+        patch: { lease: claimed.claim, attempt: (task.attempt || 0) + 1, started_at: new Date().toISOString(), heartbeat_at: new Date().toISOString() },
+      });
+      dispatched.push({ ...claimedTask, lease: claimed.claim });
+    } finally {
+      await releaseSlotLock(lock.path);
+    }
   }
 
   return { dispatched: dispatched.length, tasks: dispatched };

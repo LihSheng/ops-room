@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { claimEffect, completeEffect, resolveAmbiguousEffect } from '../src/services/review-effect-ledger.mjs';
+import { claimEffect, completeEffect, resolveAmbiguousEffect, reclaimEffect } from '../src/services/review-effect-ledger.mjs';
 
 test('effect ledger deduplicates a GitHub effect after completion', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ops-room-effects-'));
@@ -51,4 +51,23 @@ test('ABANDONED effects allow re-claim after operator resolution', async () => {
   const afterAbandon = await claimEffect(input);
   assert.equal(afterAbandon.claimed, false);
   assert.equal(afterAbandon.state, 'ABANDONED');
+});
+
+test('reclaimEffect atomically transitions ABANDONED to CLAIMED', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ops-room-effects-'));
+  const input = { dir, taskId: 'review:test:4:sha:agent:review', kind: 'github_review', fingerprint: 'sha:reclaim-test' };
+  const first = await claimEffect(input);
+  assert.equal(first.claimed, true);
+
+  // Abandon, then atomically reclaim
+  await resolveAmbiguousEffect({ dir, effectId: first.effect.id, resolution: 'abandon' });
+  const reclaimed = await reclaimEffect({ dir, effectId: first.effect.id });
+  assert.equal(reclaimed.reclaimed, true);
+  assert.equal(reclaimed.effect.state, 'CLAIMED');
+
+  // Cannot reclaim a non-ABANDONED effect
+  await assert.rejects(
+    () => reclaimEffect({ dir, effectId: first.effect.id }),
+    /Can only reclaim ABANDONED/,
+  );
 });

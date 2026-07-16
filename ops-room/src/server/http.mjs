@@ -46,19 +46,21 @@ const reviewStatus = createGitHubReviewStatusService({
   }),
 });
 
-async function executeControllerFix({ dir, taskId }) {
+async function executeControllerFix({ dir, taskId, preClaimedLease }) {
   const deps = createFixRuntimeDeps({ taskDir: dir, renewClaim, readTask });
   return executeFixChildTask({
     dir,
     id: taskId,
     instanceId: `ops-room-${process.pid}`,
-    runWorker: ({ task }) => runFixChildWorker({ task, deps, dir }),
+    preClaimedLease,
+    runWorker: ({ task, lease }) => runFixChildWorker({ task, deps, dir, lease }),
   });
 }
 
 async function executeControllerReview(task) {
   try {
     const isChat = task.taskType === 'chat';
+    const lease = task.lease; // pre-claimed lease from dispatcher (optional)
     const result = await runPrReviewWorkflow({
       agent: task.agent,
       task: task.task_text || task.task,
@@ -82,8 +84,23 @@ async function executeControllerReview(task) {
         to: 'PASSED',
         reason: 'chat_response_completed',
         patch: { completed_at: new Date().toISOString(), result },
+        leaseEpoch: lease?.lease_epoch,
       });
       return;
+    }
+
+    // For reconciler-dispatched reviews that skipped the initial controller
+    // path, write the pending status now before posting the final result.
+    if (lease) {
+      await reviewStatus.set({
+        repository: task.repository,
+        sha: task.headSha,
+        state: 'pending',
+        description: 'Review in progress',
+        agent: task.agent,
+        dir: task.dir,
+        taskId: task.task_id,
+      });
     }
 
     const status = commitStatusForReviewEvent(result.review_event);
@@ -94,6 +111,7 @@ async function executeControllerReview(task) {
       to: state,
       reason: `review_${String(result.review_event || 'unknown').toLowerCase()}`,
       patch: { completed_at: new Date().toISOString(), result },
+      leaseEpoch: lease?.lease_epoch,
     });
 
     if (state === 'CHANGES_REQUESTED' && task.mode === 'auto-fix') {
@@ -127,6 +145,7 @@ async function executeControllerReview(task) {
           to: 'CHANGES_REQUESTED',
           reason: child.created ? 'fix_child_created' : 'fix_child_deduplicated',
           patch: { fix_child_task_id: child.task.id },
+          leaseEpoch: lease?.lease_epoch,
         });
 
         setImmediate(() => {
@@ -140,11 +159,12 @@ async function executeControllerReview(task) {
           id: terminalTask.id,
           to: 'NEEDS_HUMAN',
           reason: `auto_fix_policy_rejected:${autoFixPolicy.reason}`,
+          leaseEpoch: lease?.lease_epoch,
         });
       }
     }
 
-    await reviewStatus.set({
+    const statusResult = await reviewStatus.set({
       repository: task.repository,
       sha: task.headSha,
       state: status.state,
@@ -153,6 +173,17 @@ async function executeControllerReview(task) {
       dir: task.dir,
       taskId: task.task_id,
     });
+    // If the commit status effect was ambiguous, move the task to NEEDS_HUMAN
+    // since the external state may never have been applied.
+    if (statusResult.ambiguous_effect) {
+      await transitionTask({
+        dir: task.dir,
+        id: task.task_id,
+        to: 'NEEDS_HUMAN',
+        reason: 'ambiguous_commit_status_effect',
+        leaseEpoch: lease?.lease_epoch,
+      });
+    }
   } catch (error) {
     const message = error?.message || String(error);
     if (error?.code === 'REVIEW_CANCELLED') {
@@ -311,6 +342,7 @@ const server = createServer(async (req, res) => {
                 agent: t.agent,
                 mode: t.mode,
                 policy: t.policy || {},
+                lease: t.lease,
               })
                 .catch((error) => console.error('[operator-dispatch] execution error:', error));
             }
@@ -372,6 +404,7 @@ const server = createServer(async (req, res) => {
                 agent: t.agent,
                 mode: t.mode,
                 policy: t.policy || {},
+                lease: t.lease,
               })
                 .catch((error) => console.error('[operator-dispatch] execution error:', error));
             }
@@ -539,6 +572,7 @@ async function runReviewReconciliationCycle() {
           agent: task.agent,
           mode: task.mode,
           policy: task.policy || {},
+          lease: task.lease,
         })
           .catch((error) => console.error('[review-reconciler] dispatch execution error:', error));
       });

@@ -153,17 +153,6 @@ export function createPrReviewController({
       patch: { started_at: clock().toISOString(), heartbeat_at: clock().toISOString() },
     });
 
-    await setCommitStatus({
-      repository: normalized.repository,
-      sha: normalized.headSha,
-      state: 'pending',
-      description: 'Review in progress',
-      targetUrl: request.target_url,
-      context: REVIEW_CONTEXT,
-      agent: normalized.agent,
-      dir: request.dir,
-      taskId: task.id,
-    });
     await dispatchReview({
       task_id: task.id,
       lease: claimed.claim,
@@ -172,6 +161,21 @@ export function createPrReviewController({
       commenter: request.commenter,
       ...normalized,
     });
+
+    // Chat tasks must NOT write the canonical review pending status.
+    if (normalized.taskType !== 'chat') {
+      await setCommitStatus({
+        repository: normalized.repository,
+        sha: normalized.headSha,
+        state: 'pending',
+        description: 'Review in progress',
+        targetUrl: request.target_url,
+        context: REVIEW_CONTEXT,
+        agent: normalized.agent,
+        dir: request.dir,
+        taskId: task.id,
+      });
+    }
 
     return { task_id: task.id, status: 'RUNNING', queued: true };
   }

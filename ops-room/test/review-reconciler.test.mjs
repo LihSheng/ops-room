@@ -41,10 +41,10 @@ test('dispatchEligibleTasks claims and dispatches queued review tasks within con
   assert.equal(result.dispatched, 2, 'both queued tasks should be dispatched');
   assert.equal(result.tasks.length, 2);
 
-  // Both should now be RUNNING
+  // Both should now be CLAIMED (not RUNNING — the executor owns the RUNNING transition)
   for (const t of result.tasks) {
     const current = await readTask({ dir, id: t.id });
-    assert.equal(current.state, 'RUNNING');
+    assert.equal(current.state, 'CLAIMED', 'dispatched task should be in CLAIMED state');
     assert.ok(current.lease, 'task should have a lease');
   }
 
@@ -63,9 +63,10 @@ test('dispatchEligibleTasks respects per-PR concurrency limit', async () => {
   const result = await dispatchEligibleTasks({ dir, instanceId: 'test-dispatcher' });
   assert.equal(result.dispatched, 1, 'only one task should dispatch with per-PR limit of 1');
 
-  // Complete the first one
-  const running = await readTask({ dir, id: result.tasks[0].id });
-  await transitionTask({ dir, id: running.id, to: 'PASSED', reason: 'test' });
+  // Complete the first one (transition from CLAIMED → RUNNING → PASSED)
+  const claimed = await readTask({ dir, id: result.tasks[0].id });
+  await transitionTask({ dir, id: claimed.id, to: 'RUNNING', reason: 'test' });
+  await transitionTask({ dir, id: claimed.id, to: 'PASSED', reason: 'test' });
 
   // Second dispatch: the other should now be claimed
   const result2 = await dispatchEligibleTasks({ dir, instanceId: 'test-dispatcher' });

@@ -79,3 +79,20 @@ export async function resolveAmbiguousEffect({ dir, effectId: id, resolution, no
   await writeAtomic(effectPath(dir, id), effect);
   return effect;
 }
+
+/**
+ * Atomically transition an ABANDONED effect back to CLAIMED so the caller
+ * can retry the external action.  Uses writeAtomic to prevent two concurrent
+ * retries from both observing ABANDONED and both performing the effect.
+ */
+export async function reclaimEffect({ dir, effectId: id }) {
+  const current = await readEffect(dir, id);
+  if (!current) throw new Error(`Effect not found: ${id}`);
+  if (current.state !== 'ABANDONED') {
+    throw new Error(`Can only reclaim ABANDONED effects, not ${current.state}`);
+  }
+  const effect = { ...current, state: 'CLAIMED', reclaimed_at: new Date().toISOString() };
+  const { writeAtomic } = await import('./review-task-store.mjs');
+  await writeAtomic(effectPath(dir, id), effect);
+  return { reclaimed: true, effect };
+}

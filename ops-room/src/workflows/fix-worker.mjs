@@ -42,7 +42,7 @@ export async function runFixChildWorker({ task, deps, dir }) {
       if (verification.outcome !== 'verified') {
         return {
           outcome: 'NEEDS_HUMAN',
-          reason: 'verification_failed',
+          reason: verification.outcome === 'no_commands' ? 'no_verification_commands' : 'verification_failed',
           verification,
         };
       }

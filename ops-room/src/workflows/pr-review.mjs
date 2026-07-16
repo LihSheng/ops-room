@@ -5,7 +5,7 @@ import { appendFile } from 'node:fs/promises';
 import { buildPrReviewPrompt } from '../server/pr-review-payload.mjs';
 import { askAI } from './chat-response.mjs';
 import { parseStructuredReview } from './review-result.mjs';
-import { claimEffect, completeEffect } from '../services/review-effect-ledger.mjs';
+import { claimEffect, completeEffect, reclaimEffect } from '../services/review-effect-ledger.mjs';
 import { readTask } from '../services/review-task-store.mjs';
 import { assertReviewNotCancelled } from './review-worker-guard.mjs';
 
@@ -111,8 +111,21 @@ export async function runPrReviewWorkflow(payload) {
         fingerprint: `${head_sha || prContext.headSha}:${comment_id || 'chat'}:${reviewText.slice(0, 80)}`,
       });
       if (!effect.claimed) {
-        console.warn(`[pr-review] Skipping duplicate comment effect for ${repository}#${pr}`);
-        return { mode: 'pr_chat', repository, pr, agent, review_event: 'COMMENT', duplicate_effect: true };
+        // Branch on the existing effect's state — same semantics as review path.
+        if (effect.state === 'COMPLETED') {
+          console.warn(`[pr-review] Skipping duplicate comment effect for ${repository}#${pr}`);
+          return { mode: 'pr_chat', repository, pr, agent, review_event: 'COMMENT', duplicate_effect: true };
+        }
+        if (effect.state === 'CLAIMED') {
+          console.warn(`[pr-review] Existing CLAIMED comment effect for ${repository}#${pr} — ambiguous outcome`);
+          return { mode: 'pr_chat', repository, pr, agent, review_event: 'NEEDS_HUMAN', ambiguous_effect: true, effect_id: effect.effect?.id };
+        }
+        // ABANDONED: attempt atomic re-claim before re-posting.
+        const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id });
+        if (!reclaimed.reclaimed) {
+          return { mode: 'pr_chat', repository, pr, agent, review_event: 'NEEDS_HUMAN', ambiguous_effect: true, effect_id: effect.effect?.id };
+        }
+        // Re-claimed successfully — re-post the comment.
       }
       await addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
       await completeEffect({ dir, effectId: effect.effect.id, result: { pr, agent, comment_id } });
@@ -159,7 +172,12 @@ export async function runPrReviewWorkflow(payload) {
           console.warn(`[pr-review] Existing CLAIMED GitHub review effect for ${repository}#${pr} — ambiguous outcome`);
           return { mode: 'pr_review', repository, pr, agent, review_event: 'NEEDS_HUMAN', structured_review: structured, ambiguous_effect: true, effect_id: effect.effect?.id };
         }
-        // ABANDONED: fall through to re-post the review.
+        // ABANDONED: attempt atomic re-claim before re-posting.
+        const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id });
+        if (!reclaimed.reclaimed) {
+          return { mode: 'pr_review', repository, pr, agent, review_event: 'NEEDS_HUMAN', structured_review: structured, ambiguous_effect: true, effect_id: effect.effect?.id };
+        }
+        // Re-claimed successfully — re-post the review.
       }
       await addPullRequestReview(pr, renderedReview, event, agent);
       await completeEffect({ dir, effectId: effect.effect.id, result: { event, sha: head_sha || prContext.headSha } });

@@ -119,11 +119,17 @@ export function createFixRuntimeDeps({ taskDir, renewClaim, readTask }) {
     },
     verifyWorkspace: async ({ task, workspace }) => {
       // Run the repository's verification commands before commit/push.
-      // Commands are configurable via task.policy.verify_commands or fall
-      // back to a sensible default sequence.
+      // Commands are configurable via task.policy.verify_commands, or we
+      // detect them from package.json / Makefile.  Zero detected commands
+      // means we cannot verify → NEEDS_HUMAN.
       const commands = Array.isArray(task.policy?.verify_commands) && task.policy.verify_commands.length > 0
         ? task.policy.verify_commands
         : detectVerificationCommands(workspace);
+
+      if (commands.length === 0) {
+        return { outcome: 'no_commands', checks: [], reason: 'No verification commands detected or configured' };
+      }
+
       const outcomes = [];
       for (const cmd of commands) {
         try {
@@ -174,7 +180,12 @@ function detectVerificationCommands(workspace) {
   if (commands.length === 0) {
     try {
       const hasMakefile = docker(workspace.container, `cd "${workspace.containerWorkspace}" && test -f Makefile && echo yes || echo no`, 5_000).trim();
-      if (hasMakefile === 'yes') commands.push('make test 2>/dev/null || make check 2>/dev/null || echo "no test target"');
+      if (hasMakefile === 'yes') {
+        // Check which targets actually exist; don't mask missing targets.
+        const targets = docker(workspace.container, `cd "${workspace.containerWorkspace}" && (make -qp 2>/dev/null | grep -E '^(test|check):' || echo "")`, 5_000).trim();
+        if (targets.includes('test:')) commands.push('make test');
+        else if (targets.includes('check:')) commands.push('make check');
+      }
     } catch { /* skip */ }
   }
   return commands;
