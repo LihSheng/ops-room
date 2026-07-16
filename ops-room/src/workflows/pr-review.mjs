@@ -112,6 +112,8 @@ export async function runPrReviewWorkflow(payload) {
         fingerprint: `${head_sha || prContext.headSha}:${comment_id || 'chat'}:${reviewText.slice(0, 80)}`,
         leaseId: lease?.lease_id,
         leaseEpoch: lease?.lease_epoch,
+        taskLeaseId: lease?.lease_id,
+        taskLeaseEpoch: lease?.lease_epoch,
       });
       if (!effect.claimed) {
         // Branch on the existing effect's state — same semantics as review path.
@@ -124,14 +126,17 @@ export async function runPrReviewWorkflow(payload) {
           return { mode: 'pr_chat', repository, pr, agent, review_event: 'NEEDS_HUMAN', ambiguous_effect: true, effect_id: effect.effect?.id };
         }
         // ABANDONED: attempt atomic re-claim before re-posting.
-        const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id });
+        const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id, leaseId: lease?.lease_id, leaseEpoch: lease?.lease_epoch });
         if (!reclaimed.reclaimed) {
           return { mode: 'pr_chat', repository, pr, agent, review_event: 'NEEDS_HUMAN', ambiguous_effect: true, effect_id: effect.effect?.id };
         }
-        // Re-claimed successfully — re-post the comment.
+        // Re-claimed successfully — use reclaimed effect for completion.
+        effect.effect = reclaimed.effect;
+        effect.claimed = true;
+        effect.state = 'CLAIMED';
       }
       await addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
-      await completeEffect({ dir, effectId: effect.effect.id, result: { pr, agent, comment_id } });
+      await completeEffect({ dir, effectId: effect.effect.id, result: { pr, agent, comment_id }, leaseId: lease?.lease_id, leaseEpoch: lease?.lease_epoch });
     } else {
       await addComment(pr, `**${AGENT_NAMES[agent] || agent}** — response 🤖\n\n${reviewText}`, agent);
     }
@@ -162,6 +167,8 @@ export async function runPrReviewWorkflow(payload) {
         fingerprint: `${head_sha || prContext.headSha}:${event}:${renderedReview}`,
         leaseId: lease?.lease_id,
         leaseEpoch: lease?.lease_epoch,
+        taskLeaseId: lease?.lease_id,
+        taskLeaseEpoch: lease?.lease_epoch,
       });
       if (!effect.claimed) {
         // Branch on the existing effect's state:
@@ -178,14 +185,17 @@ export async function runPrReviewWorkflow(payload) {
           return { mode: 'pr_review', repository, pr, agent, review_event: 'NEEDS_HUMAN', structured_review: structured, ambiguous_effect: true, effect_id: effect.effect?.id };
         }
         // ABANDONED: attempt atomic re-claim before re-posting.
-        const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id });
+        const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id, leaseId: lease?.lease_id, leaseEpoch: lease?.lease_epoch });
         if (!reclaimed.reclaimed) {
           return { mode: 'pr_review', repository, pr, agent, review_event: 'NEEDS_HUMAN', structured_review: structured, ambiguous_effect: true, effect_id: effect.effect?.id };
         }
-        // Re-claimed successfully — re-post the review.
+        // Re-claimed successfully — use reclaimed effect for completion.
+        effect.effect = reclaimed.effect;
+        effect.claimed = true;
+        effect.state = 'CLAIMED';
       }
       await addPullRequestReview(pr, renderedReview, event, agent);
-      await completeEffect({ dir, effectId: effect.effect.id, result: { event, sha: head_sha || prContext.headSha } });
+      await completeEffect({ dir, effectId: effect.effect.id, result: { event, sha: head_sha || prContext.headSha }, leaseId: lease?.lease_id, leaseEpoch: lease?.lease_epoch });
     } else {
       await addPullRequestReview(pr, renderedReview, event, agent);
     }

@@ -79,16 +79,17 @@ async function acquireSlotLock(dir, repository, pr) {
           const content = JSON.parse(await readFile(level.path, 'utf-8'));
           const age = now - (content.at || 0);
           if (age > staleTimeoutMs) {
-            // Stale lock — attempt recovery by replacing it
+            // Stale lock — attempt exclusive recovery: remove, then re-acquire with wx.
             try {
-              const handle = await open(level.path, 'w');
+              await rm(level.path, { force: true });
+              const handle = await open(level.path, 'wx');
               await handle.writeFile(meta, 'utf-8');
               await handle.close();
               acquired.push(level.path);
               continue;
             } catch { /* another process recovered it first */ }
           }
-        } catch { /* corrupt lock file, try to claim */ }
+        } catch { /* corrupt lock file — try to remove and claim */ }
         // Could not acquire this level — release all we have
         await releaseSlotLocks(acquired);
         return { acquired: false };

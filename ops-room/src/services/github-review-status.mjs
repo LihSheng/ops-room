@@ -6,7 +6,7 @@ export function createGitHubReviewStatusService({ getCommitStatuses, createCommi
   if (typeof getCommitStatuses !== 'function') throw new Error('getCommitStatuses is required');
   if (typeof createCommitStatus !== 'function') throw new Error('createCommitStatus is required');
 
-  async function set({ repository, sha, state, description, targetUrl, agent = 'professor', dir, taskId }) {
+  async function set({ repository, sha, state, description, targetUrl, agent = 'professor', dir, taskId, leaseId, leaseEpoch }) {
     const statuses = await getCommitStatuses({ repository, sha, agent });
     const latest = (Array.isArray(statuses) ? statuses : [])
       .find((status) => status.context === REVIEW_STATUS_CONTEXT);
@@ -15,21 +15,18 @@ export function createGitHubReviewStatusService({ getCommitStatuses, createCommi
     }
 
     const payload = {
-      repository,
-      sha,
-      state,
-      description,
-      targetUrl,
-      context: REVIEW_STATUS_CONTEXT,
-      agent,
+      repository, sha, state, description, targetUrl,
+      context: REVIEW_STATUS_CONTEXT, agent,
     };
     let effect;
     if (dir && taskId) {
       effect = await claimEffect({
-        dir,
-        taskId,
+        dir, taskId,
         kind: 'github_commit_status',
         fingerprint: `${sha}:${REVIEW_STATUS_CONTEXT}:${state}:${description}:${targetUrl || ''}`,
+        leaseId, leaseEpoch,
+        taskLeaseId: leaseId,
+        taskLeaseEpoch: leaseEpoch,
       });
       if (!effect.claimed) {
         if (effect.state === 'CLAIMED') {
@@ -38,19 +35,17 @@ export function createGitHubReviewStatusService({ getCommitStatuses, createCommi
         if (effect.state === 'COMPLETED') {
           return { written: false, duplicate_effect: true, effect: effect.effect };
         }
-        // ABANDONED: attempt atomic re-claim before re-posting.
         if (effect.state === 'ABANDONED') {
-          const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id });
+          const reclaimed = await reclaimEffect({ dir, effectId: effect.effect.id, leaseId, leaseEpoch });
           if (!reclaimed.reclaimed) {
             return { written: false, ambiguous_effect: true, effect: effect.effect };
           }
-          // Re-claimed — store the new effect reference and fall through.
           effect = reclaimed;
         }
       }
     }
     await createCommitStatus(payload);
-    if (effect?.effect) await completeEffect({ dir, effectId: effect.effect.id, result: { sha, state, description, context: REVIEW_STATUS_CONTEXT } });
+    if (effect?.effect) await completeEffect({ dir, effectId: effect.effect.id, result: { sha, state, description, context: REVIEW_STATUS_CONTEXT }, leaseId, leaseEpoch });
     return { written: true, status: payload };
   }
 

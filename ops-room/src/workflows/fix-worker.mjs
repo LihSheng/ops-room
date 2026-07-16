@@ -53,6 +53,8 @@ export async function runFixChildWorker({ task, deps, dir, lease }) {
 
     const beforePush = await deps.fetchCurrentHead(task);
     assertFixHeadCurrent({ reviewedSha, currentSha: beforePush });
+    // Renew the lease immediately before push to ensure we still own it.
+    if (lease) await deps.renewLease?.({ dir, id: task.id, leaseId: lease.lease_id, leaseEpoch: lease.lease_epoch });
     const beforePushTask = await deps.readTask?.(task);
     if (beforePushTask?.state === 'CANCEL_REQUESTED' || beforePushTask?.state === 'CANCELLED') {
       return { outcome: 'CANCELLED' };
@@ -66,6 +68,8 @@ export async function runFixChildWorker({ task, deps, dir, lease }) {
         fingerprint: `${task.reviewed_sha}:${task.head_ref || ''}`,
         leaseId: lease?.lease_id,
         leaseEpoch: lease?.lease_epoch,
+        taskLeaseId: lease?.lease_id,
+        taskLeaseEpoch: lease?.lease_epoch,
       });
       if (!pushEffect.claimed) {
         if (pushEffect.effect?.state === 'COMPLETED' && pushEffect.effect.result?.new_sha) {
@@ -76,7 +80,7 @@ export async function runFixChildWorker({ task, deps, dir, lease }) {
     }
     const pushed = await deps.pushWorkspace({ task, workspace });
     if (!pushed?.newSha) throw new Error('Fix push did not return a new SHA');
-    if (pushEffect) await completeEffect({ dir, effectId: pushEffect.effect.id, result: { new_sha: pushed.newSha } });
+    if (pushEffect) await completeEffect({ dir, effectId: pushEffect.effect.id, result: { new_sha: pushed.newSha }, leaseId: lease?.lease_id, leaseEpoch: lease?.lease_epoch });
     return { outcome: 'FIX_PUSHED', new_sha: pushed.newSha };
   } finally {
     if (heartbeatTimer) clearInterval(heartbeatTimer);

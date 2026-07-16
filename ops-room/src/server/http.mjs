@@ -58,9 +58,10 @@ async function executeControllerFix({ dir, taskId, preClaimedLease }) {
 }
 
 async function executeControllerReview(task) {
+  const isChat = task.taskType === 'chat';
+  const lease = task.lease; // pre-claimed lease from dispatcher (optional)
+
   try {
-    const isChat = task.taskType === 'chat';
-    const lease = task.lease; // pre-claimed lease from dispatcher (optional)
 
     // For reconciler-dispatched reviews that skipped the initial controller
     // path, write the pending status BEFORE invoking the model workflow.
@@ -73,6 +74,8 @@ async function executeControllerReview(task) {
         agent: task.agent,
         dir: task.dir,
         taskId: task.task_id,
+        leaseId: lease.lease_id,
+        leaseEpoch: lease.lease_epoch,
       });
     }
 
@@ -117,6 +120,8 @@ async function executeControllerReview(task) {
       agent: task.agent,
       dir: task.dir,
       taskId: task.task_id,
+      leaseId: lease?.lease_id,
+      leaseEpoch: lease?.lease_epoch,
     });
 
     if (statusResult.ambiguous_effect) {
@@ -223,6 +228,8 @@ async function executeControllerReview(task) {
       agent: task.agent,
       dir: task.dir,
       taskId: task.task_id,
+      leaseId: lease?.lease_id,
+      leaseEpoch: lease?.lease_epoch,
     });
     console.error(`[pr-review-controller] ${task.repository}#${task.pr} failed:`, message.slice(0, 300));
   }

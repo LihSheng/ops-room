@@ -28,7 +28,7 @@ test('fix child fences SHA, heartbeats, pushes once, and always cleans up', asyn
   const d = deps();
   const result = await runFixChildWorker({ task: { id: 'fix:1', repository: 'LihSheng/LinkUp', pr: 1, reviewed_sha: 'a'.repeat(40) }, deps: d, lease: MOCK_LEASE });
   assert.deepEqual(result, { outcome: 'FIX_PUSHED', new_sha: 'b'.repeat(40) });
-  assert.deepEqual(d.calls, ['prepare', 'heartbeat', 'apply', 'heartbeat', 'verify', 'push', 'cleanup']);
+  assert.deepEqual(d.calls, ['prepare', 'heartbeat', 'apply', 'heartbeat', 'verify', 'heartbeat', 'push', 'cleanup']);
 });
 
 test('fix child never prepares or pushes when the reviewed SHA is stale', async () => {
