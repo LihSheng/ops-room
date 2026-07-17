@@ -127,11 +127,19 @@ export async function handleOperatorTaskCancellation({
       body: { ...result.response.body, idempotent_replay: result.replayed },
     };
   } catch (error) {
-    if (error instanceof IdempotencyConflictError) {
-      return { status: 409, body: { error: error.message, error_code: error.code } };
-    }
-    if (error instanceof IdempotencyInProgressError) {
-      return { status: 409, body: { error: error.message, error_code: error.code } };
+    if (error instanceof IdempotencyConflictError || error instanceof IdempotencyInProgressError) {
+      const current = await readTask({ dir: reviewTasksDir, id: rawTaskId });
+      return rejected({
+        auditDir,
+        actor,
+        taskId: rawTaskId,
+        reason,
+        idempotencyKey,
+        errorCode: error.code,
+        status: 409,
+        message: error.message,
+        previousState: current?.state || null,
+      });
     }
     throw error;
   }
