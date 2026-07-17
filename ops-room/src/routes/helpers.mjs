@@ -1,5 +1,8 @@
 import { appendFile } from 'node:fs/promises';
-import { SHARED_MEMORY, WEBHOOK_SECRET } from '../services/runtime-paths.mjs';
+import { timingSafeEqual } from 'node:crypto';
+import {
+  OPERATOR_API_ENABLED, OPERATOR_TOKEN, SHARED_MEMORY, WEBHOOK_SECRET,
+} from '../services/runtime-paths.mjs';
 
 export async function appendToMemory(entry) {
   try {
@@ -17,10 +20,21 @@ export function sendJSON(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-export function verifyAuth(authHeader) {
+function verifyBearer(authHeader, expectedToken) {
   if (!authHeader) return false;
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  return match && match[1] === WEBHOOK_SECRET;
+  if (!match || !expectedToken) return false;
+  const provided = Buffer.from(match[1]);
+  const expected = Buffer.from(expectedToken);
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
+}
+
+export function verifyAuth(authHeader) {
+  return verifyBearer(authHeader, WEBHOOK_SECRET);
+}
+
+export function verifyOperatorAuth(authHeader) {
+  return OPERATOR_API_ENABLED && verifyBearer(authHeader, OPERATOR_TOKEN);
 }
 
 export function parseBody(req) {

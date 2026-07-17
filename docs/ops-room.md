@@ -1,5 +1,7 @@
 # Ops Room
 
+Canonical architecture: [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
+
 Ops Room is the OpenAB control surface for GitHub-driven work. It owns the webhook server, issue poller, task routing, GitHub App auth, and coding-task PR workflow.
 
 ## Current Startup
@@ -20,7 +22,7 @@ nohup npm start >> ../data/ops-room/logs/server.log 2>&1 &
 
 `npm run bootstrap` and `npm start` both load the repo-level `.env`. Bootstrap reports a startup-blocking error when `OPENAB_WEBHOOK_SECRET` is missing, and the server also refuses to start without it. `OPENAB_WEBHOOK_PORT` defaults to `7381`.
 
-On the VPS, the preferred production-style startup is the host systemd service:
+On the VPS, use the host systemd service backed by `/opt/ops-room/current`. Mutable-checkout startup under `/home/ubuntu/openab-multi-agent` is legacy during migration.
 
 ```bash
 sudo systemctl status openab-ops-room.service --no-pager
@@ -97,7 +99,7 @@ Coding task workspaces are created under `data/workspaces/`.
 
 A read-only dashboard that shows which OpenAB instances are configured and their runtime status.
 
-The current UI uses a card layout instead of a table. Each agent card shows:
+The current UI uses a structured agent list. Each row/detail view shows:
 
 - agent display name and ID
 - Docker container name

@@ -1,5 +1,7 @@
 # Ops Room Control Plane Implementation Plan
 
+> **Status: superseded.** Historical extraction plan. Current authority: [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
+
 ## Goal
 
 Move `ops-room` toward the product direction described in the Obsidian note:

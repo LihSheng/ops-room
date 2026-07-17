@@ -2,8 +2,12 @@ export type RuntimeStatus = 'running' | 'healthy' | 'restarting' | 'stopped' | '
 
 export interface HealthResponse {
   status?: string;
+  ready?: boolean;
   uptime_seconds?: number;
   version?: string;
+  revision?: string;
+  lifecycle?: { state?: string; in_flight?: number };
+  dependencies?: Record<string, { status?: string; required?: boolean; error?: string }>;
   commands?: Record<string, boolean>;
   paths?: Record<string, string>;
 }
@@ -22,6 +26,8 @@ export interface AgentRuntime {
 export interface AgentInstance {
   agent: string;
   display_name?: string;
+  role?: string;
+  description?: string;
   service?: string;
   container_name?: string;
   backend?: string;
@@ -29,6 +35,8 @@ export interface AgentInstance {
   config_path?: string;
   data_dir?: string;
   github_polling_enabled?: boolean;
+  desired_state?: string;
+  observed_state?: string;
   runtime?: AgentRuntime;
   links?: { logs?: string; tasks?: string };
 }

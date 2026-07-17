@@ -2,6 +2,8 @@
 
 Ops Room is the control surface for configuring, launching, and monitoring OpenAB-backed agents. It stores safe config templates in Git, keeps runtime data under `data/`, and keeps private credentials under `secrets/`.
 
+Canonical product and runtime decisions: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ## Architecture
 
 ```
@@ -86,6 +88,9 @@ Ops Room includes a read-only operational dashboard for the OpenAB fleet.
 - APIs: the current dashboard reads `/api/health`, `/api/openab/instances`, `/api/tasks`, and `/api/logs`.
 - UI: system capacity, active work, operator intervention, agent fleet, task filters, agent details, and log tails.
 - Safety: the dashboard remains read-only. It does not expose restart, reload, config-edit, secret, or shell-execution controls.
+- Network boundary: host deployment binds `127.0.0.1` by default. Public traffic must pass through the configured Cloudflare Tunnel and Access policy.
+- Operator APIs: mutations are disabled unless `OPS_ROOM_OPERATOR_API_ENABLED=true` and a separate `OPS_ROOM_OPERATOR_TOKEN` is configured.
+- Knowledge: agents receive only the curated `OPENAB_AGENT_KNOWLEDGE_DIR` mount, read-only. Never point it at the whole Obsidian vault.
 
 On the VPS, prefer running Ops Room directly on the host through systemd instead of running this service inside Docker:
 
@@ -95,13 +100,16 @@ sudo systemctl restart openab-ops-room.service
 sudo journalctl -u openab-ops-room.service -f
 ```
 
-After pulling dashboard source changes on a host deployment, run:
+Production releases should not pull or rebuild a mutable checkout. Build a commit-addressed artifact:
 
 ```bash
-cd /home/ubuntu/openab-multi-agent/ops-room
-npm install
-sudo systemctl restart openab-ops-room.service
+cd ops-room
+npm ci --ignore-scripts
+npm run build:dashboard
+npm run release:build -- "$(git rev-parse HEAD)" /tmp/ops-room-releases
 ```
+
+Install root-owned copies of `scripts/deploy/activate-release.sh`, `rollback-release.sh`, and the systemd template under `ops-room/deploy/`. Activate manually only after persistent paths in `/etc/openab/ops-room.env` are verified. Automatic deployment remains deferred.
 
 Cloudflare note: the existing `hermes-dashboard` tunnel can serve both `hermes.lihsheng.space` and `ops-room.lihsheng.space`, but `ops-room.lihsheng.space` must be added as a **Tunnel Public Hostname** that points to `http://localhost:7381`. Creating only a Cloudflare Access application is not enough; after login it will still return the tunnel fallback `404` if the public hostname route is missing.
 

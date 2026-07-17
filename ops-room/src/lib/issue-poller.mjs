@@ -1,7 +1,18 @@
 import { AGENT_IDS, AGENT_NAMES, LABEL_COLORS } from './config.mjs';
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms, signal) {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    timer.unref?.();
+    signal?.addEventListener('abort', done, { once: true });
+
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    }
+  });
 }
 
 export async function pollAgentIssues({
@@ -63,10 +74,11 @@ export async function startIssuePoller({
   intervalMs,
   pollAgent,
   logger = console,
+  signal,
 }) {
   logger.log('[poller] poll loop started');
 
-  while (true) {
+  while (!signal?.aborted) {
     const results = await Promise.allSettled(
       agentKeys.map(agentKey => pollAgent(agentKey))
     );
@@ -76,6 +88,8 @@ export async function startIssuePoller({
       }
     }
 
-    await sleep(intervalMs);
+    await sleep(intervalMs, signal);
   }
+
+  logger.log('[poller] poll loop stopped');
 }

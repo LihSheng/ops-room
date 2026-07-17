@@ -1,48 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { POLL_AGENTS } from '../lib/config.mjs';
-
-const OPENAB_INSTANCE_MAP = [
-  {
-    agent: 'professor',
-    displayName: 'Professor',
-    service: 'opencode-professor',
-    containerName: 'openab-opencode-professor',
-    backend: 'opencode',
-    image: 'ghcr.io/openabdev/openab-opencode:latest',
-    configPath: 'config/agents/opencode-professor.toml',
-    dataDir: 'data/agents/opencode-professor',
-  },
-  {
-    agent: 'berlin',
-    displayName: 'Berlin',
-    service: 'opencode-1',
-    containerName: 'openab-opencode-1',
-    backend: 'opencode',
-    image: 'ghcr.io/openabdev/openab-opencode:latest',
-    configPath: 'config/agents/opencode-1.toml',
-    dataDir: 'data/agents/opencode-1',
-  },
-  {
-    agent: 'tokyo',
-    displayName: 'Tokyo',
-    service: 'opencode-2',
-    containerName: 'openab-opencode-2',
-    backend: 'opencode',
-    image: 'ghcr.io/openabdev/openab-opencode:latest',
-    configPath: 'config/agents/opencode-2.toml',
-    dataDir: 'data/agents/opencode-2',
-  },
-  {
-    agent: 'gemini',
-    displayName: 'Gemini',
-    service: 'gemini',
-    containerName: 'openab-gemini',
-    backend: 'gemini',
-    image: 'ghcr.io/openabdev/openab-gemini:latest',
-    configPath: 'config/agents/gemini.toml',
-    dataDir: 'data/agents/gemini',
-  },
-];
+import { AGENT_DEFINITIONS } from './agent-definitions.mjs';
 
 let cachedDockerStatus = null;
 let cachedDockerStatusAt = 0;
@@ -127,7 +85,7 @@ function getDockerStatus() {
   let statusMap = {};
 
   if (available) {
-    const names = OPENAB_INSTANCE_MAP.map(i => i.containerName);
+    const names = AGENT_DEFINITIONS.map(i => i.containerName);
     statusMap = getDockerStatusByContainerName(names);
   } else {
     dockerError = 'docker command not available or permission denied';
@@ -146,7 +104,7 @@ function getDockerStatus() {
 export function getOpenABInstances() {
   const { available, error, statusMap } = getDockerStatus();
 
-  const instances = OPENAB_INSTANCE_MAP.map(entry => {
+  const instances = AGENT_DEFINITIONS.map(entry => {
     const runtime = statusMap[entry.containerName] || {
       status: 'unknown',
       state: 'unknown',
@@ -154,18 +112,22 @@ export function getOpenABInstances() {
     };
 
     return {
-      agent: entry.agent,
+      agent: entry.key,
       display_name: entry.displayName,
+      role: entry.role,
+      description: entry.description,
       service: entry.service,
       container_name: entry.containerName,
       backend: entry.backend,
       image: entry.image,
-      config_path: entry.configPath,
+      config_path: `config/agents/${entry.configName}.toml`,
       data_dir: entry.dataDir,
-      github_polling_enabled: POLL_AGENTS.includes(entry.agent),
+      github_polling_enabled: POLL_AGENTS.includes(entry.key),
+      desired_state: entry.desiredState,
+      observed_state: runtime.status || 'unknown',
       runtime,
       links: {
-        logs: `/api/logs?agent=${entry.agent}`,
+        logs: `/api/logs?agent=${entry.key}`,
         tasks: '/api/tasks',
       },
     };

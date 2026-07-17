@@ -8,6 +8,7 @@ import {
   loadBootstrapEnvironment,
   main,
   missingStartupVars,
+  runtimeDirectories,
   STARTUP_REQUIRED_VARS,
 } from '../scripts/bootstrap.mjs';
 
@@ -39,6 +40,17 @@ test('bootstrap startup contract matches the server-required secret', () => {
   assert.deepEqual(missingStartupVars({}), ['OPENAB_WEBHOOK_SECRET']);
   assert.deepEqual(missingStartupVars({ OPENAB_WEBHOOK_SECRET: 'test-secret' }), []);
   assert.deepEqual(missingStartupVars({ OPENAB_WEBHOOK_SECRET: '' }), ['OPENAB_WEBHOOK_SECRET']);
+});
+
+test('bootstrap honors stable runtime roots outside the release checkout', () => {
+  const dirs = runtimeDirectories({
+    OPENAB_DATA_DIR: '/srv/openab-data',
+    OPS_ROOM_DATA_DIR: '/srv/ops-room-state',
+    OPENAB_SECRETS_DIR: '/etc/openab/secrets',
+  });
+  assert.ok(dirs.some((dir) => dir.endsWith(join('srv', 'ops-room-state', 'tasks'))));
+  assert.ok(dirs.some((dir) => dir.endsWith(join('etc', 'openab', 'secrets'))));
+  assert.equal(dirs.some((dir) => dir.includes(join('ops-room', 'data'))), false);
 });
 
 test('bootstrap tolerates a missing selected env file', async () => {

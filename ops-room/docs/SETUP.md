@@ -1,5 +1,7 @@
 # Ops Room — Setup Guide
 
+> Architecture authority: [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md). This guide covers setup mechanics; immutable production releases must follow that contract.
+
 Complete guide to deploying the Ops Room from scratch: configuring GitHub, setting up the
 service, and connecting the OpenAB agent containers.
 
@@ -341,7 +343,7 @@ env = { OPENCODE_API_KEY = "${OPENCODE_API_KEY}" }
 
 ## 4. Systemd Service
 
-Create `/etc/systemd/system/openab-ops-room.service`:
+Install the tracked template `ops-room/deploy/openab-ops-room.service` as `/etc/systemd/system/openab-ops-room.service`. It runs `/opt/ops-room/current` and reads stable absolute paths from `/etc/openab/ops-room.env`.
 
 ```ini
 [Unit]
@@ -352,11 +354,14 @@ Requires=docker.service
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/openab-multi-agent/ops-room
-ExecStart=/usr/bin/node --env-file=../.env src/server/webhook.mjs
-Restart=always
-RestartSec=10
-Environment=PATH=/home/ubuntu/.nvm/versions/node/v24/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WorkingDirectory=/opt/ops-room/current/ops-room
+EnvironmentFile=/etc/openab/ops-room.env
+ExecStart=/usr/bin/node src/server/webhook.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillSignal=SIGTERM
+KillMode=control-group
 Environment=OPENAB_WEBHOOK_PORT=7381
 
 [Install]

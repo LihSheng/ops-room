@@ -45,6 +45,51 @@ export async function releaseLock(ctx) {
   try { await rm(lockPath(ctx), { force: true }); } catch { }
 }
 
+export function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+function lockOwnerPid(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'number') return parsed;
+    return Number(parsed?.harnessPid);
+  } catch {
+    return Number(String(raw).trim());
+  }
+}
+
+export async function cleanupStaleLocks({ lockDir = LOCK_DIR, processAlive = isProcessAlive } = {}) {
+  let files;
+  try {
+    files = await readdir(lockDir);
+  } catch {
+    return [];
+  }
+
+  const removed = [];
+  for (const file of files.filter((name) => name.endsWith('.lock'))) {
+    const path = join(lockDir, file);
+    try {
+      const pid = lockOwnerPid(await readFile(path, 'utf-8'));
+      if (!processAlive(pid)) {
+        await rm(path, { force: true });
+        removed.push(file);
+      }
+    } catch {
+      await rm(path, { force: true });
+      removed.push(file);
+    }
+  }
+  return removed;
+}
+
 export async function ensureDir(dir) {
   try { await mkdir(dir, { recursive: true }); } catch { }
 }
@@ -60,6 +105,10 @@ export async function initDirs() {
   await ensureDir(STATE_DIR);
   await ensureDir(LOCK_DIR);
   await ensureDir(PROMPT_DIR);
+  const staleLocks = await cleanupStaleLocks();
+  if (staleLocks.length > 0) {
+    console.warn(`[task-store] removed ${staleLocks.length} stale issue lock(s)`);
+  }
   await compactProcessedTasks();
 }
 

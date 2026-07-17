@@ -3,7 +3,11 @@
 [server]
 # Runtime override: OPENAB_WEBHOOK_PORT
 port = 7381
-host = "0.0.0.0"
+host = "127.0.0.1"
+
+[operator_api]
+# Mutations remain disabled until separate operator auth, RBAC, and audit are configured.
+enabled = false
 
 [poller]
 enabled = true

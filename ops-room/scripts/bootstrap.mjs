@@ -8,18 +8,23 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OPS_ROOM_ROOT = join(__dirname, '..');
 const REPO_ROOT = join(OPS_ROOM_ROOT, '..');
 
-const requiredDirs = [
-  join(REPO_ROOT, 'data', 'agents'),
-  join(REPO_ROOT, 'data', 'workspaces'),
-  join(REPO_ROOT, 'data', 'shared'),
-  join(REPO_ROOT, 'data', 'ops-room', 'logs'),
-  join(REPO_ROOT, 'data', 'ops-room', 'state'),
-  join(REPO_ROOT, 'data', 'ops-room', 'tasks'),
-  join(REPO_ROOT, 'secrets'),
-];
-
 export const REPO_ENV_PATH = join(REPO_ROOT, '.env');
 export const STARTUP_REQUIRED_VARS = ['OPENAB_WEBHOOK_SECRET'];
+
+export function runtimeDirectories(env = process.env) {
+  const dataDir = resolve(env.OPENAB_DATA_DIR || join(REPO_ROOT, 'data'));
+  const opsRoomDataDir = resolve(env.OPS_ROOM_DATA_DIR || join(dataDir, 'ops-room'));
+  return [
+    resolve(env.OPENAB_AGENTS_DIR || join(dataDir, 'agents')),
+    resolve(env.OPENAB_WORKSPACES_DIR || join(dataDir, 'workspaces')),
+    resolve(env.OPENAB_SHARED_DIR || join(dataDir, 'shared')),
+    join(opsRoomDataDir, 'logs'),
+    join(opsRoomDataDir, 'state'),
+    join(opsRoomDataDir, 'tasks'),
+    join(opsRoomDataDir, 'review-tasks'),
+    resolve(env.OPENAB_SECRETS_DIR || join(REPO_ROOT, 'secrets')),
+  ];
+}
 
 async function ensureDir(dir) {
   try {
@@ -62,7 +67,7 @@ export async function main({
 
   if (createDirectories) {
     output.log('Creating runtime directories...');
-    for (const dir of requiredDirs) {
+    for (const dir of runtimeDirectories(env)) {
       await ensureDir(dir);
     }
   }
