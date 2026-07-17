@@ -1,0 +1,15 @@
+
+> @openab/ops-room@0.2.0 smoke:instances
+> npm run build:server && node scripts/smoke-openab-instances.js
+
+
+> @openab/ops-room@0.2.0 build:server
+> tsc -p tsconfig.json && npm run build:agent-script
+
+
+> @openab/ops-room@0.2.0 build:agent-script
+> tsc -p ../tsconfig.agent-scripts.json
+
+Smoke testing http://localhost:17380/api/openab/instances ...
+FAIL: Failed to fetch instances: 
+smoke_exit=1

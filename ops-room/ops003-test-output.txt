@@ -1,0 +1,583 @@
+
+> @openab/ops-room@0.2.0 test
+> npm run build:server && node scripts/run-tests.js
+
+
+> @openab/ops-room@0.2.0 build:server
+> tsc -p tsconfig.json && npm run build:agent-script
+
+
+> @openab/ops-room@0.2.0 build:agent-script
+> tsc -p ../tsconfig.agent-scripts.json
+
+TAP version 13
+# file:///home/runner/work/ops-room/ops-room/ops-room/src/services/agent-profile/loader.js:4
+# import { AgentProfile, AgentProfileValidationError, validateAgentProfile } from './schema.js';
+#          ^^^^^^^^^^^^
+# SyntaxError: The requested module './schema.js' does not provide an export named 'AgentProfile'
+#     at ModuleJob._instantiate (node:internal/modules/esm/module_job:175:21)
+#     at async ModuleJob.run (node:internal/modules/esm/module_job:258:5)
+#     at async ModuleLoader.import (node:internal/modules/esm/loader:540:24)
+#     at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+# Node.js v20.19.0
+# Subtest: /home/runner/work/ops-room/ops-room/ops-room/test/agent-profile.test.js
+not ok 1 - /home/runner/work/ops-room/ops-room/ops-room/test/agent-profile.test.js
+  ---
+  duration_ms: 55.858087
+  location: '/home/runner/work/ops-room/ops-room/ops-room/test/agent-profile.test.js:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: agent definitions are the unique source for identity and runtime bindings
+ok 2 - agent definitions are the unique source for identity and runtime bindings
+  ---
+  duration_ms: 2.205481
+  ...
+# Subtest: agent registry reports desired and observed state from one definition set
+ok 3 - agent registry reports desired and observed state from one definition set
+  ---
+  duration_ms: 7.949117
+  ...
+# Subtest: bootstrap loads the selected env file without exposing repo .env
+ok 4 - bootstrap loads the selected env file without exposing repo .env
+  ---
+  duration_ms: 13.646991
+  ...
+# Subtest: bootstrap startup contract matches the server-required secret
+ok 5 - bootstrap startup contract matches the server-required secret
+  ---
+  duration_ms: 1.122412
+  ...
+# Subtest: bootstrap honors stable runtime roots outside the release checkout
+ok 6 - bootstrap honors stable runtime roots outside the release checkout
+  ---
+  duration_ms: 0.623938
+  ...
+# Subtest: bootstrap tolerates a missing selected env file
+ok 7 - bootstrap tolerates a missing selected env file
+  ---
+  duration_ms: 7.521577
+  ...
+# Subtest: bootstrap reports a missing webhook secret as startup-blocking
+ok 8 - bootstrap reports a missing webhook secret as startup-blocking
+  ---
+  duration_ms: 1.374714
+  ...
+# Subtest: cancellation during slow execution is cooperatively detected
+ok 9 - cancellation during slow execution is cooperatively detected
+  ---
+  duration_ms: 13.3591
+  ...
+# Subtest: cancelled queued tasks transition directly to CANCELLED
+ok 10 - cancelled queued tasks transition directly to CANCELLED
+  ---
+  duration_ms: 4.302619
+  ...
+# Subtest: per-PR concurrency limits queue new tasks for the same PR
+ok 11 - per-PR concurrency limits queue new tasks for the same PR
+  ---
+  duration_ms: 21.665568
+  ...
+# Subtest: per-repository concurrency limit queues tasks when repo limit exceeded
+ok 12 - per-repository concurrency limit queues tasks when repo limit exceeded
+  ---
+  duration_ms: 29.439429
+  ...
+# Subtest: deployment preflight accepts a prepared immutable host layout
+ok 13 - deployment preflight accepts a prepared immutable host layout
+  ---
+  duration_ms: 19.042154
+  ...
+# Subtest: deployment preflight rejects an unsupported Node version and relative persistent paths
+ok 14 - deployment preflight rejects an unsupported Node version and relative persistent paths
+  ---
+  duration_ms: 9.090924
+  ...
+# Subtest: manual activation and rollback switch immutable release links
+not ok 15 - manual activation and rollback switch immutable release links
+  ---
+  duration_ms: 27.31057
+  location: '/home/runner/work/ops-room/ops-room/ops-room/test/deployment-rollback.test.js:28:1'
+  failureType: 'testCodeFailure'
+  error: "ENOENT: no such file or directory, lstat '/tmp/ops-room-deploy-test-ZFOJfg/config/agent-profiles'"
+  code: 'ENOENT'
+  stack: |-
+    async lstat (node:internal/fs/promises:1025:18)
+    async Promise.all (index 0)
+    async checkPaths (node:internal/fs/cp/cp:76:39)
+    async cpFn (node:internal/fs/cp/cp:65:17)
+    async buildReleaseArtifact (file:///home/runner/work/ops-room/ops-room/ops-room/scripts/deploy/release-artifact.js:145:9)
+    async TestContext.<anonymous> (file:///home/runner/work/ops-room/ops-room/ops-room/test/deployment-rollback.test.js:61:23)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+# Subtest: ambiguous CLAIMED effect can be resolved by operator
+ok 16 - ambiguous CLAIMED effect can be resolved by operator
+  ---
+  duration_ms: 13.070931
+  ...
+# Subtest: CLAIMED effect cannot be double-resolved
+ok 17 - CLAIMED effect cannot be double-resolved
+  ---
+  duration_ms: 3.739614
+  ...
+# Subtest: listEffects filters by task ID, kind, and state
+ok 18 - listEffects filters by task ID, kind, and state
+  ---
+  duration_ms: 18.602961
+  ...
+# Subtest: github_issue_comment effects are deduplicated
+ok 19 - github_issue_comment effects are deduplicated
+  ---
+  duration_ms: 5.06678
+  ...
+# Subtest: fix child executor owns lifecycle transitions and records pushed SHA
+ok 20 - fix child executor owns lifecycle transitions and records pushed SHA
+  ---
+  duration_ms: 18.574698
+  ...
+# Subtest: non-progress fixer results are terminal and never request re-review
+ok 21 - non-progress fixer results are terminal and never request re-review
+  ---
+  duration_ms: 2.576054
+  ...
+# Subtest: a pushed fix ends its task and waits for a new-SHA event
+ok 22 - a pushed fix ends its task and waits for a new-SHA event
+  ---
+  duration_ms: 0.255058
+  ...
+# Subtest: fix runtime only permits safe source-relative paths
+ok 23 - fix runtime only permits safe source-relative paths
+  ---
+  duration_ms: 2.131272
+  ...
+# Subtest: change-requested parent creates one idempotent SHA-bound fix child
+ok 24 - change-requested parent creates one idempotent SHA-bound fix child
+  ---
+  duration_ms: 11.212339
+  ...
+# Subtest: fix child fences SHA, heartbeats, pushes once, and always cleans up
+ok 25 - fix child fences SHA, heartbeats, pushes once, and always cleans up
+  ---
+  duration_ms: 2.73349
+  ...
+# Subtest: fix child never prepares or pushes when the reviewed SHA is stale
+ok 26 - fix child never prepares or pushes when the reviewed SHA is stale
+  ---
+  duration_ms: 0.606806
+  ...
+# Subtest: fix child reports no source changes and still cleans the workspace
+ok 27 - fix child reports no source changes and still cleans the workspace
+  ---
+  duration_ms: 0.37373
+  ...
+# Subtest: completed push effect prevents a duplicate push and retains the pushed SHA
+ok 28 - completed push effect prevents a duplicate push and retains the pushed SHA
+  ---
+  duration_ms: 15.582793
+  ...
+# Subtest: review status service writes the stable context when status changed
+ok 29 - review status service writes the stable context when status changed
+  ---
+  duration_ms: 2.981163
+  ...
+# Subtest: review status service does not repeat an equivalent latest status
+ok 30 - review status service does not repeat an equivalent latest status
+  ---
+  duration_ms: 0.358632
+  ...
+# Subtest: review status ledger prevents duplicate external writes for one task
+ok 31 - review status ledger prevents duplicate external writes for one task
+  ---
+  duration_ms: 16.424481
+  ...
+# file:///home/runner/work/ops-room/ops-room/ops-room/src/services/agent-profile/loader.js:4
+# import { AgentProfile, AgentProfileValidationError, validateAgentProfile } from './schema.js';
+#          ^^^^^^^^^^^^
+# SyntaxError: The requested module './schema.js' does not provide an export named 'AgentProfile'
+#     at ModuleJob._instantiate (node:internal/modules/esm/module_job:175:21)
+#     at async ModuleJob.run (node:internal/modules/esm/module_job:258:5)
+#     at async ModuleLoader.import (node:internal/modules/esm/loader:540:24)
+#     at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+# Node.js v20.19.0
+# Subtest: /home/runner/work/ops-room/ops-room/ops-room/test/health.test.js
+not ok 15 - /home/runner/work/ops-room/ops-room/ops-room/test/health.test.js
+  ---
+  duration_ms: 62.553866
+  location: '/home/runner/work/ops-room/ops-room/ops-room/test/health.test.js:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: issue poller stops promptly when drain aborts its wait
+ok 33 - issue poller stops promptly when drain aborts its wait
+  ---
+  duration_ms: 3.270515
+  ...
+# Subtest: issue poller stops claiming remaining issues when drain begins mid-cycle
+ok 34 - issue poller stops claiming remaining issues when drain begins mid-cycle
+  ---
+  duration_ms: 0.92374
+  ...
+# Subtest: LinkUp webhook payload with task_type chat and comment_id is recognized
+ok 35 - LinkUp webhook payload with task_type chat and comment_id is recognized
+  ---
+  duration_ms: 3.412
+  ...
+# Subtest: LinkUp webhook payload without pr is rejected
+ok 36 - LinkUp webhook payload without pr is rejected
+  ---
+  duration_ms: 0.231743
+  ...
+# Subtest: LinkUp webhook payload with draft PR policy is recognized
+ok 37 - LinkUp webhook payload with draft PR policy is recognized
+  ---
+  duration_ms: 0.313047
+  ...
+# Subtest: audit events persist as append-only files and support bounded filtering
+ok 38 - audit events persist as append-only files and support bounded filtering
+  ---
+  duration_ms: 9.238232
+  ...
+# Subtest: operator identity is explicit and rejects missing configuration
+ok 39 - operator identity is explicit and rejects missing configuration
+  ---
+  duration_ms: 0.752089
+  ...
+# Subtest: concurrent identical cancellation requests perform one transition and one accepted audit event
+ok 40 - concurrent identical cancellation requests perform one transition and one accepted audit event
+  ---
+  duration_ms: 38.664185
+  ...
+# Subtest: same idempotency key with changed payload is rejected without another transition
+ok 41 - same idempotency key with changed payload is rejected without another transition
+  ---
+  duration_ms: 15.091976
+  ...
+# Subtest: unknown tasks and invalid transitions create rejected audit events
+ok 42 - unknown tasks and invalid transitions create rejected audit events
+  ---
+  duration_ms: 52.331954
+  ...
+# Subtest: missing reason and idempotency key are rejected and audited
+ok 43 - missing reason and idempotency key are rejected and audited
+  ---
+  duration_ms: 4.85346
+  ...
+# Subtest: operator cancellation requires authentication and replays an identical request
+not ok 44 - operator cancellation requires authentication and replays an identical request
+  ---
+  duration_ms: 8109.651731
+  location: '/home/runner/work/ops-room/ops-room/ops-room/test/operator-http.test.js:62:1'
+  failureType: 'testCodeFailure'
+  error: 'server did not become healthy'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    waitForHealth (file:///home/runner/work/ops-room/ops-room/ops-room/test/operator-http.test.js:26:11)
+    async TestContext.<anonymous> (file:///home/runner/work/ops-room/ops-room/ops-room/test/operator-http.test.js:71:9)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+# Subtest: operator endpoints remain hidden when mutation API is disabled
+not ok 45 - operator endpoints remain hidden when mutation API is disabled
+  ---
+  duration_ms: 8068.871887
+  location: '/home/runner/work/ops-room/ops-room/ops-room/test/operator-http.test.js:111:1'
+  failureType: 'testCodeFailure'
+  error: 'server did not become healthy'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    waitForHealth (file:///home/runner/work/ops-room/ops-room/ops-room/test/operator-http.test.js:26:11)
+    async TestContext.<anonymous> (file:///home/runner/work/ops-room/ops-room/ops-room/test/operator-http.test.js:117:9)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+# Subtest: controller supersedes an old SHA without a status update or model dispatch
+ok 46 - controller supersedes an old SHA without a status update or model dispatch
+  ---
+  duration_ms: 15.85281
+  ...
+# Subtest: controller creates one claimed review and pending status for the current SHA
+ok 47 - controller creates one claimed review and pending status for the current SHA
+  ---
+  duration_ms: 8.727476
+  ...
+# Subtest: controller deduplicates an identical current-SHA request
+ok 48 - controller deduplicates an identical current-SHA request
+  ---
+  duration_ms: 11.144302
+  ...
+# Subtest: controller keeps auto-fix disabled unless policy explicitly allows it
+ok 49 - controller keeps auto-fix disabled unless policy explicitly allows it
+  ---
+  duration_ms: 26.444528
+  ...
+# Subtest: PR review prompt requires a machine-validated JSON review result
+ok 50 - PR review prompt requires a machine-validated JSON review result
+  ---
+  duration_ms: 2.148073
+  ...
+# Subtest: structured review rendering produces GitHub-readable findings
+ok 51 - structured review rendering produces GitHub-readable findings
+  ---
+  duration_ms: 1.899147
+  ...
+# Subtest: review posting is permitted only for the expected current SHA
+ok 52 - review posting is permitted only for the expected current SHA
+  ---
+  duration_ms: 1.76761
+  ...
+# Subtest: process lifecycle drains tracked work and rejects new work
+ok 53 - process lifecycle drains tracked work and rejects new work
+  ---
+  duration_ms: 9.353307
+  ...
+# Subtest: process lifecycle reports a bounded drain timeout
+ok 54 - process lifecycle reports a bounded drain timeout
+  ---
+  duration_ms: 9.994489
+  ...
+# Subtest: work accepted before drain still executes and remains visible while draining
+ok 55 - work accepted before drain still executes and remains visible while draining
+  ---
+  duration_ms: 1.653838
+  ...
+# Subtest: release artifact contains only immutable runtime allowlist, profiles, and external checksum
+ok 56 - release artifact contains only immutable runtime allowlist, profiles, and external checksum
+  ---
+  duration_ms: 91.066109
+  ...
+# Subtest: release path policy rejects secrets, runtime data, dependencies, non-JSON profile files, and traversal
+ok 57 - release path policy rejects secrets, runtime data, dependencies, non-JSON profile files, and traversal
+  ---
+  duration_ms: 0.619781
+  ...
+# Subtest: same commit produces one deterministic artifact and never overwrites it
+ok 58 - same commit produces one deterministic artifact and never overwrites it
+  ---
+  duration_ms: 1211.090607
+  ...
+# Subtest: release manifest is authoritative over stable environment SHA
+ok 59 - release manifest is authoritative over stable environment SHA
+  ---
+  duration_ms: 2.260764
+  ...
+# Subtest: invalid existing release manifest never falls back to environment identity
+ok 60 - invalid existing release manifest never falls back to environment identity
+  ---
+  duration_ms: 0.533189
+  ...
+# Subtest: source checkout may fall back to environment identity when manifest is absent
+ok 61 - source checkout may fall back to environment identity when manifest is absent
+  ---
+  duration_ms: 0.849992
+  ...
+# Subtest: queued work is cancelled immediately without waiting for a worker
+ok 62 - queued work is cancelled immediately without waiting for a worker
+  ---
+  duration_ms: 10.463866
+  ...
+# Subtest: cancellation is cooperative and terminal once acknowledged
+ok 63 - cancellation is cooperative and terminal once acknowledged
+  ---
+  duration_ms: 7.290564
+  ...
+# Subtest: effect ledger deduplicates a GitHub effect after completion
+ok 64 - effect ledger deduplicates a GitHub effect after completion
+  ---
+  duration_ms: 11.989034
+  ...
+# Subtest: claimEffect returns CLAIMED state for uncompleted existing effects
+ok 65 - claimEffect returns CLAIMED state for uncompleted existing effects
+  ---
+  duration_ms: 3.713394
+  ...
+# Subtest: ABANDONED effects allow re-claim after operator resolution
+ok 66 - ABANDONED effects allow re-claim after operator resolution
+  ---
+  duration_ms: 4.12186
+  ...
+# Subtest: reclaimEffect atomically transitions ABANDONED to CLAIMED
+ok 67 - reclaimEffect atomically transitions ABANDONED to CLAIMED
+  ---
+  duration_ms: 6.509642
+  ...
+# Subtest: fenced: stale worker rejected from new effect when task has different lease
+ok 68 - fenced: stale worker rejected from new effect when task has different lease
+  ---
+  duration_ms: 2.49915
+  ...
+# Subtest: fenced: stale worker rejected when task has no current lease (retry window)
+ok 69 - fenced: stale worker rejected when task has no current lease (retry window)
+  ---
+  duration_ms: 2.525821
+  ...
+# Subtest: fenced: stale worker cannot complete effect after task lease changed
+ok 70 - fenced: stale worker cannot complete effect after task lease changed
+  ---
+  duration_ms: 3.301854
+  ...
+# Subtest: review outcome preserves supersession as a terminal task state
+ok 71 - review outcome preserves supersession as a terminal task state
+  ---
+  duration_ms: 1.377119
+  ...
+# Subtest: auto-fix requires explicit enablement and a trusted same-repository branch
+ok 72 - auto-fix requires explicit enablement and a trusted same-repository branch
+  ---
+  duration_ms: 1.907352
+  ...
+# Subtest: critical or ambiguous findings are never auto-fixable
+ok 73 - critical or ambiguous findings are never auto-fixable
+  ---
+  duration_ms: 0.208361
+  ...
+# Subtest: reconciler recovers expired active review tasks and ignores queued work
+ok 74 - reconciler recovers expired active review tasks and ignores queued work
+  ---
+  duration_ms: 15.421182
+  ...
+# Subtest: reconciler isolates corrupt task records instead of aborting a cycle
+ok 75 - reconciler isolates corrupt task records instead of aborting a cycle
+  ---
+  duration_ms: 2.270573
+  ...
+# Subtest: dispatchEligibleTasks claims and dispatches queued review tasks within concurrency
+ok 76 - dispatchEligibleTasks claims and dispatches queued review tasks within concurrency
+  ---
+  duration_ms: 15.275579
+  ...
+# Subtest: dispatchEligibleTasks respects per-PR concurrency limit
+ok 77 - dispatchEligibleTasks respects per-PR concurrency limit
+  ---
+  duration_ms: 17.238208
+  ...
+# Subtest: stale running task becomes recoverable only within retry budget
+ok 78 - stale running task becomes recoverable only within retry budget
+  ---
+  duration_ms: 14.35213
+  ...
+# Subtest: structured review accepts a valid approval without blocking findings
+ok 79 - structured review accepts a valid approval without blocking findings
+  ---
+  duration_ms: 1.378342
+  ...
+# Subtest: structured review rejects approval with blocking findings
+ok 80 - structured review rejects approval with blocking findings
+  ---
+  duration_ms: 0.478647
+  ...
+# Subtest: structured review rejects malformed request-changes result
+ok 81 - structured review rejects malformed request-changes result
+  ---
+  duration_ms: 0.247273
+  ...
+# Subtest: review task listing returns durable tasks newest-first
+ok 82 - review task listing returns durable tasks newest-first
+  ---
+  duration_ms: 15.517413
+  ...
+# Subtest: review task identity is deterministic and changes when SHA or mode changes
+ok 83 - review task identity is deterministic and changes when SHA or mode changes
+  ---
+  duration_ms: 1.525658
+  ...
+# Subtest: chat task identity uses pr-chat prefix and includes comment_id
+ok 84 - chat task identity uses pr-chat prefix and includes comment_id
+  ---
+  duration_ms: 0.238407
+  ...
+# Subtest: lease epoch fencing rejects transitions with mismatched epoch
+ok 85 - lease epoch fencing rejects transitions with mismatched epoch
+  ---
+  duration_ms: 14.795481
+  ...
+# Subtest: task persists dispatch context (task_text, task_type, commenter, comment_id)
+ok 86 - task persists dispatch context (task_text, task_type, commenter, comment_id)
+  ---
+  duration_ms: 2.511123
+  ...
+# Subtest: self-transitions allow metadata-only updates for terminal states
+ok 87 - self-transitions allow metadata-only updates for terminal states
+  ---
+  duration_ms: 7.742783
+  ...
+# Subtest: concurrent claims result in one creator and one duplicate response
+ok 88 - concurrent claims result in one creator and one duplicate response
+  ---
+  duration_ms: 2.253941
+  ...
+# Subtest: task and claim filenames are portable while logical IDs remain unchanged
+ok 89 - task and claim filenames are portable while logical IDs remain unchanged
+  ---
+  duration_ms: 2.741234
+  ...
+# Subtest: storage scan deduplicates physical records by logical task ID
+ok 90 - storage scan deduplicates physical records by logical task ID
+  ---
+  duration_ms: 2.742276
+  ...
+# Subtest: storage scan isolates valid JSON that is not a task object
+ok 91 - storage scan isolates valid JSON that is not a task object
+  ---
+  duration_ms: 2.164815
+  ...
+# Subtest: legacy colon-named task files remain readable, recoverable, and deduplicated
+ok 92 - legacy colon-named task files remain readable, recoverable, and deduplicated
+  ---
+  duration_ms: 7.326051
+  ...
+# Subtest: terminal tasks cannot transition back to running
+ok 93 - terminal tasks cannot transition back to running
+  ---
+  duration_ms: 5.52213
+  ...
+# Subtest: claim renewal updates heartbeat and stale detection is clock-controlled
+ok 94 - claim renewal updates heartbeat and stale detection is clock-controlled
+  ---
+  duration_ms: 1.855716
+  ...
+# Subtest: review worker stops cooperatively after cancellation is requested
+ok 95 - review worker stops cooperatively after cancellation is requested
+  ---
+  duration_ms: 1.615385
+  ...
+# Subtest: SIGTERM drains an idle server and exits cleanly
+not ok 96 - SIGTERM drains an idle server and exits cleanly
+  ---
+  duration_ms: 5101.326969
+  location: '/home/runner/work/ops-room/ops-room/ops-room/test/server-shutdown.test.js:28:1'
+  failureType: 'testCodeFailure'
+  error: 'server did not become healthy'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    waitForHealth (file:///home/runner/work/ops-room/ops-room/ops-room/test/server-shutdown.test.js:26:11)
+    async TestContext.<anonymous> (file:///home/runner/work/ops-room/ops-room/ops-room/test/server-shutdown.test.js:52:24)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+# Subtest: startup cleanup removes dead issue locks and preserves live owners
+ok 97 - startup cleanup removes dead issue locks and preserves live owners
+  ---
+  duration_ms: 9.024282
+  ...
+# Subtest: PR webhooks use the configured review controller instead of direct workflow execution
+ok 98 - PR webhooks use the configured review controller instead of direct workflow execution
+  ---
+  duration_ms: 2.060729
+  ...
+1..98
+# tests 98
+# suites 0
+# pass 92
+# fail 6
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 16771.45302
+test_exit=1
