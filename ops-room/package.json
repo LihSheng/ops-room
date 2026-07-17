@@ -24,6 +24,7 @@
     "prepare": "npm run build",
     "test": "npm run build:server && node scripts/run-tests.js",
     "smoke:instances": "npm run build:server && node scripts/smoke-openab-instances.js",
+    "deployment:preflight": "npm run build:server && node scripts/deploy/preflight-host.js",
     "release:build": "npm run build && node scripts/deploy/build-release.js",
     "release:verify": "npm run build:server && node scripts/deploy/verify-release.js"
   },

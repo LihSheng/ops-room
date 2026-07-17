@@ -23,8 +23,12 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 [[ $install_root = /* && $install_root != / ]] || { echo "unsafe OPS_ROOM_INSTALL_ROOT" >&2; exit 64; }
 [[ -f $archive && -f $checksum ]] || { echo "artifact or checksum missing" >&2; exit 66; }
 [[ -x $node_bin ]] || { echo "Node runtime missing or not executable: $node_bin" >&2; exit 69; }
-"$node_bin" -e 'if (Number(process.versions.node.split(".")[0]) < 20) process.exit(1)' || {
-  echo "Ops Room requires Node.js 20 or newer" >&2
+"$node_bin" -e '
+  const [major, minor, patch] = process.versions.node.split(".").map(Number);
+  if (major < 20 || (major === 20 && minor < 19)) process.exit(1);
+  if (![major, minor, patch].every(Number.isFinite)) process.exit(1);
+' || {
+  echo "Ops Room requires Node.js 20.19.0 or newer" >&2
   exit 69
 }
 
