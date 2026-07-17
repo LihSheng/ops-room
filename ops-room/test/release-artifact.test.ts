@@ -11,6 +11,7 @@ import {
 } from '../scripts/deploy/release-artifact.js';
 
 const SHA = 'a'.repeat(40);
+const PROFILE_IDS = ['professor', 'berlin', 'tokyo', 'gemini'];
 
 async function makeSource(root) {
   await mkdir(join(root, 'src', 'server'), { recursive: true });
@@ -21,9 +22,13 @@ async function makeSource(root) {
   await writeFile(join(root, '.env'), 'SECRET=must-not-ship\n');
   await mkdir(join(root, 'data'), { recursive: true });
   await writeFile(join(root, 'data', 'task.json'), '{}');
+  await mkdir(join(root, '..', 'config', 'agent-profiles'), { recursive: true });
+  for (const id of PROFILE_IDS) {
+    await writeFile(join(root, '..', 'config', 'agent-profiles', `${id}.json`), JSON.stringify({ id }));
+  }
 }
 
-test('release artifact contains only immutable runtime allowlist and external checksum', async () => {
+test('release artifact contains only immutable runtime allowlist, profiles, and external checksum', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'ops-room-release-test-'));
   const source = join(temp, 'source');
   const output = join(temp, 'output');
@@ -39,6 +44,7 @@ test('release artifact contains only immutable runtime allowlist and external ch
     assert.equal(verified.manifest.commit_sha, SHA);
     assert.equal(verified.manifest.package_version, '1.0.0');
     assert.ok(verified.entries.includes('ops-room/src/server/webhook.js'));
+    for (const id of PROFILE_IDS) assert.ok(verified.entries.includes(`config/agent-profiles/${id}.json`));
     assert.equal(verified.entries.some((entry) => entry.includes('.env')), false);
     assert.equal(verified.entries.some((entry) => entry.includes('/data/')), false);
     assert.equal(verified.entries.some((entry) => entry.includes('node_modules')), false);
@@ -47,12 +53,13 @@ test('release artifact contains only immutable runtime allowlist and external ch
   }
 });
 
-test('release path policy rejects secrets, runtime data, dependencies, and traversal', () => {
+test('release path policy rejects secrets, runtime data, dependencies, non-JSON profile files, and traversal', () => {
   for (const path of [
     'ops-room/.env',
     'ops-room/data/task.json',
     'ops-room/secrets/key.pem',
     'ops-room/node_modules/pkg/index.js',
+    'config/agent-profiles/private-key.pem',
     '../escape',
   ]) {
     assert.throws(() => assertAllowedReleasePath(path));
