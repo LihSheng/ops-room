@@ -2,10 +2,11 @@ import { commandExists } from '../workflows/github-code.mjs';
 import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import {
-  TASKS_DIR, STATE_DIR, LOG_DIR, WORKSPACE_BASE,
-  OPENAB_SERVER_VERSION, OPS_ROOM_RELEASE_SHA
+  TASKS_DIR, REVIEW_TASKS_DIR, STATE_DIR, LOG_DIR, WORKSPACE_BASE,
+  OPENAB_SERVER_VERSION, REQUIRED_COMMANDS
 } from '../services/runtime-paths.mjs';
 import { processLifecycle } from '../services/process-lifecycle.mjs';
+import { readReleaseInfo } from '../services/release-info.mjs';
 
 let cachedCommandStatus = null;
 let cachedAt = 0;
@@ -50,12 +51,30 @@ export async function handleHealth({
   commandExistsFn = commandExists,
   directoryCheckFn = checkDirectory,
   lifecycle = processLifecycle,
+  releaseInfoFn = readReleaseInfo,
 } = {}) {
+  let releaseInfo;
+  let releaseIdentity;
+  try {
+    releaseInfo = await releaseInfoFn();
+    releaseIdentity = { status: 'ok', required: true, source: releaseInfo.source };
+  } catch (error) {
+    releaseInfo = { commit_sha: 'unknown', source: 'invalid' };
+    releaseIdentity = { status: 'error', required: true, error: error?.message || 'invalid release manifest' };
+  }
+
+  const commands = await getCommandStatus(commandExistsFn);
   const dependencyEntries = await Promise.all([
     ['task_store', directoryCheckFn(TASKS_DIR)],
+    ['review_task_store', directoryCheckFn(REVIEW_TASKS_DIR)],
     ['state_store', directoryCheckFn(STATE_DIR)],
     ['log_store', directoryCheckFn(LOG_DIR)],
     ['workspace_store', directoryCheckFn(WORKSPACE_BASE)],
+    ['release_identity', releaseIdentity],
+    ...REQUIRED_COMMANDS.map((command) => [
+      `command_${command}`,
+      { status: commands[command] ? 'ok' : 'error', required: true, error: commands[command] ? undefined : 'unavailable' },
+    ]),
   ].map(async ([name, result]) => [name, await result]));
   const dependencies = Object.fromEntries(dependencyEntries);
   const criticalReady = Object.values(dependencies).every((dependency) => dependency.status === 'ok');
@@ -67,7 +86,8 @@ export async function handleHealth({
     ready,
     uptime_seconds: Math.floor(process.uptime()),
     version: OPENAB_SERVER_VERSION,
-    revision: OPS_ROOM_RELEASE_SHA,
+    revision: releaseInfo.commit_sha,
+    release: releaseInfo,
     lifecycle: lifecycleStatus,
     dependencies,
     paths: {
@@ -76,6 +96,6 @@ export async function handleHealth({
       logs_dir: LOG_DIR,
       workspaces_dir: WORKSPACE_BASE,
     },
-    commands: await getCommandStatus(commandExistsFn),
+    commands,
   };
 }

@@ -25,11 +25,14 @@ export async function pollAgentIssues({
   handleTask,
   cancelTask,
   logger = console,
+  signal,
 }) {
+  if (signal?.aborted) return;
   const issues = await listOpenIssuesForAgent(agentKey);
   if (!issues?.length) return;
 
   for (const issue of issues) {
+    if (signal?.aborted) break;
     const names = issue.labels?.map((label) => label.name) || [];
     logger.log(`[poller] labels on #${issue.number}: ${names.join(', ')}`);
 
@@ -80,7 +83,7 @@ export async function startIssuePoller({
 
   while (!signal?.aborted) {
     const results = await Promise.allSettled(
-      agentKeys.map(agentKey => pollAgent(agentKey))
+      agentKeys.map(agentKey => pollAgent(agentKey, signal))
     );
     for (const result of results) {
       if (result.status === 'rejected') {

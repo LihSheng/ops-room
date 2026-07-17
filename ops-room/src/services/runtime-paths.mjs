@@ -3,10 +3,13 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const OPS_ROOM_ROOT = join(__dirname, '..', '..');
+export const OPS_ROOM_ROOT = join(__dirname, '..', '..');
 const REPO_ROOT = join(OPS_ROOM_ROOT, '..');
 const _dataDir = process.env.OPENAB_DATA_DIR || join(REPO_ROOT, 'data');
 const _opsRoomDataDir = process.env.OPS_ROOM_DATA_DIR || join(_dataDir, 'ops-room');
+const _requiredCommands = Object.hasOwn(process.env, 'OPS_ROOM_REQUIRED_COMMANDS')
+  ? process.env.OPS_ROOM_REQUIRED_COMMANDS
+  : 'git,gh';
 const packageJson = createRequire(import.meta.url)('../../package.json');
 
 export const PORT = parseInt(process.env.OPENAB_WEBHOOK_PORT || '7381', 10);
@@ -15,6 +18,7 @@ export const WEBHOOK_SECRET = process.env.OPENAB_WEBHOOK_SECRET;
 export const OPERATOR_API_ENABLED = process.env.OPS_ROOM_OPERATOR_API_ENABLED === 'true';
 export const OPERATOR_TOKEN = process.env.OPS_ROOM_OPERATOR_TOKEN || '';
 export const ISSUE_POLLING_ENABLED = process.env.OPS_ROOM_ISSUE_POLLING_ENABLED !== 'false';
+export const REQUIRED_COMMANDS = _requiredCommands.split(',').map((value) => value.trim()).filter(Boolean);
 export const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.OPS_ROOM_SHUTDOWN_TIMEOUT_MS || '55000', 10);
 export const DATA_DIR = _dataDir;
 export const OPS_ROOM_DATA_DIR = _opsRoomDataDir;
@@ -45,7 +49,6 @@ export const FORBIDDEN_FILE_PATTERNS = [
 ];
 
 export const OPENAB_SERVER_VERSION = packageJson.version;
-export const OPS_ROOM_RELEASE_SHA = process.env.OPS_ROOM_RELEASE_SHA || process.env.GITHUB_SHA || 'development';
 
 export function utcTimestamp() {
   return new Date().toISOString().replace('T', ' ').replace(/\.\d{3}Z/, '');

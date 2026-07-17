@@ -60,19 +60,37 @@ switch_link() {
   mv -Tf -- "$install_root/$name.new" "$install_root/$name"
 }
 
-if [[ ! -d $release_dir ]]; then
-  mkdir "$temporary_dir"
-  tar -xzf "$archive" -C "$temporary_dir"
-  [[ -f "$temporary_dir/RELEASE.json" && -f "$temporary_dir/ops-room/src/server/webhook.mjs" ]] || {
-    echo "extracted release is incomplete" >&2
+mkdir "$temporary_dir"
+tar -xzf "$archive" -C "$temporary_dir"
+[[ -f "$temporary_dir/RELEASE.json" && -f "$temporary_dir/ops-room/src/server/webhook.mjs" ]] || {
+  echo "extracted release is incomplete" >&2
+  exit 65
+}
+if [[ -d $release_dir ]]; then
+  diff -qr --no-dereference "$temporary_dir" "$release_dir" >/dev/null || {
+    echo "existing release directory does not match verified artifact: $release_dir" >&2
     exit 65
   }
+else
   chmod -R go-w "$temporary_dir"
   mv -- "$temporary_dir" "$release_dir"
 fi
 
 if [[ -L "$install_root/current" ]]; then
+  response=$($curl_bin --fail --silent --show-error --connect-timeout 2 --max-time 5 "$health_url") || {
+    echo "current service health unavailable; refusing forced restart" >&2
+    exit 69
+  }
+  HEALTH_JSON="$response" node -e '
+    const health = JSON.parse(process.env.HEALTH_JSON);
+    const operations = health.lifecycle?.operations || [];
+    if (operations.some((operation) => operation.startsWith("legacy-issue:"))) process.exit(1);
+  ' || {
+    echo "legacy issue work is active; deployment deferred" >&2
+    exit 75
+  }
   previous_target=$(readlink "$install_root/current")
+  $systemctl_bin stop "$service"
 fi
 
 if [[ -n $previous_target && $previous_target != "releases/$revision" ]]; then
@@ -81,7 +99,7 @@ fi
 switch_link current "releases/$revision"
 activated=true
 
-if $systemctl_bin restart "$service" && health_matches "$revision"; then
+if $systemctl_bin start "$service" && health_matches "$revision"; then
   echo "activated $revision"
   exit 0
 fi

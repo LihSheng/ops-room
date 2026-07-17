@@ -48,7 +48,11 @@ node -e '
   const path = require("path");
   const root = process.env.OPS_ROOM_INSTALL_ROOT;
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "current", "RELEASE.json"), "utf8"));
-  process.stdout.write(JSON.stringify({ ready: true, revision: manifest.commit_sha }));
+  process.stdout.write(JSON.stringify({
+    ready: true,
+    revision: manifest.commit_sha,
+    lifecycle: { operations: process.env.OPS_ROOM_FAKE_ACTIVE === "1" ? ["legacy-issue:coder#42"] : [] },
+  }));
 '
 `);
     await chmod(fakeSystemctl, 0o755);
@@ -64,6 +68,19 @@ node -e '
 
     assert.equal((await run('bash', [join(scriptRoot, 'activate-release.sh'), first.archivePath, first.checksumPath, firstSha], env)).code, 0);
     assert.equal((await run('bash', [join(scriptRoot, 'activate-release.sh'), second.archivePath, second.checksumPath, secondSha], env)).code, 0);
+    assert.equal(await readlink(join(installRoot, 'current')), `releases/${secondSha}`);
+
+    const releasedServer = join(installRoot, 'releases', secondSha, 'ops-room', 'src', 'server', 'webhook.mjs');
+    await writeFile(releasedServer, 'tampered\n');
+    const tampered = await run('bash', [join(scriptRoot, 'activate-release.sh'), second.archivePath, second.checksumPath, secondSha], env);
+    assert.equal(tampered.code, 65, tampered.stderr);
+    await writeFile(releasedServer, 'console.log("release");\n');
+
+    const blocked = await run('bash', [join(scriptRoot, 'activate-release.sh'), first.archivePath, first.checksumPath, firstSha], {
+      ...env,
+      OPS_ROOM_FAKE_ACTIVE: '1',
+    });
+    assert.equal(blocked.code, 75, blocked.stderr);
     assert.equal(await readlink(join(installRoot, 'current')), `releases/${secondSha}`);
 
     const rollback = await run('bash', [join(scriptRoot, 'rollback-release.sh')], env);

@@ -38,13 +38,15 @@ export function createProcessLifecycle() {
       const remaining = deadline - Date.now();
       if (remaining <= 0) return { idle: false, timed_out: true, ...getStatus() };
 
+      let timer;
       const timeout = new Promise((resolve) => {
-        const timer = setTimeout(() => resolve('timeout'), remaining);
-        timer.unref?.();
+        timer = setTimeout(() => resolve('timeout'), remaining);
       });
       const completed = Promise.allSettled([...operations].map((operation) => operation.promise))
         .then(() => 'completed');
-      if (await Promise.race([completed, timeout]) === 'timeout') {
+      const result = await Promise.race([completed, timeout]);
+      clearTimeout(timer);
+      if (result === 'timeout') {
         return { idle: false, timed_out: true, ...getStatus() };
       }
     }
@@ -59,6 +61,10 @@ export function createProcessLifecycle() {
     track,
     waitForIdle,
   };
+}
+
+export function trackAcceptedOperation(lifecycle, label, operation) {
+  return lifecycle.track(Promise.resolve().then(operation), label);
 }
 
 export const processLifecycle = createProcessLifecycle();

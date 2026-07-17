@@ -1,6 +1,6 @@
 # Ops Room Architecture
 
-Status: **Accepted — canonical**  
+Status: **Accepted — canonical**
 Updated: 2026-07-17
 
 This is the single authoritative product and runtime architecture for Ops Room. Obsidian notes and implementation plans are supporting history unless this document links them as an active decision.

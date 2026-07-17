@@ -1,7 +1,7 @@
 import { readFile, writeFile, rm, mkdir, readdir, appendFile } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { TASKS_DIR, STATE_DIR, LOCK_DIR, WORKSPACE_BASE, LOG_DIR, PROMPT_DIR } from './runtime-paths.mjs';
+import { TASKS_DIR, REVIEW_TASKS_DIR, STATE_DIR, LOCK_DIR, WORKSPACE_BASE, LOG_DIR, PROMPT_DIR } from './runtime-paths.mjs';
 
 const PROCESSED_TASKS_LOG = join(STATE_DIR, 'processed-tasks.log');
 
@@ -100,6 +100,7 @@ export async function fileExists(path) {
 
 export async function initDirs() {
   await ensureDir(TASKS_DIR);
+  await ensureDir(REVIEW_TASKS_DIR);
   await ensureDir(WORKSPACE_BASE);
   await ensureDir(LOG_DIR);
   await ensureDir(STATE_DIR);

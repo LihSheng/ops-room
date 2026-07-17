@@ -39,6 +39,7 @@ test('SIGTERM drains an idle server and exits cleanly', { skip: windows && 'POSI
       OPENAB_WEBHOOK_HOST: '127.0.0.1',
       OPENAB_WEBHOOK_PORT: String(port),
       OPS_ROOM_RELEASE_SHA: revision,
+      OPS_ROOM_REQUIRED_COMMANDS: '',
       OPS_ROOM_ISSUE_POLLING_ENABLED: 'false',
       OPS_ROOM_DATA_DIR: join(root, 'ops-room'),
       OPENAB_DATA_DIR: join(root, 'data'),

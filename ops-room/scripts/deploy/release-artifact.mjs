@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
+import { chmod, cp, link, mkdir, mkdtemp, readFile, readdir, rm, unlink, utimes, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
+import { createGzip } from 'node:zlib';
 
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
@@ -86,7 +88,38 @@ export async function verifyReleaseArtifact({ archivePath, checksumPath, expecte
   }
 }
 
-export async function buildReleaseArtifact({ sourceRoot, outputDir, commitSha, builtAt = new Date().toISOString() }) {
+async function sortedReleaseFiles(root, relative = '') {
+  const entries = await readdir(join(root, relative), { withFileTypes: true });
+  const files = [];
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const path = relative ? `${relative}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) files.push(...await sortedReleaseFiles(root, path));
+    else if (entry.isFile()) files.push(path);
+    else throw new Error(`Release staging contains unsupported entry: ${path}`);
+  }
+  return files;
+}
+
+async function normalizeReleaseMetadata(root, relative = '') {
+  const entries = await readdir(join(root, relative), { withFileTypes: true });
+  for (const entry of entries) {
+    const path = relative ? `${relative}/${entry.name}` : entry.name;
+    const absolutePath = join(root, path);
+    if (entry.isDirectory()) await normalizeReleaseMetadata(root, path);
+    await chmod(absolutePath, entry.isDirectory() ? 0o755 : 0o644);
+    await utimes(absolutePath, 0, 0);
+  }
+}
+
+async function writeChecksumOnce(checksumPath, checksum, archivePath) {
+  try {
+    await writeFile(checksumPath, `${checksum}  ${basename(archivePath)}\n`, { flag: 'wx' });
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+  }
+}
+
+export async function buildReleaseArtifact({ sourceRoot, outputDir, commitSha }) {
   const sha = validateReleaseSha(commitSha);
   const root = resolve(sourceRoot);
   const output = resolve(outputDir);
@@ -106,17 +139,36 @@ export async function buildReleaseArtifact({ sourceRoot, outputDir, commitSha, b
       schema: 'ops-room.release.v1',
       repository: 'LihSheng/ops-room',
       commit_sha: sha,
-      built_at: builtAt,
       package_version: packageJson.version,
       node_engine: packageJson.engines?.node || null,
     }, null, 2)}\n`);
+    await normalizeReleaseMetadata(releaseRoot);
 
     await mkdir(output, { recursive: true });
-    const temporaryArchive = join(output, `.ops-room-${sha}.${process.pid}.tmp.tar.gz`);
-    await execFileAsync('tar', ['-czf', temporaryArchive, '-C', releaseRoot, '.'], { maxBuffer: 10 * 1024 * 1024 });
-    await rename(temporaryArchive, archivePath);
+    const fileList = join(staging, 'release-files.txt');
+    await writeFile(fileList, `${(await sortedReleaseFiles(releaseRoot)).join('\n')}\n`);
+    const temporaryArchive = join(output, `.ops-room-${sha}.${process.pid}.${Date.now()}.tmp.tar.gz`);
+    const temporaryTar = join(staging, 'release.tar');
+    await execFileAsync('tar', [
+      '--format', 'ustar',
+      '-cf', temporaryTar, '-C', releaseRoot, '-T', fileList,
+    ], { maxBuffer: 10 * 1024 * 1024 });
+    await pipeline(
+      createReadStream(temporaryTar),
+      createGzip({ level: 9, mtime: 0 }),
+      createWriteStream(temporaryArchive, { flags: 'wx' }),
+    );
+    try {
+      await link(temporaryArchive, archivePath);
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    } finally {
+      await unlink(temporaryArchive).catch((error) => {
+        if (error?.code !== 'ENOENT') throw error;
+      });
+    }
     const checksum = await sha256File(archivePath);
-    await writeFile(checksumPath, `${checksum}  ${basename(archivePath)}\n`);
+    await writeChecksumOnce(checksumPath, checksum, archivePath);
     await verifyReleaseArtifact({ archivePath, checksumPath, expectedSha: sha });
     return { archivePath, checksumPath, checksum };
   } finally {

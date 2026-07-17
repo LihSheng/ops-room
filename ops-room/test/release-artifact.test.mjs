@@ -58,3 +58,23 @@ test('release path policy rejects secrets, runtime data, dependencies, and trave
     assert.throws(() => assertAllowedReleasePath(path));
   }
 });
+
+test('same commit produces one deterministic artifact and never overwrites it', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'ops-room-release-determinism-'));
+  const source = join(temp, 'source');
+  const firstOutput = join(temp, 'first');
+  const secondOutput = join(temp, 'second');
+  try {
+    await makeSource(source);
+    const first = await buildReleaseArtifact({ sourceRoot: source, outputDir: firstOutput, commitSha: SHA });
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const second = await buildReleaseArtifact({ sourceRoot: source, outputDir: secondOutput, commitSha: SHA });
+    assert.equal(first.checksum, second.checksum);
+
+    await writeFile(join(source, 'src', 'server', 'webhook.mjs'), 'console.log("changed");\n');
+    const repeated = await buildReleaseArtifact({ sourceRoot: source, outputDir: firstOutput, commitSha: SHA });
+    assert.equal(repeated.checksum, first.checksum);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});

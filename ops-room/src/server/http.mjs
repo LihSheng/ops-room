@@ -33,7 +33,7 @@ import { handleAgentsList } from '../routes/agents.mjs';
 import { handleOpenABInstances } from '../routes/openab-instances.mjs';
 import { handleStaticApp } from '../routes/static-app.mjs';
 import { sendJSON, verifyAuth, verifyOperatorAuth, parseBody } from '../routes/helpers.mjs';
-import { processLifecycle } from '../services/process-lifecycle.mjs';
+import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.mjs';
 
 const reviewStatus = createGitHubReviewStatusService({
   getCommitStatuses: async ({ sha, agent }) => getCommitStatuses(sha, agent),
@@ -634,15 +634,20 @@ const issuePollerPromise = ISSUE_POLLING_ENABLED ? processLifecycle.track(startI
   agentKeys: POLL_AGENTS,
   intervalMs: 30_000,
   signal: issuePollerAbort.signal,
-  pollAgent: (agentKey) => pollAgentIssues({
+  pollAgent: (agentKey, signal) => pollAgentIssues({
     agentKey,
     listOpenIssuesForAgent,
     ensureLabel,
     removeLabel,
     addLabel,
     addComment,
-    handleTask,
+    handleTask: (issueNumber, agentKey, issue) => trackAcceptedOperation(
+      processLifecycle,
+      `legacy-issue:${agentKey}#${issueNumber}`,
+      () => handleTask(issueNumber, agentKey, issue),
+    ),
     cancelTask,
+    signal,
   }),
 }), 'issue-poller') : Promise.resolve();
 issuePollerPromise.catch((e) => console.error('[server] poller fatal:', e.message));
@@ -688,8 +693,7 @@ async function shutdown(signal) {
 
     if (!drainResult.idle) {
       console.error(`[server] drain timed out with ${drainResult.in_flight} operation(s): ${drainResult.operations.join(', ')}`);
-      process.exitCode = 1;
-      return;
+      process.exit(1);
     }
 
     console.log('[server] drain complete');
@@ -698,5 +702,5 @@ async function shutdown(signal) {
   return shutdownPromise;
 }
 
-process.once('SIGTERM', () => { shutdown('SIGTERM').catch((error) => { console.error('[server] shutdown failed:', error); process.exitCode = 1; }); });
-process.once('SIGINT', () => { shutdown('SIGINT').catch((error) => { console.error('[server] shutdown failed:', error); process.exitCode = 1; }); });
+process.once('SIGTERM', () => { shutdown('SIGTERM').catch((error) => { console.error('[server] shutdown failed:', error); process.exit(1); }); });
+process.once('SIGINT', () => { shutdown('SIGINT').catch((error) => { console.error('[server] shutdown failed:', error); process.exit(1); }); });

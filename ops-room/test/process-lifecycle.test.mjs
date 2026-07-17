@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createProcessLifecycle } from '../src/services/process-lifecycle.mjs';
+import { createProcessLifecycle, trackAcceptedOperation } from '../src/services/process-lifecycle.mjs';
 
 test('process lifecycle drains tracked work and rejects new work', async () => {
   const lifecycle = createProcessLifecycle();
@@ -38,4 +38,23 @@ test('process lifecycle reports a bounded drain timeout', async () => {
   assert.equal(result.idle, false);
   assert.equal(result.timed_out, true);
   assert.equal(result.in_flight, 1);
+});
+
+test('work accepted before drain still executes and remains visible while draining', async () => {
+  const lifecycle = createProcessLifecycle();
+  let finish;
+  let executed = false;
+  const task = trackAcceptedOperation(lifecycle, 'legacy-issue:coder#42', async () => {
+    executed = true;
+    await new Promise((resolve) => { finish = resolve; });
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  lifecycle.beginDrain();
+  assert.equal(executed, true);
+  assert.deepEqual(lifecycle.getStatus().operations, ['legacy-issue:coder#42']);
+
+  finish();
+  await task;
+  assert.equal((await lifecycle.waitForIdle(100)).idle, true);
 });
