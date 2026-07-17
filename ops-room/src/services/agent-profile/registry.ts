@@ -1,6 +1,6 @@
 import { AGENT_PROFILES_DIR } from '../runtime-paths.js';
 import { loadAgentProfiles } from './loader.js';
-import { AgentProfile } from './schema.js';
+import type { AgentProfile } from './schema.js';
 
 let profiles = new Map<string, AgentProfile>();
 let initializedAt: string | null = null;
