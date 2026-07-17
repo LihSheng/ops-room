@@ -78,6 +78,19 @@ npm test
 
 Dashboard source lives in `ops-room/dashboard/`. Production output is generated in `ops-room/dist/dashboard/` and is served by the existing Node.js server with SPA route fallback and immutable caching for hashed assets.
 
+## Read-only Agent Profile APIs
+
+The following endpoints expose validated Git-backed profile policy from the in-memory registry initialized at startup:
+
+- `GET /api/agents/profiles` — list normalized public profiles in agent-ID order.
+- `GET /api/agents/profiles/:id` — return one public profile; unknown IDs return `404` with `agent_profile_not_found`, while malformed IDs return `400`.
+- `GET /api/skills` — list deduplicated skill keys and the sorted agents that declare them.
+- `GET /api/memory-spaces` — list declared memory scope strings with sorted readers and writers.
+
+These APIs are read-only and remain available when the operator mutation API is disabled. Responses expose only profile identity, version, mission, personality, runtime backend reference, skills, declared memory scopes, allowed repositories, and enabled status. They do not expose container or service bindings, images, data directories, source JSON paths, environment variables, credentials, process details, or mutable desired state.
+
+Skill and memory-space catalogs are derived only from validated in-memory profiles. The server does not inspect, enumerate, verify, read, or write the Obsidian vault when serving these endpoints.
+
 ## Ops Room Dashboard
 
 Ops Room includes a read-only operational dashboard for the OpenAB fleet.
