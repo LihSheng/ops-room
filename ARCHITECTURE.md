@@ -18,15 +18,16 @@ Existing GitHub review, fix, lease-fencing, effect-ledger, and reconciliation be
 
 ## Current Goal
 
-Deliver a secure, reliable, read-only production control plane with deterministic manual deployment before adding lifecycle or configuration mutations.
+Deliver a secure, reliable production control plane with deterministic deployment, audited mutations, and Git-backed read-only agent policy before adding lifecycle or configuration editing.
 
 Completion requires:
 
 - CI committed and configured as a required `main` check.
-- One normalized agent definition source exposing desired and observed state.
+- One normalized runtime definition source exposing desired and observed state.
+- One versioned agent profile source exposing mission, behavior, skills, memory policy, and repository scope.
 - No whole-vault agent mounts; only curated read-only knowledge mounts.
 - Loopback-by-default API binding or an equivalently verified network/auth boundary.
-- Health output containing deployed commit SHA, lifecycle state, and critical local dependency status.
+- Health output containing deployed commit SHA, lifecycle state, profile validation, and critical local dependency status.
 - Immutable, commit-addressed host-systemd releases containing no secrets or runtime data.
 - Tested manual activation and rollback.
 - SIGTERM stops intake, drains tracked work within a bound, and leaves durable review/fix work recoverable.
@@ -35,10 +36,10 @@ Completion requires:
 
 | Concern | Authority now |
 |---|---|
-| Agent definitions, roles, runtime bindings | `ops-room/src/services/agent-definitions.ts` |
+| Agent runtime definitions, roles, and bindings | `ops-room/src/services/agent-definitions.ts` |
+| Agent mission, personality, skills, memory policy, and repository scope | `config/agent-profiles/*.json` |
 | OpenAB agent configuration | Git-managed `config/agents/*.toml` deployed outside release artifacts |
-| Personality and skill packages | Git/filesystem; database migration deferred |
-| Task, effect, lease, and audit-like workflow state | Persistent paths under `data/ops-room/` |
+| Task, effect, lease, audit, and idempotency state | Persistent paths under `data/ops-room/` |
 | Runtime observation | Docker/OpenAB inspection |
 | Release identity | `RELEASE.json` plus external SHA-256 checksum |
 | Secrets | Protected environment/secret files outside Git and release directories |
@@ -52,14 +53,28 @@ PostgreSQL is not currently authoritative. Introducing it requires a separate mi
 - Operator mutation APIs are disabled by default and use a credential separate from webhook ingress when enabled.
 - Authentication, operator identity, RBAC, audit records, confirmation, idempotency, and secret references must precede new control-plane mutations.
 - Agent knowledge is mounted from `OPENAB_AGENT_KNOWLEDGE_DIR` read-only. This directory must be a curated publication target, never the whole Obsidian vault.
+- Agent profiles contain policy metadata only. They must not contain tokens, private keys, provider credentials, or unrestricted filesystem paths.
 
 ## Agent Model
 
-An agent is a logical identity independent from its current container. The registry exposes:
+An agent is a logical identity independent from its current container.
+
+`agent-definitions.ts` owns operational bindings:
 
 - desired state: currently `unmanaged` until an audited lifecycle controller exists;
 - observed state: current Docker/OpenAB runtime inspection;
 - role, backend, service, container, config, data binding, and polling intent.
+
+`config/agent-profiles/*.json` owns versioned policy metadata:
+
+- mission and communication style;
+- decision policies and constraints;
+- declared skills;
+- curated memory read/write scopes;
+- allowed repositories;
+- enabled state and profile version.
+
+Profiles are validated before the HTTP server starts. A missing, malformed, unsupported, duplicate, or runtime-inconsistent profile blocks startup. Runtime bindings remain authoritative in `agent-definitions.ts`; profiles may reference but must not redefine container or service wiring.
 
 Hardcoded workflow names may assign current roles, but future routing should select by capability and policy rather than treating a personified name as a capability.
 
@@ -86,14 +101,15 @@ Allowed artifact contents:
 
 ```text
 RELEASE.json
+config/agent-profiles/*.json
 ops-room/package.json
 ops-room/src/**
 ops-room/dist/dashboard/**
 ```
 
-Forbidden: `.env`, secrets, `data/`, logs, workspaces, tests, source dashboard, and `node_modules`.
+Forbidden: `.env`, secrets, `data/`, logs, workspaces, tests, source dashboard, non-JSON profile files, and `node_modules`.
 
-The archive checksum is external; `RELEASE.json` never self-hashes its containing archive. Manual activation verifies the allowlist, checksum, manifest SHA, fixed release path, systemd restart, and SHA-aware readiness. Failure restores the previous symlink and verifies previous-release health.
+The archive checksum is external; `RELEASE.json` never self-hashes its containing archive. Manual activation verifies the allowlist, checksum, manifest SHA, fixed release path, systemd restart, profile validation, and SHA-aware readiness. Failure restores the previous symlink and verifies previous-release health.
 
 Production layout:
 
@@ -116,13 +132,15 @@ Automatic deployment remains deferred until manual activation, active-work drain
 1. Secure read-only foundation and deterministic manual deployment.
 2. Verify several manual releases and rollback drills.
 3. Add one audited, idempotent operator mutation.
-4. Expand personality/skill materialization and curated memory policy.
-5. Consider lifecycle control and database-backed operational indexing only after demonstrated need.
+4. Add Git-backed agent profiles and read-only policy visibility.
+5. Expand skill materialization and curated memory management.
+6. Consider lifecycle control and database-backed operational indexing only after demonstrated need.
 
 ## Explicit Non-Goals Now
 
 - PostgreSQL migration
-- config editing
+- profile or config editing
+- skill materialization
 - general workflow engine
 - full memory service or vector database
 - dynamic unrestricted Docker control

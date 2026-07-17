@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
-// Thin entrypoint — composes and starts the HTTP server.
-// All logic has been moved to modules under services/, workflows/, and routes/.
-import './http.js';
+// Thin entrypoint — validates durable configuration before composing the HTTP server.
+import { initializeAgentProfileRegistry } from '../services/agent-profile/registry.js';
+
+await initializeAgentProfileRegistry();
+await import('./http.js');

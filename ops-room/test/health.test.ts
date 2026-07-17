@@ -8,20 +8,26 @@ import { handleHealth } from '../src/routes/health.js';
 import { createProcessLifecycle } from '../src/services/process-lifecycle.js';
 import { commandExists } from '../src/workflows/github-code.js';
 
+const healthyProfiles = () => ({
+  status: 'ok', required: true, count: 4, initialized_at: '2026-07-17T00:00:00.000Z', schema_version: 1,
+});
+
 test('health reports release revision and critical dependency readiness', async () => {
   const health = await handleHealth({
     commandExistsFn: async () => true,
     directoryCheckFn: async () => ({ status: 'ok', required: true }),
     lifecycle: createProcessLifecycle(),
+    profileStatusFn: healthyProfiles,
   });
 
   assert.equal(health.status, 'ok');
   assert.equal(health.ready, true);
   assert.ok(health.version);
   assert.ok(health.revision);
+  assert.equal(health.profiles.count, 4);
   assert.deepEqual(Object.keys(health.dependencies), [
-    'task_store', 'review_task_store', 'state_store', 'log_store', 'audit_store',
-    'idempotency_store', 'workspace_store', 'release_identity', 'command_git', 'command_gh',
+    'task_store', 'review_task_store', 'state_store', 'log_store', 'audit_store', 'idempotency_store',
+    'workspace_store', 'agent_profiles', 'release_identity', 'command_git', 'command_gh',
   ]);
 });
 
@@ -35,6 +41,7 @@ test('health becomes non-ready while draining or when a critical store fails', a
       required: true,
     }),
     lifecycle,
+    profileStatusFn: healthyProfiles,
   });
 
   assert.equal(health.status, 'draining');
@@ -42,6 +49,18 @@ test('health becomes non-ready while draining or when a critical store fails', a
   assert.equal(health.lifecycle.state, 'draining');
   assert.equal(health.dependencies.task_store.status, 'error');
   assert.equal(health.dependencies.command_git.status, 'error');
+});
+
+test('invalid profile registry makes health non-ready', async () => {
+  const health = await handleHealth({
+    commandExistsFn: async () => true,
+    directoryCheckFn: async () => ({ status: 'ok', required: true }),
+    lifecycle: createProcessLifecycle(),
+    profileStatusFn: () => ({ status: 'error', required: true, count: 0, initialized_at: null, schema_version: 1 }),
+  });
+
+  assert.equal(health.ready, false);
+  assert.equal(health.dependencies.agent_profiles.status, 'error');
 });
 
 test('health checks configured critical commands beyond the default report set', async () => {
@@ -53,6 +72,7 @@ test('health checks configured critical commands beyond the default report set',
     },
     directoryCheckFn: async () => ({ status: 'ok', required: true }),
     lifecycle: createProcessLifecycle(),
+    profileStatusFn: healthyProfiles,
     requiredCommands: ['git', 'gh', 'docker', 'codex'],
   });
 
@@ -78,6 +98,7 @@ test('invalid packaged release identity makes health non-ready', async () => {
     commandExistsFn: async () => true,
     directoryCheckFn: async () => ({ status: 'ok', required: true }),
     lifecycle: createProcessLifecycle(),
+    profileStatusFn: healthyProfiles,
     releaseInfoFn: async () => { throw new Error('invalid manifest'); },
   });
 

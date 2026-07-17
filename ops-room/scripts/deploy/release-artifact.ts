@@ -30,13 +30,22 @@ export function normalizeArchivePath(value) {
 
 export function assertAllowedReleasePath(value) {
   const path = normalizeArchivePath(value);
-  if (path === 'RELEASE.json' || path === 'ops-room' || path === 'ops-room/src' || path === 'ops-room/dist' || path === 'ops-room/dist/dashboard') {
+  if (
+    path === 'RELEASE.json' || path === 'ops-room' || path === 'ops-room/src' || path === 'ops-room/dist' ||
+    path === 'ops-room/dist/dashboard' || path === 'config' || path === 'config/agent-profiles'
+  ) {
     return path;
   }
-  if (path === 'ops-room/package.json' || path.startsWith('ops-room/src/') || path.startsWith('ops-room/dist/dashboard/')) {
+  if (
+    path === 'ops-room/package.json' || path.startsWith('ops-room/src/') || path.startsWith('ops-room/dist/dashboard/') ||
+    path.startsWith('config/agent-profiles/')
+  ) {
     const segments = path.split('/');
     if (segments.some((segment) => FORBIDDEN_SEGMENTS.has(segment) && !['dashboard'].includes(segment))) {
       throw new Error(`Forbidden release content: ${path}`);
+    }
+    if (path.startsWith('config/agent-profiles/') && !path.endsWith('.json')) {
+      throw new Error(`Unexpected agent profile content: ${path}`);
     }
     return path;
   }
@@ -72,7 +81,11 @@ export async function verifyReleaseArtifact({ archivePath, checksumPath, expecte
 
   const entries = await archiveEntries(archivePath);
   await assertRegularArchiveEntries(archivePath);
-  for (const required of ['RELEASE.json', 'ops-room/package.json', 'ops-room/src/server/webhook.js', 'ops-room/dist/dashboard/index.html']) {
+  for (const required of [
+    'RELEASE.json', 'ops-room/package.json', 'ops-room/src/server/webhook.js', 'ops-room/dist/dashboard/index.html',
+    'config/agent-profiles/professor.json', 'config/agent-profiles/berlin.json',
+    'config/agent-profiles/tokyo.json', 'config/agent-profiles/gemini.json',
+  ]) {
     if (!entries.includes(required)) throw new Error(`Release is missing required file: ${required}`);
   }
 
@@ -134,6 +147,7 @@ export async function buildReleaseArtifact({ sourceRoot, outputDir, commitSha })
     await cp(join(root, 'src'), join(releaseOpsRoom, 'src'), { recursive: true });
     await cp(join(root, 'dist', 'dashboard'), join(releaseOpsRoom, 'dist', 'dashboard'), { recursive: true });
     await cp(join(root, 'package.json'), join(releaseOpsRoom, 'package.json'));
+    await cp(join(root, '..', 'config', 'agent-profiles'), join(releaseRoot, 'config', 'agent-profiles'), { recursive: true });
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf-8'));
     await writeFile(join(releaseRoot, 'RELEASE.json'), `${JSON.stringify({
       schema: 'ops-room.release.v1',

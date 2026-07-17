@@ -3,10 +3,11 @@ import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import {
   TASKS_DIR, REVIEW_TASKS_DIR, STATE_DIR, LOG_DIR, WORKSPACE_BASE, AUDIT_DIR, IDEMPOTENCY_DIR,
-  OPENAB_SERVER_VERSION, REQUIRED_COMMANDS
+  AGENT_PROFILES_DIR, OPENAB_SERVER_VERSION, REQUIRED_COMMANDS
 } from '../services/runtime-paths.js';
 import { processLifecycle } from '../services/process-lifecycle.js';
 import { readReleaseInfo } from '../services/release-info.js';
+import { getAgentProfileRegistryStatus } from '../services/agent-profile/registry.js';
 
 let cachedCommandStatus = null;
 let cachedAt = 0;
@@ -46,6 +47,7 @@ export async function handleHealth({
   directoryCheckFn = checkDirectory,
   lifecycle = processLifecycle,
   releaseInfoFn = readReleaseInfo,
+  profileStatusFn = getAgentProfileRegistryStatus,
   requiredCommands = REQUIRED_COMMANDS,
 } = {}) {
   let releaseInfo;
@@ -58,6 +60,7 @@ export async function handleHealth({
     releaseIdentity = { status: 'error', required: true, error: error?.message || 'invalid release manifest' };
   }
 
+  const profileRegistry = profileStatusFn();
   const commands = await getCommandStatus(commandExistsFn, requiredCommands);
   const dependencyEntries = await Promise.all([
     ['task_store', directoryCheckFn(TASKS_DIR)],
@@ -67,6 +70,7 @@ export async function handleHealth({
     ['audit_store', directoryCheckFn(AUDIT_DIR)],
     ['idempotency_store', directoryCheckFn(IDEMPOTENCY_DIR)],
     ['workspace_store', directoryCheckFn(WORKSPACE_BASE)],
+    ['agent_profiles', profileRegistry],
     ['release_identity', releaseIdentity],
     ...requiredCommands.map((command) => [
       `command_${command}`,
@@ -86,6 +90,7 @@ export async function handleHealth({
     revision: releaseInfo.commit_sha,
     release: releaseInfo,
     lifecycle: lifecycleStatus,
+    profiles: profileRegistry,
     dependencies,
     paths: {
       tasks_dir: TASKS_DIR,
@@ -93,6 +98,7 @@ export async function handleHealth({
       logs_dir: LOG_DIR,
       audit_dir: AUDIT_DIR,
       idempotency_dir: IDEMPOTENCY_DIR,
+      agent_profiles_dir: AGENT_PROFILES_DIR,
       workspaces_dir: WORKSPACE_BASE,
     },
     commands,
