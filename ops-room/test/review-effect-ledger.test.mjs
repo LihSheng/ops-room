@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,8 @@ import { claimEffect, completeEffect, resolveAmbiguousEffect, reclaimEffect } fr
 
 /** Seed a fake task file so assertCurrentLease can find it. */
 async function seedTask(dir, taskId, lease) {
-  await writeFile(join(dir, `${taskId}.json`), JSON.stringify({
+  const digest = createHash('sha256').update(taskId).digest('hex');
+  await writeFile(join(dir, `task-${digest}.json`), JSON.stringify({
     id: taskId,
     state: 'FIXING',
     lease: lease ? { lease_id: lease.lease_id, lease_epoch: lease.lease_epoch } : null,

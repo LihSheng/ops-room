@@ -56,6 +56,8 @@ data/ops-room/state/*
 data/ops-room/tasks/*
 !data/ops-room/tasks/.gitkeep
 
+data/ops-room/review-tasks/
+
 # Backward compatibility: old Ops Room runtime location.
 ops-room/data/
 !ops-room/data/.gitkeep

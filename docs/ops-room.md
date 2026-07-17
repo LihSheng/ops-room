@@ -18,7 +18,7 @@ Detached start without a wrapper script:
 nohup npm start >> ../data/ops-room/logs/server.log 2>&1 &
 ```
 
-`npm start` uses Node `--env-file=../.env`, so the repo-level `.env` is loaded directly by Node. `OPENAB_WEBHOOK_SECRET` is required; the server refuses to start if it is missing.
+`npm run bootstrap` and `npm start` both load the repo-level `.env`. Bootstrap reports a startup-blocking error when `OPENAB_WEBHOOK_SECRET` is missing, and the server also refuses to start without it. `OPENAB_WEBHOOK_PORT` defaults to `7381`.
 
 On the VPS, the preferred production-style startup is the host systemd service:
 

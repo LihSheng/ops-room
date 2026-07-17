@@ -1,47 +1,32 @@
-import { readdir, mkdir, open, rm, readFile } from 'node:fs/promises';
+import { mkdir, open, rm, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import {
   countActiveTasks,
   checkConcurrency,
-  readTask,
   claimTask,
   transitionTask,
   recoverStaleTask,
+  scanReviewTasks,
 } from './review-task-store.mjs';
 
 const ACTIVE_STATES = new Set(['CLAIMED', 'RUNNING', 'FIXING']);
 const DISPATCHABLE_STATES = new Set(['QUEUED', 'FIX_QUEUED']);
 
 export async function reconcileReviewTasks({ dir, now, staleMinutes = 30, retryLimit = 3 }) {
-  let names;
-  try {
-    names = await readdir(dir);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return { scanned: 0, recovered: [], re_dispatched: [] };
-    throw error;
-  }
-  const ids = names.filter((name) => name.endsWith('.json')).map((name) => name.slice(0, -5));
+  const { scanned, tasks, corrupt } = await scanReviewTasks({ dir });
   const recovered = [];
   const reDispatched = [];
-  const corrupt = [];
-  for (const id of ids) {
-    let task;
-    try {
-      task = await readTask({ dir, id });
-    } catch (error) {
-      if (error instanceof SyntaxError) { corrupt.push(id); continue; }
-      throw error;
-    }
-    if (!task || !ACTIVE_STATES.has(task.state)) continue;
-    const result = await recoverStaleTask({ dir, id, now, staleMinutes, retryLimit });
+  for (const task of tasks) {
+    if (!ACTIVE_STATES.has(task.state)) continue;
+    const result = await recoverStaleTask({ dir, id: task.id, now, staleMinutes, retryLimit });
     if (result.recovered) {
-      recovered.push(id);
-      if (result.re_dispatched) reDispatched.push(id);
+      recovered.push(task.id);
+      if (result.re_dispatched) reDispatched.push(task.id);
     }
   }
-  return { scanned: ids.length, recovered, re_dispatched: reDispatched, corrupt };
+  return { scanned, recovered, re_dispatched: reDispatched, corrupt };
 }
 
 /**
@@ -123,24 +108,10 @@ async function releaseSlotLock(result) {
  * operator retry / resume.
  */
 export async function dispatchEligibleTasks({ dir, instanceId }) {
-  let names;
-  try {
-    names = await readdir(dir);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return { dispatched: 0, tasks: [] };
-    throw error;
-  }
-  const ids = names.filter((name) => name.endsWith('.json')).map((name) => name.slice(0, -5));
-
+  const { tasks } = await scanReviewTasks({ dir });
   const dispatched = [];
-  for (const id of ids) {
-    let task;
-    try {
-      task = await readTask({ dir, id });
-    } catch {
-      continue; // skip corrupt
-    }
-    if (!task || !DISPATCHABLE_STATES.has(task.state)) continue;
+  for (const task of tasks) {
+    if (!DISPATCHABLE_STATES.has(task.state)) continue;
 
     // Slot reservation prevents two processes from both seeing capacity and
     // claiming beyond the limit.  Locks are acquired in hierarchy: global →

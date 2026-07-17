@@ -36,7 +36,6 @@ cp config/agents/gemini.example.toml config/agents/gemini.toml
 cp config/agents/opencode-1.example.toml config/agents/opencode-1.toml
 cp config/agents/opencode-2.example.toml config/agents/opencode-2.toml
 cp config/agents/opencode-professor.example.toml config/agents/opencode-professor.toml
-cp config/harness/ops-room.example.toml config/harness/ops-room.local.toml
 
 # 4. Install dependencies and build the SPA
 cd ops-room
@@ -47,7 +46,9 @@ npm run bootstrap
 npm start
 ```
 
-`npm install` runs the dashboard production build through the package `prepare` script. `npm start` loads `../.env` via Node's `--env-file` support and requires `OPENAB_WEBHOOK_SECRET` to be set explicitly.
+`npm install` runs the dashboard production build through the package `prepare` script. `npm run bootstrap` loads the repo-level `.env` and blocks startup when `OPENAB_WEBHOOK_SECRET` is missing. `npm start` loads the same file via Node's `--env-file` support. `OPENAB_WEBHOOK_PORT` defaults to `7381`.
+
+`config/harness/ops-room.example.toml` documents the intended harness configuration shape. The current runtime does not load that TOML file; active server settings come from environment variables.
 
 Node.js 20.19 or newer is required by the Vite build toolchain.
 

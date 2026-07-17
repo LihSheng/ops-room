@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,9 +25,10 @@ function deps(overrides = {}) {
 
 const MOCK_LEASE = { lease_id: 'lease-test', lease_epoch: 1 };
 
-/** Create a task file at the path where readTask expects it: dir/{id}.json */
+/** Create a task file at the portable path where readTask expects it. */
 async function seedTaskFile(dir, taskId, lease) {
-  await writeFile(join(dir, `${taskId}.json`), JSON.stringify({
+  const digest = createHash('sha256').update(taskId).digest('hex');
+  await writeFile(join(dir, `task-${digest}.json`), JSON.stringify({
     id: taskId,
     state: 'FIXING',
     lease: { lease_id: lease.lease_id, lease_epoch: lease.lease_epoch },

@@ -231,7 +231,7 @@ function DashboardPage({ openAgent, openLogs }: {
         <MetricCard label="Control plane" value={data.health.status || 'unknown'} helper={`Uptime ${duration(data.health.uptime_seconds)} · ${data.health.version || 'version unknown'}`} icon={<IconServer size={20} />} color={data.health.status === 'ok' ? 'teal' : 'orange'} />
       </SimpleGrid>
 
-      <Grid gutter="lg">
+      <Grid gap="lg">
         <Grid.Col span={{ base: 12, lg: 8 }}>
           <Paper withBorder p="lg" h="100%">
             <SectionHeading title="Work in progress" description="The most recent tasks across all connected agents." action={<Button variant="subtle" size="compact-sm" rightSection={<IconChevronRight size={14} />} onClick={() => navigate('/tasks')}>All tasks</Button>} />
