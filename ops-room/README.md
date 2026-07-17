@@ -33,10 +33,10 @@ sudo systemctl start openab-ops-room
 ```
 ops-room/
 ├── src/
-│   ├── server/           → webhook.mjs (entry), http.mjs (server + pollers)
-│   ├── workflows/        → github-code.mjs, pr-review.mjs, auto-fix.mjs
-│   ├── services/         → github.mjs, runtime-paths.mjs, logs.mjs
-│   └── lib/              → config.mjs, task-routing.mjs, github-ops.mjs
+│   ├── server/           → webhook.ts (entry), http.ts (server + pollers)
+│   ├── workflows/        → github-code.ts, pr-review.ts, auto-fix.ts
+│   ├── services/         → github.ts, runtime-paths.ts, logs.ts
+│   └── lib/              → config.ts, task-routing.ts, github-ops.ts
 ├── docs/
 │   └── SETUP.md          → Full deployment guide
 └── package.json

@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": ".",
+    "allowJs": false,
+    "checkJs": false,
+    "strict": false,
+    "noImplicitAny": false,
+    "noCheck": true,
+    "useUnknownInCatchVariables": false,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "declaration": false,
+    "newLine": "lf"
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"],
+  "exclude": ["dashboard", "dist", "node_modules"]
+}

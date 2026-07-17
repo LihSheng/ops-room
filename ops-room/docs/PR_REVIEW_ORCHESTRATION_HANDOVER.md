@@ -57,24 +57,24 @@ The feature branch is pushed to origin.
 ### Canonical review control plane
 
 - Durable task store:
-  - `src/services/review-task-store.mjs`
+  - `src/services/review-task-store.ts`
   - schema: `ops-room.review-task.v2`
   - deterministic task identity includes repository, PR, reviewed SHA, agent, and mode.
   - atomic creation/claims, state transitions, leases, renewal, cancellation, stale detection/recovery, task list/detail access.
 - Canonical ingress controller:
-  - `src/workflows/pr-review-controller.mjs`
+  - `src/workflows/pr-review-controller.ts`
   - validates current PR head before dispatch.
   - stale requested SHA becomes `SUPERSEDED`, with no model dispatch/status effect.
 - Webhook ingress routes through the controller:
-  - `src/routes/webhook-routes.mjs`
-  - `src/server/http.mjs`
+  - `src/routes/webhook-routes.ts`
+  - `src/server/http.ts`
 - Legacy direct review producers/poller paths were disabled earlier to avoid bypassing canonical task identity.
 
 ### Review safety
 
 - Structured reviewer JSON validation:
-  - `src/workflows/review-result.mjs`
-  - `src/workflows/pr-review.mjs`
+  - `src/workflows/review-result.ts`
+  - `src/workflows/pr-review.ts`
 - The review workflow retries malformed model JSON once and only renders a validated result.
 - Stale-SHA check occurs after PR context retrieval and immediately before review posting.
 - Cooperative cancellation check occurs immediately before the review effect.
@@ -83,10 +83,10 @@ The feature branch is pushed to origin.
 ### Policy and fix children
 
 - Auto-fix policy:
-  - `src/services/review-policy.mjs`
+  - `src/services/review-policy.ts`
   - requires `auto-fix`, `allow_auto_fix`, trusted source, same-repository push capability, and only safe/non-critical/non-ambiguous findings.
 - SHA-bound child task creator:
-  - `src/workflows/fix-task-controller.mjs`
+  - `src/workflows/fix-task-controller.ts`
   - child identity is parent-linked and SHA-specific.
   - immutable `review_result`, selected `fix_agent`, and head ref are persisted on the child.
 - Parent `REQUEST_CHANGES` creates/deduplicates the child task; it does not recursively run the legacy fix loop.
@@ -94,10 +94,10 @@ The feature branch is pushed to origin.
 ### Fix execution path
 
 - Child lifecycle executor:
-  - `src/workflows/fix-child-executor.mjs`
+  - `src/workflows/fix-child-executor.ts`
   - atomically claims child tasks and persists terminal outcomes.
 - Fence-aware worker:
-  - `src/workflows/fix-worker.mjs`
+  - `src/workflows/fix-worker.ts`
   - validates current head before workspace preparation and immediately before push;
   - checks durable cancellation before applying/pushing;
   - renews active lease and runs a one-minute heartbeat while workspace/model work runs;
@@ -105,23 +105,23 @@ The feature branch is pushed to origin.
   - no source change → `NEEDS_HUMAN`;
   - successful push → `FIX_PUSHED` with actual new SHA.
 - Concrete runtime adapter:
-  - `src/workflows/fix-runtime.mjs`
+  - `src/workflows/fix-runtime.ts`
   - uses the legacy workspace setup as a helper and makes structured-review-based AI file changes;
   - rejects path traversal, `.git`, environment/secret, and private-key paths;
   - pushes with force-with-lease.
-- `src/server/http.mjs` directly dispatches a newly-created fix child using `setImmediate`; it does not rely on an assistant cron.
-- Legacy `src/workflows/auto-fix.mjs` is now a compatibility implementation helper and has guaranteed cleanup, but it still remains in the repository and must be fully retired as an independent execution authority.
+- `src/server/http.ts` directly dispatches a newly-created fix child using `setImmediate`; it does not rely on an assistant cron.
+- Legacy `src/workflows/auto-fix.ts` is now a compatibility implementation helper and has guaranteed cleanup, but it still remains in the repository and must be fully retired as an independent execution authority.
 
 ### Durable GitHub effects
 
 File-backed effect ledger:
 
-- `src/services/review-effect-ledger.mjs`
+- `src/services/review-effect-ledger.ts`
 
 Currently guards:
 
-1. `github_review` effects in `src/workflows/pr-review.mjs`.
-2. `github_commit_status` effects in `src/services/github-review-status.mjs`.
+1. `github_review` effects in `src/workflows/pr-review.ts`.
+2. `github_commit_status` effects in `src/services/github-review-status.ts`.
 3. `git_push` effects immediately before the fix worker pushes.
 
 Important behavior:
@@ -133,8 +133,8 @@ Important behavior:
 ### Operator controls and recovery
 
 - Stale task reconciliation:
-  - `src/services/review-reconciler.mjs`
-  - wired at server startup and every 60 seconds in `src/server/http.mjs`.
+  - `src/services/review-reconciler.ts`
+  - wired at server startup and every 60 seconds in `src/server/http.ts`.
   - isolates corrupt task JSON instead of stopping healthy reconciliation.
 - APIs (bearer-authenticated):
   ```text
@@ -167,8 +167,8 @@ Change:
 
 Inspect and change as needed:
 
-- `src/workflows/auto-fix.mjs`
-- `src/services/review-loop-store.mjs`
+- `src/workflows/auto-fix.ts`
+- `src/services/review-loop-store.ts`
 - remaining imports/call sites of `runAutoFixWorkflow`, review-loop helpers, and legacy polling paths.
 
 Acceptance criteria:

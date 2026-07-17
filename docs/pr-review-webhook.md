@@ -55,7 +55,7 @@ GitHub PR comment
 
 ## Current implementation
 
-`ops-room/src/server/webhook.mjs` now accepts the payload above directly on `POST /webhook`.
+`ops-room/src/server/webhook.js` now accepts the payload above directly on `POST /webhook`.
 The current server still enforces a single configured repository via `OPENAB_REPO`.
 
 For PR review payloads (any webhook payload with `pr`):

@@ -35,7 +35,7 @@ Completion requires:
 
 | Concern | Authority now |
 |---|---|
-| Agent definitions, roles, runtime bindings | `ops-room/src/services/agent-definitions.mjs` |
+| Agent definitions, roles, runtime bindings | `ops-room/src/services/agent-definitions.ts` |
 | OpenAB agent configuration | Git-managed `config/agents/*.toml` deployed outside release artifacts |
 | Personality and skill packages | Git/filesystem; database migration deferred |
 | Task, effect, lease, and audit-like workflow state | Persistent paths under `data/ops-room/` |

@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "typeRoots": ["./ops-room/node_modules/@types"],
+    "noCheck": true,
+    "sourceMap": false
+  },
+  "include": ["scripts/github-app-token.ts"]
+}

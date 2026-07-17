@@ -16,7 +16,7 @@ service, and connecting the OpenAB agent containers.
 GitHub                                Your Server
 ┌────────────────┐                     ┌────────────────────────────────┐
 │ GitHub App     │◄──webhooks─────────│  Ops Room (systemd service)    │
-│ (org/openab)   │                     │  src/server/webhook.mjs       │
+│ (org/openab)   │                     │  src/server/webhook.ts       │
 │                │───poll issues──────▶│  port 7381                    │
 │                │                     │                                │
 │                │                     │  ┌─ Pollers ────────────────┐  │
@@ -120,25 +120,25 @@ openab-multi-agent/
 ├── ops-room/                          # Main Node.js service
 │   ├── src/
 │   │   ├── server/
-│   │   │   ├── webhook.mjs            # Entry point (imports http.mjs)
-│   │   │   ├── http.mjs               # HTTP server + all pollers
-│   │   │   ├── pr-review-payload.mjs  # OpenAB command parsing, prompt building
+│   │   │   ├── webhook.ts            # Entry point (imports http.ts)
+│   │   │   ├── http.ts               # HTTP server + all pollers
+│   │   │   ├── pr-review-payload.ts  # OpenAB command parsing, prompt building
 │   │   │   └── routes/
-│   │   │       └── webhook-routes.mjs # Incoming webhook handler
+│   │   │       └── webhook-routes.ts # Incoming webhook handler
 │   │   ├── workflows/
-│   │   │   ├── github-code.mjs        # Coding workflow (clone, run agent, create PR)
-│   │   │   ├── pr-review.mjs          # PR review + auto-fix loop wiring
-│   │   │   ├── chat-response.mjs      # Issue chat (Q&A) workflow
-│   │   │   └── auto-fix.mjs           # Auto-fix on existing PR branch
+│   │   │   ├── github-code.ts        # Coding workflow (clone, run agent, create PR)
+│   │   │   ├── pr-review.ts          # PR review + auto-fix loop wiring
+│   │   │   ├── chat-response.ts      # Issue chat (Q&A) workflow
+│   │   │   └── auto-fix.ts           # Auto-fix on existing PR branch
 │   │   ├── services/
-│   │   │   ├── github.mjs             # GitHub API helpers (ghApi, addComment, labels)
-│   │   │   ├── runtime-paths.mjs      # Paths, API endpoint configs
-│   │   │   ├── logs.mjs               # Task log persistence
-│   │   │   └── review-loop-store.mjs  # Review loop iteration tracking
+│   │   │   ├── github.ts             # GitHub API helpers (ghApi, addComment, labels)
+│   │   │   ├── runtime-paths.ts      # Paths, API endpoint configs
+│   │   │   ├── logs.ts               # Task log persistence
+│   │   │   └── review-loop-store.ts  # Review loop iteration tracking
 │   │   └── lib/
-│   │       ├── config.mjs             # Labels, agent names, bot users
-│   │       ├── github-ops.mjs         # Lower-level GitHub operations
-│   │       └── task-routing.mjs       # Issue routing logic
+│   │       ├── config.ts             # Labels, agent names, bot users
+│   │       ├── github-ops.ts         # Lower-level GitHub operations
+│   │       └── task-routing.ts       # Issue routing logic
 │   ├── docs/                          # Documentation
 │   │   └── SETUP.md                   # This file
 │   └── package.json
@@ -159,7 +159,7 @@ openab-multi-agent/
 │       └── review-loop/               # Loop iteration state
 ├── scripts/
 │   ├── entrypoint.sh                  # Docker container entrypoint
-│   └── github-app-token.mjs           # GitHub App token generator
+│   └── github-app-token.ts           # GitHub App token generator
 ├── secrets/                           # NOT committed — create manually
 │   ├── professor-key.pem
 │   ├── berlin-key.pem
@@ -357,7 +357,7 @@ User=ubuntu
 WorkingDirectory=/opt/ops-room/current/ops-room
 Environment=PATH=/opt/ops-room/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=/etc/openab/ops-room.env
-ExecStart=/opt/ops-room/bin/node src/server/webhook.mjs
+ExecStart=/opt/ops-room/bin/node src/server/webhook.js
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60
@@ -547,7 +547,7 @@ The Ops Room serves on port 7381:
 |---------|-------------|-----|
 | **Review is empty** | AI reasoning exhausts token budget | Increase `OPENCODE_MAX_TOKENS` (default 16384). Retry mechanism handles this automatically. |
 | **Auto-fix fails: "container not found"** | Docker container stopped | `docker ps` to check. `docker compose up -d opencode-1` |
-| **Fix written to wrong file path** | AI prompt lacked diff context | Ensure PR diff is included in fix prompt (auto-fix.mjs does this since c66155b) |
+| **Fix written to wrong file path** | AI prompt lacked diff context | Ensure PR diff is included in fix prompt (auto-fix.ts does this since c66155b) |
 | **Git push fails** | Container `gh` auth expired | `docker exec openab-opencode-1 gh auth status` |
 | **Webhook 401** | `OPENAB_WEBHOOK_SECRET` mismatch | Must match between GitHub App and `.env` |
 | **Issue not picked up by poller** | Missing label | Issue must have `openab/<agent>` label |

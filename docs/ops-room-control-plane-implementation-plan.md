@@ -33,14 +33,14 @@ Repository root:
 Important paths:
 
 ```text
-ops-room/src/server/webhook.mjs      Current webhook server, poller startup, chat workflow, coding workflow, PR review workflow
-ops-room/src/server/poller.mjs       Standalone issue poller
-ops-room/src/server/claim.mjs        CLI for claiming queued tasks
-ops-room/src/lib/config.mjs          Agent IDs, aliases, labels, GitHub App env mapping
-ops-room/src/lib/task-routing.mjs    Task metadata parsing and chat/code classification
-ops-room/src/lib/github-app.mjs      GitHub App token helper
-ops-room/src/lib/github-ops.mjs      GitHub label/comment/API helpers
-ops-room/src/lib/issue-poller.mjs    Shared issue polling loop
+ops-room/src/server/webhook.js      Current webhook server, poller startup, chat workflow, coding workflow, PR review workflow
+ops-room/src/server/poller.js       Standalone issue poller
+ops-room/src/server/claim.js        CLI for claiming queued tasks
+ops-room/src/lib/config.js          Agent IDs, aliases, labels, GitHub App env mapping
+ops-room/src/lib/task-routing.js    Task metadata parsing and chat/code classification
+ops-room/src/lib/github-app.js      GitHub App token helper
+ops-room/src/lib/github-ops.js      GitHub label/comment/API helpers
+ops-room/src/lib/issue-poller.js    Shared issue polling loop
 config/agents/*.toml                Real local agent configs
 config/agents/*.example.toml        Safe committed config examples
 data/ops-room/tasks                 Runtime task JSON files
@@ -68,7 +68,7 @@ Follow these rules while executing this plan:
 - Do not add a database in the first milestone. Use existing files under `data/ops-room/`.
 - Do not add write/edit config features until read-only config display and validation are working.
 - Do not add restart/reload controls until health/status and audit logging exist.
-- Prefer small modules with clear names over adding more logic to `webhook.mjs`.
+- Prefer small modules with clear names over adding more logic to `webhook.js`.
 - Use `rg` for searching and inspect existing code before editing.
 
 ## Recommended Milestone Order
@@ -90,39 +90,39 @@ Implement these milestones in order. Each milestone should leave the app runnabl
 
 ### Objective
 
-Reduce `ops-room/src/server/webhook.mjs` from a large mixed-responsibility file into smaller modules. This prepares the codebase for the control-plane work.
+Reduce `ops-room/src/server/webhook.js` from a large mixed-responsibility file into smaller modules. This prepares the codebase for the control-plane work.
 
 ### Do This
 
 Create these files:
 
 ```text
-ops-room/src/server/http.mjs
-ops-room/src/routes/webhook.mjs
-ops-room/src/routes/tasks.mjs
-ops-room/src/routes/health.mjs
-ops-room/src/workflows/github-code.mjs
-ops-room/src/workflows/pr-review.mjs
-ops-room/src/workflows/chat-response.mjs
-ops-room/src/services/task-store.mjs
-ops-room/src/services/logs.mjs
-ops-room/src/services/runtime-paths.mjs
+ops-room/src/server/http.js
+ops-room/src/routes/webhook.js
+ops-room/src/routes/tasks.js
+ops-room/src/routes/health.js
+ops-room/src/workflows/github-code.js
+ops-room/src/workflows/pr-review.js
+ops-room/src/workflows/chat-response.js
+ops-room/src/services/task-store.js
+ops-room/src/services/logs.js
+ops-room/src/services/runtime-paths.js
 ```
 
 Move code in small steps:
 
-1. Move path/env constants into `services/runtime-paths.mjs`.
-2. Move task file read/write helpers into `services/task-store.mjs`.
-3. Move task logging helpers into `services/logs.mjs`.
-4. Move PR review functions into `workflows/pr-review.mjs`.
-5. Move coding workflow functions into `workflows/github-code.mjs`.
-6. Move chat workflow functions into `workflows/chat-response.mjs`.
-7. Move `/health` handling into `routes/health.mjs`.
-8. Move `/tasks` handling into `routes/tasks.mjs`.
-9. Move `/webhook` handling into `routes/webhook.mjs`.
-10. Make `webhook.mjs` or `http.mjs` only compose services, register routes, start the poller, and listen on the port.
+1. Move path/env constants into `services/runtime-paths.js`.
+2. Move task file read/write helpers into `services/task-store.js`.
+3. Move task logging helpers into `services/logs.js`.
+4. Move PR review functions into `workflows/pr-review.js`.
+5. Move coding workflow functions into `workflows/github-code.js`.
+6. Move chat workflow functions into `workflows/chat-response.js`.
+7. Move `/health` handling into `routes/health.js`.
+8. Move `/tasks` handling into `routes/tasks.js`.
+9. Move `/webhook` handling into `routes/webhook.js`.
+10. Make `webhook.js` or `http.js` only compose services, register routes, start the poller, and listen on the port.
 
-Keep `npm start` working. You may leave `package.json` pointing at `src/server/webhook.mjs` if that file becomes the small entrypoint.
+Keep `npm start` working. You may leave `package.json` pointing at `src/server/webhook.js` if that file becomes the small entrypoint.
 
 ### Notes
 
@@ -139,9 +139,9 @@ Run:
 ```bash
 cd /home/ubuntu/openab-multi-agent/ops-room
 npm run bootstrap
-node --check src/server/webhook.mjs
-node --check src/server/poller.mjs
-node --check src/server/claim.mjs
+node --check src/server/webhook.js
+node --check src/server/poller.js
+node --check src/server/claim.js
 ```
 
 If the local `.env` exists and secrets are configured, also run:
@@ -168,8 +168,8 @@ Create the first real control-plane capability: list known agents and their basi
 Create:
 
 ```text
-ops-room/src/services/agent-registry.mjs
-ops-room/src/routes/agents.mjs
+ops-room/src/services/agent-registry.js
+ops-room/src/routes/agents.js
 ```
 
 Add endpoint:
@@ -199,11 +199,11 @@ The response should include one object per known agent:
 
 Read agent data from existing sources first:
 
-- `ops-room/src/lib/config.mjs` for agent IDs, names, aliases, bot users
+- `ops-room/src/lib/config.js` for agent IDs, names, aliases, bot users
 - `docker-compose.yml` for container names and mounted config paths if practical
 - `config/agents/*.toml` and `config/agents/*.example.toml` for config existence
 
-If parsing `docker-compose.yml` is too much for the first version, start with a small explicit mapping in `agent-registry.mjs`. Add a comment explaining that compose parsing can replace it later.
+If parsing `docker-compose.yml` is too much for the first version, start with a small explicit mapping in `agent-registry.js`. Add a comment explaining that compose parsing can replace it later.
 
 ### Agent Keys To Support
 
@@ -236,8 +236,8 @@ gemini    -> config/agents/gemini.toml             -> openab-gemini
 Run:
 
 ```bash
-node --check src/services/agent-registry.mjs
-node --check src/routes/agents.mjs
+node --check src/services/agent-registry.js
+node --check src/routes/agents.js
 npm start
 ```
 
@@ -339,10 +339,10 @@ Let Ops Room inspect agent configs and skills while keeping files as the source 
 Create:
 
 ```text
-ops-room/src/services/config-reader.mjs
-ops-room/src/services/secret-redaction.mjs
-ops-room/src/routes/config.mjs
-ops-room/src/routes/skills.mjs
+ops-room/src/services/config-reader.js
+ops-room/src/services/secret-redaction.js
+ops-room/src/routes/config.js
+ops-room/src/routes/skills.js
 ```
 
 Add endpoints:
@@ -466,10 +466,10 @@ Make the current GitHub automation a clean module inside Ops Room rather than th
 Create or extend:
 
 ```text
-ops-room/src/services/task-lifecycle.mjs
-ops-room/src/services/github-task-gateway.mjs
-ops-room/src/workflows/github-code.mjs
-ops-room/src/workflows/pr-review.mjs
+ops-room/src/services/task-lifecycle.js
+ops-room/src/services/github-task-gateway.js
+ops-room/src/workflows/github-code.js
+ops-room/src/workflows/pr-review.js
 ```
 
 Introduce explicit task states:
@@ -548,7 +548,7 @@ Current direct chat logic lives in `runChatWorkflow()` and `askAI()`. Decide one
 
 Option A, recommended short term:
 
-- Rename the module to `workflows/manual-response.mjs` or `workflows/controlled-instruction.mjs`.
+- Rename the module to `workflows/manual-response.js` or `workflows/controlled-instruction.js`.
 - Make docs clear that this is only for controlled GitHub/UI tasks, not normal Discord/Slack chat.
 - Keep direct LLM response only for GitHub PR review or controlled task responses.
 
@@ -630,9 +630,9 @@ Add guarded restart/reload controls after visibility exists.
 Create:
 
 ```text
-ops-room/src/services/audit-log.mjs
-ops-room/src/services/container-runtime.mjs
-ops-room/src/routes/runtime-controls.mjs
+ops-room/src/services/audit-log.js
+ops-room/src/services/container-runtime.js
+ops-room/src/routes/runtime-controls.js
 ```
 
 Add endpoints:
@@ -778,7 +778,7 @@ Avoid wording that says Ops Room owns normal chat/runtime behavior.
 The first PR should be small and low risk:
 
 - Add this plan file.
-- Refactor `webhook.mjs` into modules without behavior changes.
+- Refactor `webhook.js` into modules without behavior changes.
 - Add `GET /api/agents`.
 - Add `GET /api/health` while keeping old `/health`.
 - Add `GET /api/tasks` while keeping old `/tasks`.
@@ -801,7 +801,7 @@ The first useful release of the control plane is done when:
 ## Common Mistakes To Avoid
 
 - Do not build a second OpenAB inside Ops Room.
-- Do not put more logic into `webhook.mjs`.
+- Do not put more logic into `webhook.js`.
 - Do not expose `.env`, token values, or private keys.
 - Do not make a database the source of truth for agent behavior.
 - Do not add config write features before validation and redaction are solid.

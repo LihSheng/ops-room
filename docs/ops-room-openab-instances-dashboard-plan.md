@@ -36,14 +36,14 @@ Important files:
 
 ```text
 docker-compose.yml
-ops-room/src/server/http.mjs
-ops-room/src/routes/agents.mjs
-ops-room/src/routes/health.mjs
-ops-room/src/routes/logs.mjs
-ops-room/src/services/agent-registry.mjs
-ops-room/src/services/runtime-paths.mjs
-ops-room/src/services/logs.mjs
-ops-room/src/services/task-store.mjs
+ops-room/src/server/http.js
+ops-room/src/routes/agents.js
+ops-room/src/routes/health.js
+ops-room/src/routes/logs.js
+ops-room/src/services/agent-registry.js
+ops-room/src/services/runtime-paths.js
+ops-room/src/services/logs.js
+ops-room/src/services/task-store.js
 ```
 
 Current useful endpoints:
@@ -210,13 +210,13 @@ Create a service that returns the known OpenAB instances from repo configuration
 ### Files To Create
 
 ```text
-ops-room/src/services/openab-instances.mjs
-ops-room/src/routes/openab-instances.mjs
+ops-room/src/services/openab-instances.js
+ops-room/src/routes/openab-instances.js
 ```
 
 ### Service Requirements
 
-In `openab-instances.mjs`, define a small explicit mapping first.
+In `openab-instances.js`, define a small explicit mapping first.
 
 Use this mapping:
 
@@ -277,11 +277,11 @@ data_dir
 github_polling_enabled
 ```
 
-Use `POLL_AGENTS` from `ops-room/src/lib/config.mjs` to set `github_polling_enabled`.
+Use `POLL_AGENTS` from `ops-room/src/lib/config.js` to set `github_polling_enabled`.
 
 ### Route Requirements
 
-In `routes/openab-instances.mjs`, export:
+In `routes/openab-instances.js`, export:
 
 ```js
 export async function handleOpenABInstances() {
@@ -291,7 +291,7 @@ export async function handleOpenABInstances() {
 
 ### Wire Route
 
-In `ops-room/src/server/http.mjs`, add:
+In `ops-room/src/server/http.js`, add:
 
 ```text
 GET /api/openab/instances
@@ -317,8 +317,8 @@ Run:
 
 ```bash
 cd /home/ubuntu/openab-multi-agent/ops-room
-find src -name '*.mjs' -print0 | xargs -0 -n1 node --check
-OPENAB_WEBHOOK_SECRET=test OPENAB_WEBHOOK_PORT=17381 node src/server/webhook.mjs
+find src -name '*.js' -print0 | xargs -0 -n1 node --check
+OPENAB_WEBHOOK_SECRET=test OPENAB_WEBHOOK_PORT=17381 node src/server/webhook.js
 ```
 
 In another terminal:
@@ -342,7 +342,7 @@ Augment each instance with live Docker container status when Docker is available
 
 ### Add To Service
 
-In `openab-instances.mjs`, add a helper:
+In `openab-instances.js`, add a helper:
 
 ```js
 async function getDockerStatusByContainerName(containerNames) {}
@@ -483,14 +483,14 @@ Create a simple read-only browser dashboard.
 ops-room/src/app/index.html
 ops-room/src/app/styles.css
 ops-room/src/app/app.js
-ops-room/src/routes/static-app.mjs
+ops-room/src/routes/static-app.js
 ```
 
 If an app folder already exists, reuse it.
 
 ### Route Requirements
 
-In `server/http.mjs`, add:
+In `server/http.js`, add:
 
 ```text
 GET /
@@ -585,7 +585,7 @@ Start Ops Room:
 
 ```bash
 cd /home/ubuntu/openab-multi-agent/ops-room
-OPENAB_WEBHOOK_SECRET=test OPENAB_WEBHOOK_PORT=17381 node src/server/webhook.mjs
+OPENAB_WEBHOOK_SECRET=test OPENAB_WEBHOOK_PORT=17381 node src/server/webhook.js
 ```
 
 Open:
@@ -613,7 +613,7 @@ Make the feature easy to verify without manually clicking everything.
 If no test framework exists, add a small script:
 
 ```text
-ops-room/scripts/smoke-openab-instances.mjs
+ops-room/scripts/smoke-openab-instances.js
 ```
 
 The script should:
@@ -631,7 +631,7 @@ Do not add heavy dependencies.
 Add to `ops-room/package.json`:
 
 ```json
-"smoke:instances": "node scripts/smoke-openab-instances.mjs"
+"smoke:instances": "node scripts/smoke-openab-instances.js"
 ```
 
 ### Verification
@@ -680,9 +680,9 @@ Read the docs and confirm they match the implemented behavior.
 
 Follow this order:
 
-1. Create `services/openab-instances.mjs` with static instance metadata only.
-2. Create `routes/openab-instances.mjs`.
-3. Wire `GET /api/openab/instances` in `server/http.mjs`.
+1. Create `services/openab-instances.js` with static instance metadata only.
+2. Create `routes/openab-instances.js`.
+3. Wire `GET /api/openab/instances` in `server/http.js`.
 4. Run syntax checks.
 5. Smoke test the endpoint.
 6. Add Docker inspect support using `execFileSync`.
@@ -700,7 +700,7 @@ Follow this order:
 Before marking done, verify:
 
 - `git status` only shows intended files.
-- `node --check` passes for every changed `.mjs` file.
+- `node --check` passes for every changed `.js` file.
 - `GET /api/openab/instances` returns four configured OpenAB instances.
 - Endpoint still works if Docker command fails.
 - Dashboard loads at `/`.

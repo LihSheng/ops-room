@@ -45,19 +45,19 @@ curl http://127.0.0.1:7381/api/openab/instances
 ops-room/
 ├── src/
 │   ├── lib/
-│   │   ├── config.mjs
-│   │   ├── github-app.mjs
-│   │   ├── github-ops.mjs
-│   │   ├── issue-poller.mjs
-│   │   └── task-routing.mjs
+│   │   ├── config.js
+│   │   ├── github-app.js
+│   │   ├── github-ops.js
+│   │   ├── issue-poller.js
+│   │   └── task-routing.js
 │   ├── app/           → dashboard UI (index.html, app.js, styles.css)
 │   ├── routes/        → route handlers (health, agents, tasks, logs, openab-instances, static-app)
 │   ├── services/      → core services (agent-registry, openab-instances, runtime-paths, task-store, logs)
 │   └── server/
-│       ├── webhook.mjs
-│       ├── poller.mjs
-│       ├── claim.mjs
-│       └── github-app-token.mjs
+│       ├── webhook.js
+│       ├── poller.js
+│       ├── claim.js
+│       └── github-app-token.js
 ├── scripts/
 ├── package.json
 └── README.md
@@ -65,22 +65,22 @@ ops-room/
 
 ## Responsibilities
 
-- `src/server/webhook.mjs`
+- `src/server/webhook.js`
   Runs the HTTP server, starts the in-process poll loop, receives `/webhook` payloads, and owns the coding/chat task workflows.
-- `src/server/poller.mjs`
+- `src/server/poller.js`
   Standalone poller entrypoint that reuses the same shared poll loop for label-based issue claiming.
-- `src/server/claim.mjs`
+- `src/server/claim.js`
   CLI for listing or claiming queued tasks manually.
-- `src/lib/config.mjs`
+- `src/lib/config.js`
   Shared agent IDs, aliases, label colors, and GitHub App env key mapping.
-- `src/lib/task-routing.mjs`
+- `src/lib/task-routing.js`
   Shared metadata-comment parsing and chat/code task classification.
-- `src/lib/github-app.mjs`
+- `src/lib/github-app.js`
   Shared GitHub App token loading helper.
-- `src/lib/github-ops.mjs`
+- `src/lib/github-ops.js`
   Shared GitHub comment, label, and `gh api` helpers.
-- `src/lib/issue-poller.mjs`
-  Shared poll loop used by both `webhook.mjs` and `poller.mjs`.
+- `src/lib/issue-poller.js`
+  Shared poll loop used by both `webhook.js` and `poller.js`.
 
 ## Runtime Data
 
@@ -163,7 +163,7 @@ npm run smoke:instances
 
 Start with:
 ```bash
-OPENAB_WEBHOOK_SECRET=test OPENAB_WEBHOOK_PORT=17381 node src/server/webhook.mjs
+OPENAB_WEBHOOK_SECRET=test OPENAB_WEBHOOK_PORT=17381 node src/server/webhook.js
 ```
 
 Then check:
