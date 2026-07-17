@@ -2,7 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 
 import { AGENT_DEFINITIONS } from '../agent-definitions.js';
-import { AgentProfile, AgentProfileValidationError, validateAgentProfile } from './schema.js';
+import { AgentProfileValidationError, validateAgentProfile } from './schema.js';
+import type { AgentProfile } from './schema.js';
 
 export type LoadedAgentProfiles = {
   profiles: AgentProfile[];
