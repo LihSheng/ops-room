@@ -1,0 +1,546 @@
+
+> @openab/ops-room@0.2.0 test
+> npm run build:server && node scripts/run-tests.js
+
+
+> @openab/ops-room@0.2.0 build:server
+> tsc -p tsconfig.json && npm run build:agent-script
+
+
+> @openab/ops-room@0.2.0 build:agent-script
+> tsc -p ../tsconfig.agent-scripts.json
+
+TAP version 13
+# Subtest: agent definitions are the unique source for identity and runtime bindings
+ok 1 - agent definitions are the unique source for identity and runtime bindings
+  ---
+  duration_ms: 1.866745
+  ...
+# Subtest: agent registry reports desired and observed state from one definition set
+ok 2 - agent registry reports desired and observed state from one definition set
+  ---
+  duration_ms: 9.342657
+  ...
+# Subtest: bootstrap loads the selected env file without exposing repo .env
+ok 3 - bootstrap loads the selected env file without exposing repo .env
+  ---
+  duration_ms: 11.705249
+  ...
+# Subtest: bootstrap startup contract matches the server-required secret
+ok 4 - bootstrap startup contract matches the server-required secret
+  ---
+  duration_ms: 0.804325
+  ...
+# Subtest: bootstrap honors stable runtime roots outside the release checkout
+ok 5 - bootstrap honors stable runtime roots outside the release checkout
+  ---
+  duration_ms: 0.386464
+  ...
+# Subtest: bootstrap tolerates a missing selected env file
+ok 6 - bootstrap tolerates a missing selected env file
+  ---
+  duration_ms: 1.945052
+  ...
+# Subtest: bootstrap reports a missing webhook secret as startup-blocking
+ok 7 - bootstrap reports a missing webhook secret as startup-blocking
+  ---
+  duration_ms: 0.936502
+  ...
+# Subtest: cancellation during slow execution is cooperatively detected
+ok 8 - cancellation during slow execution is cooperatively detected
+  ---
+  duration_ms: 16.243914
+  ...
+# Subtest: cancelled queued tasks transition directly to CANCELLED
+ok 9 - cancelled queued tasks transition directly to CANCELLED
+  ---
+  duration_ms: 5.426235
+  ...
+# Subtest: per-PR concurrency limits queue new tasks for the same PR
+ok 10 - per-PR concurrency limits queue new tasks for the same PR
+  ---
+  duration_ms: 19.702756
+  ...
+# Subtest: per-repository concurrency limit queues tasks when repo limit exceeded
+ok 11 - per-repository concurrency limit queues tasks when repo limit exceeded
+  ---
+  duration_ms: 33.035018
+  ...
+# Subtest: deployment preflight accepts a prepared immutable host layout
+ok 12 - deployment preflight accepts a prepared immutable host layout
+  ---
+  duration_ms: 14.734511
+  ...
+# Subtest: deployment preflight rejects an unsupported Node version and relative persistent paths
+ok 13 - deployment preflight rejects an unsupported Node version and relative persistent paths
+  ---
+  duration_ms: 5.844357
+  ...
+# Subtest: manual activation and rollback switch immutable release links
+ok 14 - manual activation and rollback switch immutable release links
+  ---
+  duration_ms: 1278.89785
+  ...
+# Subtest: ambiguous CLAIMED effect can be resolved by operator
+ok 15 - ambiguous CLAIMED effect can be resolved by operator
+  ---
+  duration_ms: 13.953501
+  ...
+# Subtest: CLAIMED effect cannot be double-resolved
+ok 16 - CLAIMED effect cannot be double-resolved
+  ---
+  duration_ms: 4.404983
+  ...
+# Subtest: listEffects filters by task ID, kind, and state
+ok 17 - listEffects filters by task ID, kind, and state
+  ---
+  duration_ms: 28.985688
+  ...
+# Subtest: github_issue_comment effects are deduplicated
+ok 18 - github_issue_comment effects are deduplicated
+  ---
+  duration_ms: 7.265935
+  ...
+# Subtest: fix child executor owns lifecycle transitions and records pushed SHA
+ok 19 - fix child executor owns lifecycle transitions and records pushed SHA
+  ---
+  duration_ms: 17.334545
+  ...
+# Subtest: non-progress fixer results are terminal and never request re-review
+ok 20 - non-progress fixer results are terminal and never request re-review
+  ---
+  duration_ms: 2.357885
+  ...
+# Subtest: a pushed fix ends its task and waits for a new-SHA event
+ok 21 - a pushed fix ends its task and waits for a new-SHA event
+  ---
+  duration_ms: 0.240848
+  ...
+# Subtest: fix runtime only permits safe source-relative paths
+ok 22 - fix runtime only permits safe source-relative paths
+  ---
+  duration_ms: 1.491877
+  ...
+# Subtest: change-requested parent creates one idempotent SHA-bound fix child
+ok 23 - change-requested parent creates one idempotent SHA-bound fix child
+  ---
+  duration_ms: 9.697088
+  ...
+# Subtest: fix child fences SHA, heartbeats, pushes once, and always cleans up
+ok 24 - fix child fences SHA, heartbeats, pushes once, and always cleans up
+  ---
+  duration_ms: 3.621513
+  ...
+# Subtest: fix child never prepares or pushes when the reviewed SHA is stale
+ok 25 - fix child never prepares or pushes when the reviewed SHA is stale
+  ---
+  duration_ms: 0.63878
+  ...
+# Subtest: fix child reports no source changes and still cleans the workspace
+ok 26 - fix child reports no source changes and still cleans the workspace
+  ---
+  duration_ms: 0.424271
+  ...
+# Subtest: completed push effect prevents a duplicate push and retains the pushed SHA
+ok 27 - completed push effect prevents a duplicate push and retains the pushed SHA
+  ---
+  duration_ms: 17.127498
+  ...
+# Subtest: review status service writes the stable context when status changed
+ok 28 - review status service writes the stable context when status changed
+  ---
+  duration_ms: 2.276373
+  ...
+# Subtest: review status service does not repeat an equivalent latest status
+ok 29 - review status service does not repeat an equivalent latest status
+  ---
+  duration_ms: 0.339284
+  ...
+# Subtest: review status ledger prevents duplicate external writes for one task
+ok 30 - review status ledger prevents duplicate external writes for one task
+  ---
+  duration_ms: 11.085567
+  ...
+# Subtest: health reports release revision and critical dependency readiness
+ok 31 - health reports release revision and critical dependency readiness
+  ---
+  duration_ms: 5.605342
+  ...
+# Subtest: health becomes non-ready while draining or when a critical store fails
+ok 32 - health becomes non-ready while draining or when a critical store fails
+  ---
+  duration_ms: 1.432083
+  ...
+# Subtest: health checks configured critical commands beyond the default report set
+ok 33 - health checks configured critical commands beyond the default report set
+  ---
+  duration_ms: 2.394269
+  ...
+# Subtest: configured command checks never execute shell syntax
+ok 34 - configured command checks never execute shell syntax
+  ---
+  duration_ms: 6.355572
+  ...
+# Subtest: invalid packaged release identity makes health non-ready
+ok 35 - invalid packaged release identity makes health non-ready
+  ---
+  duration_ms: 0.495206
+  ...
+# Subtest: issue poller stops promptly when drain aborts its wait
+ok 36 - issue poller stops promptly when drain aborts its wait
+  ---
+  duration_ms: 2.773092
+  ...
+# Subtest: issue poller stops claiming remaining issues when drain begins mid-cycle
+ok 37 - issue poller stops claiming remaining issues when drain begins mid-cycle
+  ---
+  duration_ms: 0.771156
+  ...
+# Subtest: LinkUp webhook payload with task_type chat and comment_id is recognized
+ok 38 - LinkUp webhook payload with task_type chat and comment_id is recognized
+  ---
+  duration_ms: 1.740217
+  ...
+# Subtest: LinkUp webhook payload without pr is rejected
+ok 39 - LinkUp webhook payload without pr is rejected
+  ---
+  duration_ms: 0.208189
+  ...
+# Subtest: LinkUp webhook payload with draft PR policy is recognized
+ok 40 - LinkUp webhook payload with draft PR policy is recognized
+  ---
+  duration_ms: 0.334658
+  ...
+# Subtest: audit events persist as append-only files and support bounded filtering
+ok 41 - audit events persist as append-only files and support bounded filtering
+  ---
+  duration_ms: 10.648262
+  ...
+# Subtest: operator identity is explicit and rejects missing configuration
+ok 42 - operator identity is explicit and rejects missing configuration
+  ---
+  duration_ms: 0.640903
+  ...
+# Subtest: concurrent identical cancellation requests perform one transition and one accepted audit event
+ok 43 - concurrent identical cancellation requests perform one transition and one accepted audit event
+  ---
+  duration_ms: 35.639604
+  ...
+# Subtest: same idempotency key with changed payload is rejected without another transition
+ok 44 - same idempotency key with changed payload is rejected without another transition
+  ---
+  duration_ms: 16.437993
+  ...
+# Subtest: unknown tasks and invalid transitions create rejected audit events
+ok 45 - unknown tasks and invalid transitions create rejected audit events
+  ---
+  duration_ms: 35.955334
+  ...
+# Subtest: missing reason and idempotency key are rejected and audited
+ok 46 - missing reason and idempotency key are rejected and audited
+  ---
+  duration_ms: 4.202997
+  ...
+# Subtest: operator cancellation requires authentication and replays an identical request
+not ok 47 - operator cancellation requires authentication and replays an identical request
+  ---
+  duration_ms: 228.559455
+  location: '/home/runner/work/ops-room/ops-room/ops-room/test/operator-http.test.js:62:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    [2026-07-17 10:01:44] [review-reconciler] dispatch execution error: missing GitHub App config for professor
+    
+    
+    409 !== 202
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 202
+  actual: 409
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/ops-room/ops-room/ops-room/test/operator-http.test.js:90:16)
+    process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+# Subtest: operator endpoints remain hidden when mutation API is disabled
+ok 48 - operator endpoints remain hidden when mutation API is disabled
+  ---
+  duration_ms: 128.580081
+  ...
+# Subtest: controller supersedes an old SHA without a status update or model dispatch
+ok 49 - controller supersedes an old SHA without a status update or model dispatch
+  ---
+  duration_ms: 13.099091
+  ...
+# Subtest: controller creates one claimed review and pending status for the current SHA
+ok 50 - controller creates one claimed review and pending status for the current SHA
+  ---
+  duration_ms: 7.908145
+  ...
+# Subtest: controller deduplicates an identical current-SHA request
+ok 51 - controller deduplicates an identical current-SHA request
+  ---
+  duration_ms: 11.624018
+  ...
+# Subtest: controller keeps auto-fix disabled unless policy explicitly allows it
+ok 52 - controller keeps auto-fix disabled unless policy explicitly allows it
+  ---
+  duration_ms: 31.672593
+  ...
+# Subtest: PR review prompt requires a machine-validated JSON review result
+ok 53 - PR review prompt requires a machine-validated JSON review result
+  ---
+  duration_ms: 1.902368
+  ...
+# Subtest: structured review rendering produces GitHub-readable findings
+ok 54 - structured review rendering produces GitHub-readable findings
+  ---
+  duration_ms: 1.455313
+  ...
+# Subtest: review posting is permitted only for the expected current SHA
+ok 55 - review posting is permitted only for the expected current SHA
+  ---
+  duration_ms: 1.552297
+  ...
+# Subtest: process lifecycle drains tracked work and rejects new work
+ok 56 - process lifecycle drains tracked work and rejects new work
+  ---
+  duration_ms: 6.491118
+  ...
+# Subtest: process lifecycle reports a bounded drain timeout
+ok 57 - process lifecycle reports a bounded drain timeout
+  ---
+  duration_ms: 10.631633
+  ...
+# Subtest: work accepted before drain still executes and remains visible while draining
+ok 58 - work accepted before drain still executes and remains visible while draining
+  ---
+  duration_ms: 1.02927
+  ...
+# Subtest: release artifact contains only immutable runtime allowlist and external checksum
+ok 59 - release artifact contains only immutable runtime allowlist and external checksum
+  ---
+  duration_ms: 76.845333
+  ...
+# Subtest: release path policy rejects secrets, runtime data, dependencies, and traversal
+ok 60 - release path policy rejects secrets, runtime data, dependencies, and traversal
+  ---
+  duration_ms: 0.474966
+  ...
+# Subtest: same commit produces one deterministic artifact and never overwrites it
+ok 61 - same commit produces one deterministic artifact and never overwrites it
+  ---
+  duration_ms: 1209.840793
+  ...
+# Subtest: release manifest is authoritative over stable environment SHA
+ok 62 - release manifest is authoritative over stable environment SHA
+  ---
+  duration_ms: 2.160342
+  ...
+# Subtest: invalid existing release manifest never falls back to environment identity
+ok 63 - invalid existing release manifest never falls back to environment identity
+  ---
+  duration_ms: 0.541945
+  ...
+# Subtest: source checkout may fall back to environment identity when manifest is absent
+ok 64 - source checkout may fall back to environment identity when manifest is absent
+  ---
+  duration_ms: 0.810735
+  ...
+# Subtest: queued work is cancelled immediately without waiting for a worker
+ok 65 - queued work is cancelled immediately without waiting for a worker
+  ---
+  duration_ms: 8.225216
+  ...
+# Subtest: cancellation is cooperative and terminal once acknowledged
+ok 66 - cancellation is cooperative and terminal once acknowledged
+  ---
+  duration_ms: 5.55661
+  ...
+# Subtest: effect ledger deduplicates a GitHub effect after completion
+ok 67 - effect ledger deduplicates a GitHub effect after completion
+  ---
+  duration_ms: 9.90945
+  ...
+# Subtest: claimEffect returns CLAIMED state for uncompleted existing effects
+ok 68 - claimEffect returns CLAIMED state for uncompleted existing effects
+  ---
+  duration_ms: 3.083463
+  ...
+# Subtest: ABANDONED effects allow re-claim after operator resolution
+ok 69 - ABANDONED effects allow re-claim after operator resolution
+  ---
+  duration_ms: 3.50501
+  ...
+# Subtest: reclaimEffect atomically transitions ABANDONED to CLAIMED
+ok 70 - reclaimEffect atomically transitions ABANDONED to CLAIMED
+  ---
+  duration_ms: 6.423924
+  ...
+# Subtest: fenced: stale worker rejected from new effect when task has different lease
+ok 71 - fenced: stale worker rejected from new effect when task has different lease
+  ---
+  duration_ms: 2.413006
+  ...
+# Subtest: fenced: stale worker rejected when task has no current lease (retry window)
+ok 72 - fenced: stale worker rejected when task has no current lease (retry window)
+  ---
+  duration_ms: 4.650643
+  ...
+# Subtest: fenced: stale worker cannot complete effect after task lease changed
+ok 73 - fenced: stale worker cannot complete effect after task lease changed
+  ---
+  duration_ms: 2.674465
+  ...
+# Subtest: review outcome preserves supersession as a terminal task state
+ok 74 - review outcome preserves supersession as a terminal task state
+  ---
+  duration_ms: 1.248245
+  ...
+# Subtest: auto-fix requires explicit enablement and a trusted same-repository branch
+ok 75 - auto-fix requires explicit enablement and a trusted same-repository branch
+  ---
+  duration_ms: 1.716511
+  ...
+# Subtest: critical or ambiguous findings are never auto-fixable
+ok 76 - critical or ambiguous findings are never auto-fixable
+  ---
+  duration_ms: 0.196122
+  ...
+# Subtest: reconciler recovers expired active review tasks and ignores queued work
+ok 77 - reconciler recovers expired active review tasks and ignores queued work
+  ---
+  duration_ms: 15.073695
+  ...
+# Subtest: reconciler isolates corrupt task records instead of aborting a cycle
+ok 78 - reconciler isolates corrupt task records instead of aborting a cycle
+  ---
+  duration_ms: 2.275332
+  ...
+# Subtest: dispatchEligibleTasks claims and dispatches queued review tasks within concurrency
+ok 79 - dispatchEligibleTasks claims and dispatches queued review tasks within concurrency
+  ---
+  duration_ms: 13.627406
+  ...
+# Subtest: dispatchEligibleTasks respects per-PR concurrency limit
+ok 80 - dispatchEligibleTasks respects per-PR concurrency limit
+  ---
+  duration_ms: 17.388757
+  ...
+# Subtest: stale running task becomes recoverable only within retry budget
+ok 81 - stale running task becomes recoverable only within retry budget
+  ---
+  duration_ms: 12.380903
+  ...
+# Subtest: structured review accepts a valid approval without blocking findings
+ok 82 - structured review accepts a valid approval without blocking findings
+  ---
+  duration_ms: 1.228086
+  ...
+# Subtest: structured review rejects approval with blocking findings
+ok 83 - structured review rejects approval with blocking findings
+  ---
+  duration_ms: 0.435468
+  ...
+# Subtest: structured review rejects malformed request-changes result
+ok 84 - structured review rejects malformed request-changes result
+  ---
+  duration_ms: 0.236442
+  ...
+# Subtest: review task listing returns durable tasks newest-first
+ok 85 - review task listing returns durable tasks newest-first
+  ---
+  duration_ms: 15.498787
+  ...
+# Subtest: review task identity is deterministic and changes when SHA or mode changes
+ok 86 - review task identity is deterministic and changes when SHA or mode changes
+  ---
+  duration_ms: 1.394152
+  ...
+# Subtest: chat task identity uses pr-chat prefix and includes comment_id
+ok 87 - chat task identity uses pr-chat prefix and includes comment_id
+  ---
+  duration_ms: 0.22256
+  ...
+# Subtest: lease epoch fencing rejects transitions with mismatched epoch
+ok 88 - lease epoch fencing rejects transitions with mismatched epoch
+  ---
+  duration_ms: 14.085276
+  ...
+# Subtest: task persists dispatch context (task_text, task_type, commenter, comment_id)
+ok 89 - task persists dispatch context (task_text, task_type, commenter, comment_id)
+  ---
+  duration_ms: 2.460186
+  ...
+# Subtest: self-transitions allow metadata-only updates for terminal states
+ok 90 - self-transitions allow metadata-only updates for terminal states
+  ---
+  duration_ms: 6.774324
+  ...
+# Subtest: concurrent claims result in one creator and one duplicate response
+ok 91 - concurrent claims result in one creator and one duplicate response
+  ---
+  duration_ms: 2.025351
+  ...
+# Subtest: task and claim filenames are portable while logical IDs remain unchanged
+ok 92 - task and claim filenames are portable while logical IDs remain unchanged
+  ---
+  duration_ms: 2.595989
+  ...
+# Subtest: storage scan deduplicates physical records by logical task ID
+ok 93 - storage scan deduplicates physical records by logical task ID
+  ---
+  duration_ms: 2.606995
+  ...
+# Subtest: storage scan isolates valid JSON that is not a task object
+ok 94 - storage scan isolates valid JSON that is not a task object
+  ---
+  duration_ms: 2.002436
+  ...
+# Subtest: legacy colon-named task files remain readable, recoverable, and deduplicated
+ok 95 - legacy colon-named task files remain readable, recoverable, and deduplicated
+  ---
+  duration_ms: 6.876652
+  ...
+# Subtest: terminal tasks cannot transition back to running
+ok 96 - terminal tasks cannot transition back to running
+  ---
+  duration_ms: 5.52611
+  ...
+# Subtest: claim renewal updates heartbeat and stale detection is clock-controlled
+ok 97 - claim renewal updates heartbeat and stale detection is clock-controlled
+  ---
+  duration_ms: 2.122184
+  ...
+# Subtest: review worker stops cooperatively after cancellation is requested
+ok 98 - review worker stops cooperatively after cancellation is requested
+  ---
+  duration_ms: 1.477275
+  ...
+# Subtest: SIGTERM drains an idle server and exits cleanly
+ok 99 - SIGTERM drains an idle server and exits cleanly
+  ---
+  duration_ms: 172.646932
+  ...
+# Subtest: startup cleanup removes dead issue locks and preserves live owners
+ok 100 - startup cleanup removes dead issue locks and preserves live owners
+  ---
+  duration_ms: 10.782262
+  ...
+# Subtest: PR webhooks use the configured review controller instead of direct workflow execution
+ok 101 - PR webhooks use the configured review controller instead of direct workflow execution
+  ---
+  duration_ms: 1.926393
+  ...
+1..101
+# tests 101
+# suites 0
+# pass 100
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4045.935644
+exit_code=1
