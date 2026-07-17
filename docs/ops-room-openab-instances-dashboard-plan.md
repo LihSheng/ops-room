@@ -1,5 +1,7 @@
 # Ops Room OpenAB Instances Dashboard Implementation Plan
 
+> **Status: completed/historical.** Current authority: [`../ARCHITECTURE.md`](../ARCHITECTURE.md). Current behavior: [`ops-room.md`](ops-room.md).
+
 ## Goal
 
 Add a read-only Ops Room dashboard that shows which OpenAB instances are configured and which ones are currently running.

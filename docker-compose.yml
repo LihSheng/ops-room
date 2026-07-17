@@ -11,12 +11,16 @@ services:
       - ./config/agents/gemini.toml:/etc/openab/config.toml:ro
       - ./data/agents/gemini:/home/node
       - ./data/shared:/home/node/shared
-      - "/home/ubuntu/Documents/Obsidian Vault/:/home/node/obsidian-vault"
+      - type: bind
+        source: ${OPENAB_AGENT_KNOWLEDGE_DIR:?Set OPENAB_AGENT_KNOWLEDGE_DIR to a curated published directory}
+        target: /home/node/obsidian-vault
+        read_only: true
     environment:
       - GEMINI_DISCORD_TOKEN=${GEMINI_DISCORD_TOKEN}
       - GEMINI_CHANNEL_ID=${DISCORD_CHANNEL_ID}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_CLI_TRUST_WORKSPACE=true
+    command: ["openab", "run", "-c", "/etc/openab/config.toml"]
 
   opencode-professor:
     image: ghcr.io/openabdev/openab-opencode:latest
@@ -33,7 +37,10 @@ services:
       - ./config/agents/opencode-professor.toml:/etc/openab/config.toml:ro
       - ./data/agents/opencode-professor:/home/node
       - ./data/shared:/home/node/shared
-      - "/home/ubuntu/Documents/Obsidian Vault/:/home/node/obsidian-vault"
+      - type: bind
+        source: ${OPENAB_AGENT_KNOWLEDGE_DIR:?Set OPENAB_AGENT_KNOWLEDGE_DIR to a curated published directory}
+        target: /home/node/obsidian-vault
+        read_only: true
       - ./secrets/professor-key.pem:/home/node/.ssh/github-app-key.pem:ro
       - ./secrets/berlin-key.pem:/home/node/.ssh/berlin-key.pem:ro
       - ./secrets/tokyo-key.pem:/home/node/.ssh/tokyo-key.pem:ro
@@ -75,7 +82,10 @@ services:
       - ./config/agents/opencode-1.toml:/etc/openab/config.toml:ro
       - ./data/agents/opencode-1:/home/node
       - ./data/shared:/home/node/shared
-      - "/home/ubuntu/Documents/Obsidian Vault/:/home/node/obsidian-vault"
+      - type: bind
+        source: ${OPENAB_AGENT_KNOWLEDGE_DIR:?Set OPENAB_AGENT_KNOWLEDGE_DIR to a curated published directory}
+        target: /home/node/obsidian-vault
+        read_only: true
       - ./secrets/berlin-key.pem:/home/node/.ssh/github-app-key.pem:ro
     environment:
       - OPENCODE1_DISCORD_TOKEN=${OPENCODE1_DISCORD_TOKEN}
@@ -106,7 +116,10 @@ services:
       - ./config/agents/opencode-2.toml:/etc/openab/config.toml:ro
       - ./data/agents/opencode-2:/home/node
       - ./data/shared:/home/node/shared
-      - "/home/ubuntu/Documents/Obsidian Vault/:/home/node/obsidian-vault"
+      - type: bind
+        source: ${OPENAB_AGENT_KNOWLEDGE_DIR:?Set OPENAB_AGENT_KNOWLEDGE_DIR to a curated published directory}
+        target: /home/node/obsidian-vault
+        read_only: true
       - ./secrets/tokyo-key.pem:/home/node/.ssh/github-app-key.pem:ro
     environment:
       - OPENCODE2_DISCORD_TOKEN=${OPENCODE2_DISCORD_TOKEN}
@@ -138,6 +151,7 @@ services:
       - ./secrets:/app/secrets:ro
       - ./.env:/app/.env:ro
     environment:
+      - OPENAB_WEBHOOK_HOST=0.0.0.0
       - OPS_ROOM_STATE_DIR=/app/data/ops-room/state
       - OPS_ROOM_TASKS_DIR=/app/data/ops-room/tasks
       - OPS_ROOM_LOGS_DIR=/app/data/ops-room/logs

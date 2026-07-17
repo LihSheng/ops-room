@@ -4,8 +4,8 @@ import { execSync } from 'node:child_process';
 import { POLL_AGENTS } from '../lib/config.mjs';
 import { pollAgentIssues, startIssuePoller } from '../lib/issue-poller.mjs';
 import {
-  REPO, PORT, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR,
-  OPENAB_SERVER_VERSION
+  REPO, PORT, HOST, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR,
+  OPENAB_SERVER_VERSION, OPERATOR_API_ENABLED, SHUTDOWN_TIMEOUT_MS, ISSUE_POLLING_ENABLED,
 } from '../services/runtime-paths.mjs';
 import { initDirs } from '../services/task-store.mjs';
 import '../services/logs.mjs';
@@ -32,7 +32,8 @@ import { configurePrReviewController, handleWebhook, isPrReviewWebhook } from '.
 import { handleAgentsList } from '../routes/agents.mjs';
 import { handleOpenABInstances } from '../routes/openab-instances.mjs';
 import { handleStaticApp } from '../routes/static-app.mjs';
-import { sendJSON, verifyAuth, parseBody } from '../routes/helpers.mjs';
+import { sendJSON, verifyAuth, verifyOperatorAuth, parseBody } from '../routes/helpers.mjs';
+import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.mjs';
 
 const reviewStatus = createGitHubReviewStatusService({
   getCommitStatuses: async ({ sha, agent }) => getCommitStatuses(sha, agent),
@@ -45,6 +46,25 @@ const reviewStatus = createGitHubReviewStatusService({
     agentKey: agent,
   }),
 });
+
+function requireOperatorMutation(req, res) {
+  if (!OPERATOR_API_ENABLED) {
+    sendJSON(res, 404, { error: 'Not found' });
+    return false;
+  }
+  if (!verifyOperatorAuth(req.headers.authorization)) {
+    sendJSON(res, 401, { error: 'Unauthorized' });
+    return false;
+  }
+  return true;
+}
+
+function scheduleTracked(label, operation, errorPrefix) {
+  setImmediate(() => {
+    processLifecycle.run(label, operation)
+      .catch((error) => console.error(errorPrefix, error?.message || error));
+  });
+}
 
 async function executeControllerFix({ dir, taskId, preClaimedLease }) {
   const deps = createFixRuntimeDeps({ taskDir: dir, renewClaim, readTask });
@@ -181,10 +201,11 @@ async function executeControllerReview(task) {
           leaseEpoch: lease?.lease_epoch,
         });
 
-        setImmediate(() => {
-          executeControllerFix({ dir: task.dir, taskId: child.task.id })
-            .catch((error) => console.error('[fix-child-controller] unhandled execution error:', error));
-        });
+        scheduleTracked(
+          `fix:${child.task.id}`,
+          () => executeControllerFix({ dir: task.dir, taskId: child.task.id }),
+          '[fix-child-controller] unhandled execution error:',
+        );
       } else {
         // Policy blocks auto-fix: move to NEEDS_HUMAN instead of creating fix child.
         await transitionTask({
@@ -236,9 +257,11 @@ async function executeControllerReview(task) {
 configurePrReviewController(createPrReviewController({
   fetchPullRequest: async ({ repository, pr, agent }) => ghApi('GET', `repos/${repository}/pulls/${pr}`, agent),
   setCommitStatus: (status) => reviewStatus.set(status),
-  dispatchReview: (task) => {
-    setImmediate(() => { executeControllerReview(task).catch((error) => console.error('[pr-review-controller] unhandled execution error:', error)); });
-  },
+  dispatchReview: (task) => scheduleTracked(
+    `review:${task.task_id || task.id || task.headSha}`,
+    () => executeControllerReview(task),
+    '[pr-review-controller] unhandled execution error:',
+  ),
 }));
 
 // ── Server ──────────────────────────────────────────────────────────────────
@@ -249,6 +272,11 @@ const server = createServer(async (req, res) => {
   const { pathname, searchParams } = url;
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  if (processLifecycle.isDraining() && req.method !== 'GET') {
+    sendJSON(res, 503, { error: 'Ops Room is draining' });
+    return;
+  }
 
   // Health
   if (req.method === 'GET' && pathname === '/health') {
@@ -312,13 +340,13 @@ const server = createServer(async (req, res) => {
 
   const reviewCancelMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/cancel$/);
   if (req.method === 'POST' && reviewCancelMatch) {
-    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    if (!requireOperatorMutation(req, res)) return;
     try {
       const body = await parseBody(req);
       const task = await requestCancellation({
         dir: REVIEW_TASKS_DIR,
         id: reviewCancelMatch[1],
-        actor: String(body?.actor || 'operator'),
+        actor: 'operator-api',
         reason: String(body?.reason || 'operator_requested'),
       });
       sendJSON(res, 202, { task });
@@ -330,7 +358,7 @@ const server = createServer(async (req, res) => {
 
   const reviewRetryMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/retry$/);
   if (req.method === 'POST' && reviewRetryMatch) {
-    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    if (!requireOperatorMutation(req, res)) return;
     try {
       const body = await parseBody(req);
       const task = await retryTask({
@@ -344,7 +372,7 @@ const server = createServer(async (req, res) => {
           .then((dr) => {
             for (const t of dr.tasks) {
               const executor = t.kind === 'fix' ? executeControllerFix : executeControllerReview;
-              executor({
+              scheduleTracked(`operator:${t.id}`, () => executor({
                 dir: REVIEW_TASKS_DIR,
                 task_id: t.id,
                 taskId: t.id,
@@ -360,8 +388,7 @@ const server = createServer(async (req, res) => {
                 mode: t.mode,
                 policy: t.policy || {},
                 lease: t.lease,
-              })
-                .catch((error) => console.error('[operator-dispatch] execution error:', error));
+              }), '[operator-dispatch] execution error:');
             }
           })
           .catch((error) => console.error('[operator-dispatch] failed:', error?.message));
@@ -375,7 +402,7 @@ const server = createServer(async (req, res) => {
 
   const reviewPauseMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/pause$/);
   if (req.method === 'POST' && reviewPauseMatch) {
-    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    if (!requireOperatorMutation(req, res)) return;
     try {
       const body = await parseBody(req);
       const task = await pauseTask({
@@ -392,7 +419,7 @@ const server = createServer(async (req, res) => {
 
   const reviewResumeMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/resume$/);
   if (req.method === 'POST' && reviewResumeMatch) {
-    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    if (!requireOperatorMutation(req, res)) return;
     try {
       const body = await parseBody(req);
       const task = await resumeTask({
@@ -406,7 +433,7 @@ const server = createServer(async (req, res) => {
           .then((dr) => {
             for (const t of dr.tasks) {
               const executor = t.kind === 'fix' ? executeControllerFix : executeControllerReview;
-              executor({
+              scheduleTracked(`operator:${t.id}`, () => executor({
                 dir: REVIEW_TASKS_DIR,
                 task_id: t.id,
                 taskId: t.id,
@@ -422,8 +449,7 @@ const server = createServer(async (req, res) => {
                 mode: t.mode,
                 policy: t.policy || {},
                 lease: t.lease,
-              })
-                .catch((error) => console.error('[operator-dispatch] execution error:', error));
+              }), '[operator-dispatch] execution error:');
             }
           })
           .catch((error) => console.error('[operator-dispatch] failed:', error?.message));
@@ -451,7 +477,7 @@ const server = createServer(async (req, res) => {
 
   const effectResolveMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/effects\/([a-f0-9]+)\/resolve$/);
   if (req.method === 'POST' && effectResolveMatch) {
-    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    if (!requireOperatorMutation(req, res)) return;
     try {
       const body = await parseBody(req);
       const effect = await resolveAmbiguousEffect({
@@ -573,8 +599,7 @@ async function runReviewReconciliationCycle() {
     console.log(`[review-reconciler] dispatched ${dispatchResult.dispatched} eligible task(s)`);
     for (const task of dispatchResult.tasks) {
       const executor = task.kind === 'fix' ? executeControllerFix : executeControllerReview;
-      setImmediate(() => {
-        executor({
+      scheduleTracked(`reconcile:${task.id}`, () => executor({
           dir: REVIEW_TASKS_DIR,
           task_id: task.id,
           taskId: task.id,
@@ -590,9 +615,7 @@ async function runReviewReconciliationCycle() {
           mode: task.mode,
           policy: task.policy || {},
           lease: task.lease,
-        })
-          .catch((error) => console.error('[review-reconciler] dispatch execution error:', error));
-      });
+        }), '[review-reconciler] dispatch execution error:');
     }
   }
 }
@@ -606,30 +629,39 @@ if (!WEBHOOK_SECRET) {
 }
 
 await initDirs();
-startIssuePoller({
+const issuePollerAbort = new AbortController();
+const issuePollerPromise = ISSUE_POLLING_ENABLED ? processLifecycle.track(startIssuePoller({
   agentKeys: POLL_AGENTS,
   intervalMs: 30_000,
-  pollAgent: (agentKey) => pollAgentIssues({
+  signal: issuePollerAbort.signal,
+  pollAgent: (agentKey, signal) => pollAgentIssues({
     agentKey,
     listOpenIssuesForAgent,
     ensureLabel,
     removeLabel,
     addLabel,
     addComment,
-    handleTask,
+    handleTask: (issueNumber, agentKey, issue) => trackAcceptedOperation(
+      processLifecycle,
+      `legacy-issue:${agentKey}#${issueNumber}`,
+      () => handleTask(issueNumber, agentKey, issue),
+    ),
     cancelTask,
+    signal,
   }),
-}).catch((e) => console.error('[server] poller fatal:', e.message));
+}), 'issue-poller') : Promise.resolve();
+issuePollerPromise.catch((e) => console.error('[server] poller fatal:', e.message));
+if (!ISSUE_POLLING_ENABLED) console.log('[poller] disabled by OPS_ROOM_ISSUE_POLLING_ENABLED=false');
 // PR review work is submitted only through the SHA-aware controller. The old
 // in-process PR scanner remains intentionally disabled; GitHub Actions provides
 // the event and recovery producer.
 console.log('[pr-poller] direct PR auto-review poller disabled; controller ingress is authoritative');
-runReviewReconciliationCycle().catch((error) => console.error('[review-reconciler] initial cycle failed:', error?.message));
-setInterval(() => {
+await runReviewReconciliationCycle().catch((error) => console.error('[review-reconciler] initial cycle failed:', error?.message));
+const reconciliationInterval = setInterval(() => {
   runReviewReconciliationCycle().catch((error) => console.error('[review-reconciler] cycle failed:', error?.message));
 }, 60_000).unref();
-server.listen(PORT, () => {
-  console.log(`OpenAB webhook listening on http://0.0.0.0:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`OpenAB webhook listening on http://${HOST}:${PORT}`);
   console.log(`  POST /webhook   - Receive issue commands`);
   console.log(`  GET  /tasks      - List pending tasks`);
   console.log(`  GET  /health     - Health check`);
@@ -640,3 +672,35 @@ server.listen(PORT, () => {
   console.log(`  GET  /api/openab/instances - OpenAB instance dashboard`);
   console.log(`  WORKSPACE_BASE   - ${WORKSPACE_BASE}`);
 });
+
+let shutdownPromise = null;
+
+function closeServer() {
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
+async function shutdown(signal) {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    console.log(`[server] ${signal} received; draining new work`);
+    processLifecycle.beginDrain();
+    issuePollerAbort.abort();
+    clearInterval(reconciliationInterval);
+
+    const serverClosed = closeServer();
+    const drainResult = await processLifecycle.waitForIdle(SHUTDOWN_TIMEOUT_MS);
+    await serverClosed;
+
+    if (!drainResult.idle) {
+      console.error(`[server] drain timed out with ${drainResult.in_flight} operation(s): ${drainResult.operations.join(', ')}`);
+      process.exit(1);
+    }
+
+    console.log('[server] drain complete');
+    process.exitCode = 0;
+  })();
+  return shutdownPromise;
+}
+
+process.once('SIGTERM', () => { shutdown('SIGTERM').catch((error) => { console.error('[server] shutdown failed:', error); process.exit(1); }); });
+process.once('SIGINT', () => { shutdown('SIGINT').catch((error) => { console.error('[server] shutdown failed:', error); process.exit(1); }); });

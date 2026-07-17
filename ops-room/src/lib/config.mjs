@@ -1,29 +1,25 @@
-export const AGENT_IDS = {
-  professor: '1518980056880517140',
-  berlin: '1518983231012208903',
-  tokyo: '1518982568920355017',
-};
+import { AGENT_DEFINITIONS } from '../services/agent-definitions.mjs';
+
+export const AGENT_IDS = Object.fromEntries(
+  AGENT_DEFINITIONS.filter((agent) => agent.discordId).map((agent) => [agent.key, agent.discordId]),
+);
 
 export const AGENT_ALIASES = {
   alpha: 'berlin',
   beta: 'tokyo',
 };
 
-export const POLL_AGENTS = ['professor', 'berlin', 'tokyo'];
+export const POLL_AGENTS = AGENT_DEFINITIONS.filter((agent) => agent.pollEnabled).map((agent) => agent.key);
 
 export const AGENT_NAMES = {
+  ...Object.fromEntries(AGENT_DEFINITIONS.map((agent) => [agent.key, agent.displayName])),
   alpha: 'Berlin',
   beta: 'Tokyo',
-  professor: 'Professor',
-  berlin: 'Berlin',
-  tokyo: 'Tokyo',
 };
 
-export const BOT_USERS = {
-  professor: 'lihsheng-professor[bot]',
-  berlin: 'lihsheng-berlin[bot]',
-  tokyo: 'lihsheng-tokyo[bot]',
-};
+export const BOT_USERS = Object.fromEntries(
+  AGENT_DEFINITIONS.filter((agent) => agent.botUser).map((agent) => [agent.key, agent.botUser]),
+);
 
 export const GITHUB_APP_CONFIG = {
   professor: {

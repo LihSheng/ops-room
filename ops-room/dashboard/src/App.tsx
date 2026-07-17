@@ -68,13 +68,6 @@ const ATTENTION_STATES = new Set([
 ]);
 const SUCCESS_STATES = new Set(['PASSED', 'SUCCESS', 'COMPLETED', 'DONE', 'FIX_PUSHED', 'APPROVED']);
 
-const agentMeta: Record<string, { role: string; description: string }> = {
-  professor: { role: 'Builder', description: 'Plans and implements code changes.' },
-  berlin: { role: 'Reviewer', description: 'Reviews pull requests and reports risks.' },
-  tokyo: { role: 'Verifier', description: 'Validates fixes and regression coverage.' },
-  gemini: { role: 'Researcher', description: 'Handles research and conversational tasks.' },
-};
-
 function normalizeState(task: OpsTask): string {
   return String(task.status || task.state || 'UNKNOWN').toUpperCase();
 }
@@ -231,7 +224,7 @@ function DashboardPage({ openAgent, openLogs }: {
         <MetricCard label="Control plane" value={data.health.status || 'unknown'} helper={`Uptime ${duration(data.health.uptime_seconds)} · ${data.health.version || 'version unknown'}`} icon={<IconServer size={20} />} color={data.health.status === 'ok' ? 'teal' : 'orange'} />
       </SimpleGrid>
 
-      <Grid gutter="lg">
+      <Grid gap="lg">
         <Grid.Col span={{ base: 12, lg: 8 }}>
           <Paper withBorder p="lg" h="100%">
             <SectionHeading title="Work in progress" description="The most recent tasks across all connected agents." action={<Button variant="subtle" size="compact-sm" rightSection={<IconChevronRight size={14} />} onClick={() => navigate('/tasks')}>All tasks</Button>} />
@@ -284,7 +277,8 @@ function AgentTable({ agents, tasks, openAgent, openLogs }: {
         <Table.Tbody>
           {agents.map((agent) => {
             const current = tasks.find((task) => task.agent?.toLowerCase() === agent.agent.toLowerCase() && ACTIVE_STATES.has(normalizeState(task)));
-            const meta = agentMeta[agent.agent.toLowerCase()] || { role: agent.backend || 'Agent', description: 'OpenAB runtime agent.' };
+            const role = agent.role || agent.backend || 'Agent';
+            const description = agent.description || 'OpenAB runtime agent.';
             return (
               <Table.Tr key={agent.agent}>
                 <Table.Td>
@@ -296,7 +290,7 @@ function AgentTable({ agents, tasks, openAgent, openLogs }: {
                   </Group>
                 </Table.Td>
                 <Table.Td><Stack gap={4}><StatusBadge status={agent.runtime?.status} /><Text size="xs" c="dimmed">{agent.runtime?.restart_count || 0} restarts</Text></Stack></Table.Td>
-                <Table.Td><Text size="sm" fw={500}>{meta.role}</Text><Text size="xs" c="dimmed" lineClamp={1}>{meta.description}</Text></Table.Td>
+                <Table.Td><Text size="sm" fw={500}>{role}</Text><Text size="xs" c="dimmed" lineClamp={1}>{description}</Text></Table.Td>
                 <Table.Td>{current ? <><Text size="sm" fw={500} lineClamp={1}>{taskTitle(current)}</Text><Text size="xs" c="dimmed">{relativeTime(taskTimestamp(current))}</Text></> : <Text size="sm" c="dimmed">Idle</Text>}</Table.Td>
                 <Table.Td><Badge variant="dot" color={agent.github_polling_enabled ? 'teal' : 'gray'}>{agent.github_polling_enabled ? 'enabled' : 'disabled'}</Badge></Table.Td>
                 <Table.Td>
@@ -354,14 +348,15 @@ function TasksPage() {
 
 function AgentDrawer({ agent, opened, close, openLogs }: { agent: AgentInstance | null; opened: boolean; close: () => void; openLogs: (agent: AgentInstance) => void }) {
   if (!agent) return null;
-  const meta = agentMeta[agent.agent.toLowerCase()] || { role: agent.backend || 'Agent', description: 'OpenAB runtime agent.' };
+  const role = agent.role || agent.backend || 'Agent';
+  const description = agent.description || 'OpenAB runtime agent.';
   const rows = [
-    ['Runtime', agent.runtime?.status || 'unknown'], ['Health', agent.runtime?.health || 'unknown'], ['Role', meta.role], ['Backend', agent.backend || '-'], ['Service', agent.service || '-'], ['Container', agent.container_name || '-'], ['GitHub polling', agent.github_polling_enabled ? 'Enabled' : 'Disabled'], ['Restarts', String(agent.runtime?.restart_count || 0)], ['Config', agent.config_path || '-'], ['Data directory', agent.data_dir || '-'],
+    ['Desired state', agent.desired_state || 'unmanaged'], ['Observed state', agent.observed_state || agent.runtime?.status || 'unknown'], ['Health', agent.runtime?.health || 'unknown'], ['Role', role], ['Backend', agent.backend || '-'], ['Service', agent.service || '-'], ['Container', agent.container_name || '-'], ['GitHub polling', agent.github_polling_enabled ? 'Enabled' : 'Disabled'], ['Restarts', String(agent.runtime?.restart_count || 0)], ['Config', agent.config_path || '-'], ['Data directory', agent.data_dir || '-'],
   ];
   return (
     <Drawer opened={opened} onClose={close} title="Agent details" position="right" size="lg">
       <Stack gap="lg">
-        <Group><Avatar size={54} radius="lg" color="violet" variant="light">{(agent.display_name || agent.agent).slice(0, 2).toUpperCase()}</Avatar><Box><Title order={3}>{agent.display_name || agent.agent}</Title><Text size="sm" c="dimmed">{meta.description}</Text></Box></Group>
+        <Group><Avatar size={54} radius="lg" color="violet" variant="light">{(agent.display_name || agent.agent).slice(0, 2).toUpperCase()}</Avatar><Box><Title order={3}>{agent.display_name || agent.agent}</Title><Text size="sm" c="dimmed">{description}</Text></Box></Group>
         <Group><StatusBadge status={agent.runtime?.status} /><StatusBadge status={agent.runtime?.health} /></Group>
         <Divider />
         <Stack gap={0}>{rows.map(([label, value]) => <Group key={label} justify="space-between" py="sm" className="detail-row"><Text size="sm" c="dimmed">{label}</Text><Code>{value}</Code></Group>)}</Stack>

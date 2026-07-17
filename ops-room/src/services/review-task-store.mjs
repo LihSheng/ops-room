@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -39,14 +40,65 @@ function now() {
   return new Date().toISOString();
 }
 
+function validateTaskId(id) {
+  const value = String(id);
+  if (!SAFE_ID.test(value)) throw new Error(`Invalid task ID: ${id}`);
+  return value;
+}
+
+function portableFilename(id, extension) {
+  const digest = createHash('sha256').update(validateTaskId(id)).digest('hex');
+  return `task-${digest}${extension}`;
+}
+
 function taskPath(dir, id) {
-  if (!SAFE_ID.test(String(id))) throw new Error(`Invalid task ID: ${id}`);
-  return join(dir, `${id}.json`);
+  return join(dir, portableFilename(id, '.json'));
 }
 
 function claimPath(dir, id) {
-  if (!SAFE_ID.test(String(id))) throw new Error(`Invalid task ID: ${id}`);
-  return join(dir, `${id}.claim`);
+  return join(dir, portableFilename(id, '.claim'));
+}
+
+function legacyPath(dir, id, extension) {
+  const value = validateTaskId(id);
+  if (process.platform === 'win32' && (
+    value.includes(':')
+    || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(value)
+  )) return null;
+  return join(dir, `${value}${extension}`);
+}
+
+function taskPaths(dir, id) {
+  return [taskPath(dir, id), legacyPath(dir, id, '.json')].filter(Boolean);
+}
+
+function claimPaths(dir, id) {
+  return [claimPath(dir, id), legacyPath(dir, id, '.claim')].filter(Boolean);
+}
+
+async function readStoredJson(paths) {
+  for (const path of paths) {
+    try {
+      return { path, value: JSON.parse(await readFile(path, 'utf-8')) };
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+  return null;
+}
+
+function deduplicateTaskRecords(records) {
+  const tasksById = new Map();
+  for (const record of records) {
+    const key = String(record.task.id ?? record.name);
+    const portable = SAFE_ID.test(String(record.task.id ?? ''))
+      && record.name === portableFilename(record.task.id, '.json');
+    const existing = tasksById.get(key);
+    if (!existing || (portable && !existing.portable)) {
+      tasksById.set(key, { task: record.task, portable });
+    }
+  }
+  return [...tasksById.values()].map(({ task }) => task);
 }
 
 export function buildReviewTaskId({ repository, pr, headSha, agent, mode = 'review', taskType = 'review', commentId = null }) {
@@ -84,21 +136,37 @@ export async function writeAtomic(path, value) {
 }
 
 export async function readTask({ dir, id }) {
-  try {
-    return JSON.parse(await readFile(taskPath(dir, id), 'utf-8'));
-  } catch (error) {
-    if (error?.code === 'ENOENT') return null;
+  return (await readStoredJson(taskPaths(dir, id)))?.value ?? null;
+}
+
+export async function scanReviewTasks({ dir }) {
+  let names;
+  try { names = await readdir(dir); } catch (error) {
+    if (error?.code === 'ENOENT') return { scanned: 0, tasks: [], corrupt: [] };
     throw error;
   }
+  const records = [];
+  const corrupt = [];
+  for (const name of names.filter((entry) => entry.endsWith('.json'))) {
+    try {
+      const task = JSON.parse(await readFile(join(dir, name), 'utf-8'));
+      if (!task || typeof task !== 'object' || Array.isArray(task)) {
+        corrupt.push(name.slice(0, -5));
+        continue;
+      }
+      records.push({ name, task });
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      if (error instanceof SyntaxError) { corrupt.push(name.slice(0, -5)); continue; }
+      throw error;
+    }
+  }
+  const tasks = deduplicateTaskRecords(records);
+  return { scanned: tasks.length + corrupt.length, tasks, corrupt };
 }
 
 export async function listReviewTasks({ dir, limit = 100 }) {
-  let names;
-  try { names = await readdir(dir); } catch (error) {
-    if (error?.code === 'ENOENT') return [];
-    throw error;
-  }
-  const tasks = (await Promise.all(names.filter((name) => name.endsWith('.json')).map((name) => readTask({ dir, id: name.slice(0, -5) })))).filter(Boolean);
+  const { tasks } = await scanReviewTasks({ dir });
   return tasks.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, limit);
 }
 
@@ -108,6 +176,8 @@ export async function createOrClaimTask({ dir, input, trigger = 'unknown', polic
     ? buildFixTaskId({ ...input, parentTaskId, agent: input.agent })
     : buildReviewTaskId({ ...input, taskType: input.taskType || input.task_type || 'review', commentId: input.commentId || input.comment_id || null });
   const path = taskPath(dir, id);
+  const existing = await readTask({ dir, id });
+  if (existing) return { created: false, task: existing };
 
   try {
     const handle = await open(path, 'wx');
@@ -203,6 +273,8 @@ export async function claimTask({ dir, id, instanceId, leaseId, leaseEpoch = 1 }
     claimed_at: now(),
     heartbeat_at: now(),
   };
+  const existing = await readStoredJson(claimPaths(dir, id));
+  if (existing) return { claimed: false, claim: existing.value };
   try {
     const handle = await open(path, 'wx');
     try {
@@ -219,13 +291,9 @@ export async function claimTask({ dir, id, instanceId, leaseId, leaseEpoch = 1 }
 
 export async function renewClaim({ dir, id, leaseId, leaseEpoch, now: heartbeatAt = now() }) {
   const path = claimPath(dir, id);
-  let current;
-  try {
-    current = JSON.parse(await readFile(path, 'utf-8'));
-  } catch (error) {
-    if (error?.code === 'ENOENT') throw new Error(`Claim not found: ${id}`);
-    throw error;
-  }
+  const stored = await readStoredJson(claimPaths(dir, id));
+  if (!stored) throw new Error(`Claim not found: ${id}`);
+  const current = stored.value;
   // Validate lease ownership: only the current holder can renew.
   if (leaseId !== undefined && current.lease_id !== leaseId) {
     throw new Error(`Lease ID mismatch: presented ${leaseId}, current ${current.lease_id}`);
@@ -264,29 +332,22 @@ export function isClaimStale(claim, { now: currentTime = now(), staleMinutes = 3
 
 export async function releaseClaim({ dir, id }) {
   await rm(claimPath(dir, id), { force: true });
+  const legacy = legacyPath(dir, id, '.claim');
+  if (legacy) await rm(legacy, { force: true });
 }
 
 export async function countActiveTasks({ dir, repository, pr }) {
-  let names;
-  try { names = await readdir(dir); } catch (error) {
-    if (error?.code === 'ENOENT') return { global: 0, repository: 0, pr: 0 };
-    throw error;
-  }
+  const { tasks } = await scanReviewTasks({ dir });
   let global = 0;
   let repoCount = 0;
   let prCount = 0;
-  for (const name of names) {
-    if (!name.endsWith('.json')) continue;
-    try {
-      const task = JSON.parse(await readFile(join(dir, name), 'utf-8'));
-      if (CONCURRENCY_STATES.has(task.state)) {
-        global += 1;
-        if (repository && task.repository === repository) {
-          repoCount += 1;
-          if (pr !== undefined && task.pr === Number(pr)) prCount += 1;
-        }
-      }
-    } catch { /* skip corrupt files */ }
+  for (const task of tasks) {
+    if (!CONCURRENCY_STATES.has(task.state)) continue;
+    global += 1;
+    if (repository && task.repository === repository) {
+      repoCount += 1;
+      if (pr !== undefined && task.pr === Number(pr)) prCount += 1;
+    }
   }
   return { global, repository: repoCount, pr: prCount };
 }
@@ -304,23 +365,18 @@ export function checkConcurrency({ counts, limits = {} }) {
 export async function recoverStaleTask({ dir, id, now: currentTime = now(), staleMinutes = 30, retryLimit = 3 }) {
   const task = await readTask({ dir, id });
   if (!task) throw new Error(`Task not found: ${id}`);
+  const taskId = task.id || id;
   if (!['CLAIMED', 'RUNNING', 'FIXING'].includes(task.state)) return { recovered: false, reason: 'not_active' };
-  let claim;
-  try {
-    claim = JSON.parse(await readFile(claimPath(dir, id), 'utf-8'));
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-    claim = null;
-  }
+  const claim = (await readStoredJson(claimPaths(dir, taskId)))?.value ?? null;
   if (claim && !isClaimStale(claim, { now: currentTime, staleMinutes })) {
     return { recovered: false, reason: 'heartbeat_fresh' };
   }
-  await releaseClaim({ dir, id });
+  await releaseClaim({ dir, id: taskId });
   const attempt = (task.attempt || 0) + 1;
   const retryBudget = task.policy?.retry_budget ?? retryLimit;
   if (attempt > retryBudget) {
     await transitionTask({
-      dir, id, to: 'NEEDS_HUMAN',
+      dir, id: taskId, to: 'NEEDS_HUMAN',
       reason: 'retry_budget_exhausted',
       patch: { attempt, completed_at: currentTime, error: 'Retry budget exhausted after stale lease recovery' },
     });
@@ -328,7 +384,7 @@ export async function recoverStaleTask({ dir, id, now: currentTime = now(), stal
   }
   const nextEpoch = (task.lease?.lease_epoch || 0) + 1;
   const retried = await transitionTask({
-    dir, id, to: 'QUEUED',
+    dir, id: taskId, to: 'QUEUED',
     reason: 'stale_lease_requeued',
     patch: { attempt, lease: { lease_epoch: nextEpoch }, heartbeat_at: null },
   });

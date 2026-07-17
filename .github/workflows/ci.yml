@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20.19.0']
+    defaults:
+      run:
+        working-directory: ops-room
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: ops-room/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Test
+        run: npm test
+
+      - name: Build dashboard
+        run: npm run build:dashboard
+
+  smoke:
+    name: OpenAB instances smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ops-room
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: ops-room/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build dashboard
+        run: npm run build:dashboard
+
+      - name: Start Ops Room and smoke test instances
+        env:
+          OPENAB_WEBHOOK_SECRET: ci-smoke-secret
+          OPENAB_WEBHOOK_PORT: '17380'
+          OPS_ROOM_RELEASE_SHA: ${{ github.sha }}
+        run: |
+          node src/server/webhook.mjs > /tmp/ops-room-smoke.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:17380/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:17380/health > /dev/null
+          health_json=$(curl --fail --silent http://127.0.0.1:17380/api/health)
+          HEALTH_JSON="$health_json" EXPECTED_SHA="${{ github.sha }}" node -e '
+            const health = JSON.parse(process.env.HEALTH_JSON);
+            if (health.ready !== true || health.revision !== process.env.EXPECTED_SHA) process.exit(1);
+          '
+          npm run smoke:instances
+          kill -TERM "$server_pid"
+          wait "$server_pid"
+          trap - EXIT
+
+  release-artifact:
+    name: Immutable release artifact
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ops-room
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: ops-room/package-lock.json
+
+      - name: Install locked build dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build dashboard
+        run: npm run build:dashboard
+
+      - name: Build and verify immutable artifact
+        run: |
+          npm run release:build -- "${{ github.sha }}" "$RUNNER_TEMP/releases"
+          npm run release:verify -- "$RUNNER_TEMP/releases/ops-room-${{ github.sha }}.tar.gz" "${{ github.sha }}"
+
+  required:
+    name: Required checks
+    if: always()
+    needs: [verify, smoke, release-artifact]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm required jobs passed
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+          RELEASE_RESULT: ${{ needs.release-artifact.result }}
+        run: |
+          test "$VERIFY_RESULT" = success
+          test "$SMOKE_RESULT" = success
+          test "$RELEASE_RESULT" = success

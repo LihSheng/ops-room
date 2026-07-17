@@ -108,7 +108,7 @@ startIssuePoller({
   agentKeys: POLL_AGENTS,
   intervalMs: POLL_INTERVAL_MS,
   logger: console,
-  pollAgent: (agentKey) => pollAgentIssues({
+  pollAgent: (agentKey, signal) => pollAgentIssues({
     agentKey,
     listOpenIssuesForAgent,
     ensureLabel,
@@ -117,6 +117,7 @@ startIssuePoller({
     addComment,
     handleTask,
     logger: console,
+    signal,
   }),
 }).catch((error) => {
   console.error(`[${ts()}] [poller] Fatal:`, error);
