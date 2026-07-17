@@ -40,7 +40,6 @@ import {
   IconBrandGithub,
   IconCheck,
   IconChevronRight,
-  IconClock,
   IconDashboard,
   IconFileText,
   IconGitPullRequest,
@@ -58,6 +57,7 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { opsApi } from './api';
+import { ActivityPage, SettingsPage, WorkflowsPage } from './operational-pages';
 import type { AgentInstance, LogEntry, OpsTask } from './types';
 
 const ACTIVE_STATES = new Set([
@@ -352,12 +352,6 @@ function TasksPage() {
   );
 }
 
-function PlaceholderPage({ title, description, icon, children }: { title: string; description: string; icon: ReactNode; children: ReactNode }) {
-  return (
-    <Stack gap="lg"><Box><Title order={1} className="page-title">{title}</Title><Text c="dimmed" mt={6}>{description}</Text></Box><Paper withBorder p={32}><Group align="flex-start" wrap="nowrap"><ThemeIcon size={48} radius="lg" variant="light">{icon}</ThemeIcon><Box><Title order={3}>Designed for the next phase</Title><Text c="dimmed" mt={8} maw={700}>{children}</Text></Box></Group></Paper></Stack>
-  );
-}
-
 function AgentDrawer({ agent, opened, close, openLogs }: { agent: AgentInstance | null; opened: boolean; close: () => void; openLogs: (agent: AgentInstance) => void }) {
   if (!agent) return null;
   const meta = agentMeta[agent.agent.toLowerCase()] || { role: agent.backend || 'Agent', description: 'OpenAB runtime agent.' };
@@ -438,9 +432,9 @@ export default function App() {
         <Route path="/" element={<DashboardPage openAgent={openAgent} openLogs={openLogs} />} />
         <Route path="/agents" element={<AgentsPage openAgent={openAgent} openLogs={openLogs} />} />
         <Route path="/tasks" element={<TasksPage />} />
-        <Route path="/workflows" element={<PlaceholderPage title="Workflows" description="Reusable agent orchestration and review loops." icon={<IconRoute size={24} />}>This module will define trigger, assignment, review, retry, human-gate, and completion steps. GitHub can initiate a workflow, but the workflow model remains integration-independent.</PlaceholderPage>} />
-        <Route path="/activity" element={<PlaceholderPage title="Activity" description="An auditable timeline of agent and operator actions." icon={<IconClock size={24} />}>This module should combine task transitions, agent lifecycle events, GitHub effects, model decisions, and future human actions into one searchable operational history.</PlaceholderPage>} />
-        <Route path="/settings" element={<PlaceholderPage title="Settings" description="Policies, integrations, permissions, and safe lifecycle controls." icon={<IconSettings size={24} />}>Configuration editing, restart or stop actions, RBAC, approval policies, and secret management should only be enabled after authentication and audit logging are enforced.</PlaceholderPage>} />
+        <Route path="/workflows" element={<WorkflowsPage />} />
+        <Route path="/activity" element={<ActivityPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes></Box></AppShell.Main>
       <AgentDrawer agent={selectedAgent} opened={agentOpened} close={agentDrawer.close} openLogs={(agent) => { agentDrawer.close(); openLogs(agent); }} />
