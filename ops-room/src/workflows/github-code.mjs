@@ -230,7 +230,7 @@ The final PR must include:
 
 async function commandExists(cmd) {
   try {
-    execSync(`which "${cmd}"`, { encoding: 'utf-8', stdio: 'pipe' });
+    execFileSync('which', [cmd], { encoding: 'utf-8', stdio: 'pipe' });
     return true;
   } catch {
     return false;

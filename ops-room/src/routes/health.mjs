@@ -11,29 +11,23 @@ import { readReleaseInfo } from '../services/release-info.mjs';
 let cachedCommandStatus = null;
 let cachedAt = 0;
 const COMMAND_CACHE_MS = 30_000;
+const REPORTED_COMMANDS = ['git', 'gh', 'opencode', 'codex', 'claude'];
 
-async function getCommandStatus(commandExistsFn = commandExists) {
+async function getCommandStatus(commandExistsFn = commandExists, requiredCommands = REQUIRED_COMMANDS) {
+  const commandNames = [...new Set([...REPORTED_COMMANDS, ...requiredCommands])];
   if (commandExistsFn !== commandExists) {
-    return {
-      git: await commandExistsFn('git'),
-      gh: await commandExistsFn('gh'),
-      opencode: await commandExistsFn('opencode'),
-      codex: await commandExistsFn('codex'),
-      claude: await commandExistsFn('claude'),
-    };
+    return Object.fromEntries(await Promise.all(
+      commandNames.map(async (name) => [name, await commandExistsFn(name)]),
+    ));
   }
   const now = Date.now();
   if (cachedCommandStatus && now - cachedAt < COMMAND_CACHE_MS) {
     return cachedCommandStatus;
   }
 
-  cachedCommandStatus = {
-    git: await commandExistsFn('git'),
-    gh: await commandExistsFn('gh'),
-    opencode: await commandExistsFn('opencode'),
-    codex: await commandExistsFn('codex'),
-    claude: await commandExistsFn('claude'),
-  };
+  cachedCommandStatus = Object.fromEntries(await Promise.all(
+    commandNames.map(async (name) => [name, await commandExistsFn(name)]),
+  ));
   cachedAt = now;
   return cachedCommandStatus;
 }
@@ -52,6 +46,7 @@ export async function handleHealth({
   directoryCheckFn = checkDirectory,
   lifecycle = processLifecycle,
   releaseInfoFn = readReleaseInfo,
+  requiredCommands = REQUIRED_COMMANDS,
 } = {}) {
   let releaseInfo;
   let releaseIdentity;
@@ -63,7 +58,7 @@ export async function handleHealth({
     releaseIdentity = { status: 'error', required: true, error: error?.message || 'invalid release manifest' };
   }
 
-  const commands = await getCommandStatus(commandExistsFn);
+  const commands = await getCommandStatus(commandExistsFn, requiredCommands);
   const dependencyEntries = await Promise.all([
     ['task_store', directoryCheckFn(TASKS_DIR)],
     ['review_task_store', directoryCheckFn(REVIEW_TASKS_DIR)],
@@ -71,7 +66,7 @@ export async function handleHealth({
     ['log_store', directoryCheckFn(LOG_DIR)],
     ['workspace_store', directoryCheckFn(WORKSPACE_BASE)],
     ['release_identity', releaseIdentity],
-    ...REQUIRED_COMMANDS.map((command) => [
+    ...requiredCommands.map((command) => [
       `command_${command}`,
       { status: commands[command] ? 'ok' : 'error', required: true, error: commands[command] ? undefined : 'unavailable' },
     ]),

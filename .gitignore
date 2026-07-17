@@ -95,6 +95,7 @@ coverage/
 .turbo/
 .vercel/
 out/
+release-artifacts/
 
 # ------------------------------------------------------------
 # Tooling / local caches

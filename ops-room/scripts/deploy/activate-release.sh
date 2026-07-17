@@ -78,7 +78,10 @@ if [[ -d $release_dir ]]; then
     echo "existing release directory does not match verified artifact: $release_dir" >&2
     exit 65
   }
+  chmod -R a+rX "$release_dir"
+  chmod -R go-w "$release_dir"
 else
+  chmod -R a+rX "$temporary_dir"
   chmod -R go-w "$temporary_dir"
   mv -- "$temporary_dir" "$release_dir"
 fi

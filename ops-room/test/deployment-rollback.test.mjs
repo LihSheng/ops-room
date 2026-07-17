@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readlink, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readlink, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
@@ -79,14 +79,24 @@ node -e '
 
     const migrationEnv = { ...env, OPS_ROOM_ALLOW_LEGACY_MIGRATION: 'true' };
     assert.equal((await run('bash', [join(scriptRoot, 'activate-release.sh'), first.archivePath, first.checksumPath, firstSha], migrationEnv)).code, 0);
+    const firstRelease = join(installRoot, 'releases', firstSha);
+    const releasedServer = join(firstRelease, 'ops-room', 'src', 'server', 'webhook.mjs');
+    assert.equal((await stat(firstRelease)).mode & 0o005, 0o005, 'service user must be able to read and traverse release root');
+    assert.equal((await stat(firstRelease)).mode & 0o022, 0, 'release root must not be group/other writable');
+    assert.equal((await stat(releasedServer)).mode & 0o004, 0o004, 'service user must be able to read release files');
+    assert.equal((await stat(releasedServer)).mode & 0o022, 0, 'release files must not be group/other writable');
+
+    await chmod(firstRelease, 0o750);
+    assert.equal((await run('bash', [join(scriptRoot, 'activate-release.sh'), first.archivePath, first.checksumPath, firstSha], env)).code, 0);
+    assert.equal((await stat(firstRelease)).mode & 0o005, 0o005, 'retry must repair an existing untraversable release');
     assert.equal((await run('bash', [join(scriptRoot, 'activate-release.sh'), second.archivePath, second.checksumPath, secondSha], env)).code, 0);
     assert.equal(await readlink(join(installRoot, 'current')), `releases/${secondSha}`);
 
-    const releasedServer = join(installRoot, 'releases', secondSha, 'ops-room', 'src', 'server', 'webhook.mjs');
-    await writeFile(releasedServer, 'tampered\n');
+    const secondReleasedServer = join(installRoot, 'releases', secondSha, 'ops-room', 'src', 'server', 'webhook.mjs');
+    await writeFile(secondReleasedServer, 'tampered\n');
     const tampered = await run('bash', [join(scriptRoot, 'activate-release.sh'), second.archivePath, second.checksumPath, secondSha], env);
     assert.equal(tampered.code, 65, tampered.stderr);
-    await writeFile(releasedServer, 'console.log("release");\n');
+    await writeFile(secondReleasedServer, 'console.log("release");\n');
 
     const blocked = await run('bash', [join(scriptRoot, 'activate-release.sh'), first.archivePath, first.checksumPath, firstSha], {
       ...env,
