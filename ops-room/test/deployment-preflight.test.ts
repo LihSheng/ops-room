@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import { runPreflight } from '../scripts/deploy/preflight-host.js';
 
+const linuxOnly = process.platform === 'win32' && 'Linux deployment contract';
+
 async function prepareHost({ nodeVersion = '20.19.0', relativeDataPath = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'ops-room-preflight-'));
   const installRoot = join(root, 'opt', 'ops-room');
@@ -38,6 +40,8 @@ async function prepareHost({ nodeVersion = '20.19.0', relativeDataPath = false }
     `OPS_ROOM_STATE_DIR=${join(root, 'data', 'ops-room', 'state')}`,
     `OPS_ROOM_LOGS_DIR=${join(root, 'data', 'ops-room', 'logs')}`,
     `OPENAB_WORKSPACES_DIR=${join(root, 'data', 'workspaces')}`,
+    'OPENAB_WEBHOOK_HOST=127.0.0.1',
+    'OPS_ROOM_OPERATOR_API_ENABLED=false',
     'OPENAB_WEBHOOK_SECRET=test-secret',
     '',
   ].join('\n'));
@@ -55,7 +59,7 @@ async function prepareHost({ nodeVersion = '20.19.0', relativeDataPath = false }
   return { installRoot, scriptsDir, nodeBin, envFile, serviceFile, nodeVersion };
 }
 
-test('deployment preflight accepts a prepared immutable host layout', async () => {
+test('deployment preflight accepts a prepared immutable host layout', { skip: linuxOnly }, async () => {
   const host = await prepareHost();
   const result = await runPreflight({
     ...host,
@@ -68,7 +72,7 @@ test('deployment preflight accepts a prepared immutable host layout', async () =
   assert.ok(result.checks.some((check) => check.name === 'current release link' && check.status === 'warn'));
 });
 
-test('deployment preflight rejects an unsupported Node version and relative persistent paths', async () => {
+test('deployment preflight rejects an unsupported Node version and relative persistent paths', { skip: linuxOnly }, async () => {
   const host = await prepareHost({ nodeVersion: '20.18.0', relativeDataPath: true });
   const result = await runPreflight({
     ...host,
