@@ -20,6 +20,7 @@ services:
       - GEMINI_CHANNEL_ID=${DISCORD_CHANNEL_ID}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_CLI_TRUST_WORKSPACE=true
+    command: ["openab", "run", "-c", "/etc/openab/config.toml"]
 
   opencode-professor:
     image: ghcr.io/openabdev/openab-opencode:latest
