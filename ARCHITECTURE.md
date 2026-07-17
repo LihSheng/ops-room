@@ -99,6 +99,7 @@ Production layout:
 
 ```text
 /opt/ops-room/
+├── bin/node                 # stable host-managed Node.js 20+ binding
 ├── releases/<sha>/
 ├── current -> releases/<sha>
 ├── previous -> releases/<sha>

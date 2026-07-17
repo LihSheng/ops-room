@@ -37,11 +37,16 @@ test('manual activation and rollback switch immutable release links', { skip: wi
   const installRoot = join(temp, 'install');
   const fakeSystemctl = join(temp, 'systemctl');
   const fakeCurl = join(temp, 'curl');
+  const fakeNode = join(temp, 'node');
   const firstSha = '1'.repeat(40);
   const secondSha = '2'.repeat(40);
   try {
     await makeSource(source);
     await writeFile(fakeSystemctl, '#!/usr/bin/env bash\nexit 0\n');
+    await writeFile(fakeNode, `#!/usr/bin/env bash
+if [[ "$1" == "-e" && "$2" == *"process.versions.node"* ]]; then exit 0; fi
+exec "$OPS_ROOM_REAL_NODE" "$@"
+`);
     await writeFile(fakeCurl, `#!/usr/bin/env bash
 node -e '
   const fs = require("fs");
@@ -57,6 +62,7 @@ node -e '
 `);
     await chmod(fakeSystemctl, 0o755);
     await chmod(fakeCurl, 0o755);
+    await chmod(fakeNode, 0o755);
     const first = await buildReleaseArtifact({ sourceRoot: source, outputDir: artifacts, commitSha: firstSha });
     const second = await buildReleaseArtifact({ sourceRoot: source, outputDir: artifacts, commitSha: secondSha });
     const env = {
@@ -64,9 +70,15 @@ node -e '
       OPS_ROOM_SYSTEMCTL_BIN: fakeSystemctl,
       OPS_ROOM_CURL_BIN: fakeCurl,
       OPS_ROOM_HEALTH_URL: 'http://unused.test/api/health',
+      OPS_ROOM_NODE_BIN: fakeNode,
+      OPS_ROOM_REAL_NODE: process.execPath,
     };
 
-    assert.equal((await run('bash', [join(scriptRoot, 'activate-release.sh'), first.archivePath, first.checksumPath, firstSha], env)).code, 0);
+    const unapprovedMigration = await run('bash', [join(scriptRoot, 'activate-release.sh'), first.archivePath, first.checksumPath, firstSha], env);
+    assert.equal(unapprovedMigration.code, 75, unapprovedMigration.stderr);
+
+    const migrationEnv = { ...env, OPS_ROOM_ALLOW_LEGACY_MIGRATION: 'true' };
+    assert.equal((await run('bash', [join(scriptRoot, 'activate-release.sh'), first.archivePath, first.checksumPath, firstSha], migrationEnv)).code, 0);
     assert.equal((await run('bash', [join(scriptRoot, 'activate-release.sh'), second.archivePath, second.checksumPath, secondSha], env)).code, 0);
     assert.equal(await readlink(join(installRoot, 'current')), `releases/${secondSha}`);
 

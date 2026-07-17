@@ -355,8 +355,9 @@ Requires=docker.service
 Type=simple
 User=ubuntu
 WorkingDirectory=/opt/ops-room/current/ops-room
+Environment=PATH=/opt/ops-room/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=/etc/openab/ops-room.env
-ExecStart=/usr/bin/node src/server/webhook.mjs
+ExecStart=/opt/ops-room/bin/node src/server/webhook.mjs
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60

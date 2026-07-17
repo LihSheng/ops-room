@@ -109,7 +109,7 @@ npm run build:dashboard
 npm run release:build -- "$(git rev-parse HEAD)" /tmp/ops-room-releases
 ```
 
-Install root-owned copies of `scripts/deploy/activate-release.sh`, `rollback-release.sh`, and the systemd template under `ops-room/deploy/`. Activate manually only after persistent paths in `/etc/openab/ops-room.env` are verified. Automatic deployment remains deferred.
+Install root-owned copies of `scripts/deploy/activate-release.sh`, `rollback-release.sh`, and the systemd template under `ops-room/deploy/`. Bind a Node.js 20+ executable at `/opt/ops-room/bin/node`, then activate manually only after persistent paths in `/etc/openab/ops-room.env` are verified. For the one-time mutable-checkout cutover, verify no legacy work is active and set `OPS_ROOM_ALLOW_LEGACY_MIGRATION=true`; later activations do not use this flag. Automatic deployment remains deferred.
 
 Cloudflare note: the existing `hermes-dashboard` tunnel can serve both `hermes.lihsheng.space` and `ops-room.lihsheng.space`, but `ops-room.lihsheng.space` must be added as a **Tunnel Public Hostname** that points to `http://localhost:7381`. Creating only a Cloudflare Access application is not enough; after login it will still return the tunnel fallback `404` if the public hostname route is missing.
 

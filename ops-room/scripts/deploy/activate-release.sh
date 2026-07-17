@@ -15,17 +15,24 @@ service=${OPS_ROOM_SERVICE:-openab-ops-room.service}
 health_url=${OPS_ROOM_HEALTH_URL:-http://127.0.0.1:7381/api/health}
 systemctl_bin=${OPS_ROOM_SYSTEMCTL_BIN:-systemctl}
 curl_bin=${OPS_ROOM_CURL_BIN:-curl}
+node_bin=${OPS_ROOM_NODE_BIN:-/opt/ops-room/bin/node}
+allow_legacy_migration=${OPS_ROOM_ALLOW_LEGACY_MIGRATION:-false}
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 [[ $revision =~ ^[a-f0-9]{40}$ ]] || { echo "invalid revision" >&2; exit 64; }
 [[ $install_root = /* && $install_root != / ]] || { echo "unsafe OPS_ROOM_INSTALL_ROOT" >&2; exit 64; }
 [[ -f $archive && -f $checksum ]] || { echo "artifact or checksum missing" >&2; exit 66; }
+[[ -x $node_bin ]] || { echo "Node runtime missing or not executable: $node_bin" >&2; exit 69; }
+"$node_bin" -e 'if (Number(process.versions.node.split(".")[0]) < 20) process.exit(1)' || {
+  echo "Ops Room requires Node.js 20 or newer" >&2
+  exit 69
+}
 
 mkdir -p "$install_root/releases" "$install_root/locks"
 exec 9>"$install_root/locks/deploy.lock"
 flock -n 9 || { echo "another deployment owns the lock" >&2; exit 75; }
 
-node "$script_dir/verify-release.mjs" "$archive" "$revision" "$checksum" >/dev/null
+"$node_bin" "$script_dir/verify-release.mjs" "$archive" "$revision" "$checksum" >/dev/null
 
 release_dir="$install_root/releases/$revision"
 temporary_dir="$install_root/releases/.incoming-$revision-$$"
@@ -41,7 +48,7 @@ health_matches() {
   local expected=$1 response
   for _attempt in $(seq 1 30); do
     if response=$($curl_bin --fail --silent --show-error --connect-timeout 2 --max-time 5 "$health_url" 2>/dev/null) &&
-      HEALTH_JSON="$response" EXPECTED_REVISION="$expected" node -e '
+      HEALTH_JSON="$response" EXPECTED_REVISION="$expected" "$node_bin" -e '
         const value = JSON.parse(process.env.HEALTH_JSON);
         if (value.ready !== true || value.revision !== process.env.EXPECTED_REVISION) process.exit(1);
       '
@@ -81,7 +88,7 @@ if [[ -L "$install_root/current" ]]; then
     echo "current service health unavailable; refusing forced restart" >&2
     exit 69
   }
-  HEALTH_JSON="$response" node -e '
+  HEALTH_JSON="$response" "$node_bin" -e '
     const health = JSON.parse(process.env.HEALTH_JSON);
     const operations = health.lifecycle?.operations || [];
     if (operations.some((operation) => operation.startsWith("legacy-issue:"))) process.exit(1);
@@ -90,6 +97,12 @@ if [[ -L "$install_root/current" ]]; then
     exit 75
   }
   previous_target=$(readlink "$install_root/current")
+  $systemctl_bin stop "$service"
+elif $systemctl_bin is-active --quiet "$service"; then
+  [[ $allow_legacy_migration = true ]] || {
+    echo "legacy service is active; set OPS_ROOM_ALLOW_LEGACY_MIGRATION=true after verifying no active legacy work" >&2
+    exit 75
+  }
   $systemctl_bin stop "$service"
 fi
 
