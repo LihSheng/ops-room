@@ -1,0 +1,35 @@
+name: Apply OPS-002 integration patch
+
+on:
+  push:
+    branches: [feat/audited-task-cancellation]
+    paths:
+      - ops-room/scripts/apply-ops002-patch.mjs
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: feat/audited-task-cancellation
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.19.0'
+      - name: Apply deterministic source patch
+        run: node ops-room/scripts/apply-ops002-patch.mjs
+      - name: Commit integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops-room/src ops-room/scripts/deploy
+          if git diff --cached --quiet; then
+            echo "Patch already applied"
+            exit 0
+          fi
+          git commit -m "wire audited operator cancellation"
+          git push origin HEAD:feat/audited-task-cancellation
