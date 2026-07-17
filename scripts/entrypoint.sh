@@ -25,7 +25,7 @@ refresh_token() {
     echo "Falling back to GH_TOKEN env var if set."
     return 1
   fi
-  result=$(node /scripts/github-app-token.mjs 2>/dev/null) || return 1
+  result=$(node /scripts/github-app-token.js 2>/dev/null) || return 1
   token=$(echo "$result" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).token))")
   expires=$(echo "$result" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).expires_at))")
   write_gh_hosts "$token"

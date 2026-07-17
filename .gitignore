@@ -97,6 +97,14 @@ coverage/
 out/
 release-artifacts/
 
+# TypeScript emits Node runtime JavaScript beside source.
+ops-room/src/**/*.js
+ops-room/src/**/*.js.map
+ops-room/scripts/**/*.js
+ops-room/scripts/**/*.js.map
+ops-room/test/**/*.js
+ops-room/test/**/*.js.map
+
 # ------------------------------------------------------------
 # Tooling / local caches
 # ------------------------------------------------------------

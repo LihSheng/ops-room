@@ -53,7 +53,7 @@ Every agent output must satisfy this minimum standard.
 
 | Check | Required evidence | Positive example | Negative example |
 |---|---|---|---|
-| Traceability | Link conclusion to file path, line, command, or PR diff. | “Routing starts in `ops-room/src/server/webhook.mjs` lines X-Y.” | “The routing is probably in the server.” |
+| Traceability | Link conclusion to file path, line, command, or PR diff. | “Routing starts in `ops-room/src/server/webhook.js` lines X-Y.” | “The routing is probably in the server.” |
 | Minimality | The diff solves the stated task without unrelated cleanup. | Add agent docs only. | Rename unrelated functions while adding docs. |
 | Reversibility | Changes are isolated enough to review or revert. | Feature branch with separate docs files. | Direct push to main with mixed runtime changes. |
 | Safety | No secrets or runtime data exposed. | Mentions excluded paths and avoids reading them. | Copies `.env` or logs into docs. |

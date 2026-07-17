@@ -32,7 +32,7 @@ mkdir -p "$install_root/releases" "$install_root/locks"
 exec 9>"$install_root/locks/deploy.lock"
 flock -n 9 || { echo "another deployment owns the lock" >&2; exit 75; }
 
-"$node_bin" "$script_dir/verify-release.mjs" "$archive" "$revision" "$checksum" >/dev/null
+"$node_bin" "$script_dir/verify-release.js" "$archive" "$revision" "$checksum" >/dev/null
 
 release_dir="$install_root/releases/$revision"
 temporary_dir="$install_root/releases/.incoming-$revision-$$"
@@ -69,7 +69,7 @@ switch_link() {
 
 mkdir "$temporary_dir"
 tar -xzf "$archive" -C "$temporary_dir"
-[[ -f "$temporary_dir/RELEASE.json" && -f "$temporary_dir/ops-room/src/server/webhook.mjs" ]] || {
+[[ -f "$temporary_dir/RELEASE.json" && -f "$temporary_dir/ops-room/src/server/webhook.js" ]] || {
   echo "extracted release is incomplete" >&2
   exit 65
 }

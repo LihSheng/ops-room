@@ -6,7 +6,7 @@ license: MIT
 
 ## Overview
 
-The OpenAB system uses GitHub issues for task dispatch. The current implementation lives in the repo-local `ops-room/` package. `ops-room/src/server/webhook.mjs` starts the HTTP server and an in-process poll loop; `ops-room/src/server/poller.mjs` is the standalone poller entrypoint and now reuses the same shared poll-loop helpers.
+The OpenAB system uses GitHub issues for task dispatch. The current implementation lives in the repo-local `ops-room/` package. `ops-room/src/server/webhook.js` starts the HTTP server and an in-process poll loop; `ops-room/src/server/poller.js` is the standalone poller entrypoint and now reuses the same shared poll-loop helpers.
 
 ### Flow
 
@@ -22,15 +22,15 @@ The OpenAB system uses GitHub issues for task dispatch. The current implementati
 
 ### Key files
 
-- `ops-room/src/server/webhook.mjs` — webhook server + in-process poller + coding/chat task workflows
-- `ops-room/src/server/poller.mjs` — standalone poller entrypoint using the shared poll loop
-- `ops-room/src/server/claim.mjs` — manual claim/list CLI
-- `ops-room/src/server/github-app-token.mjs` — generates GitHub App installation tokens
-- `ops-room/src/lib/config.mjs` — shared agent and label configuration
-- `ops-room/src/lib/task-routing.mjs` — shared task parsing and routing helpers
-- `ops-room/src/lib/github-app.mjs` — shared GitHub App token helper
-- `ops-room/src/lib/github-ops.mjs` — shared comment/label/API helpers
-- `ops-room/src/lib/issue-poller.mjs` — shared poll loop used by both server entrypoints
+- `ops-room/src/server/webhook.js` — webhook server + in-process poller + coding/chat task workflows
+- `ops-room/src/server/poller.js` — standalone poller entrypoint using the shared poll loop
+- `ops-room/src/server/claim.js` — manual claim/list CLI
+- `ops-room/src/server/github-app-token.js` — generates GitHub App installation tokens
+- `ops-room/src/lib/config.js` — shared agent and label configuration
+- `ops-room/src/lib/task-routing.js` — shared task parsing and routing helpers
+- `ops-room/src/lib/github-app.js` — shared GitHub App token helper
+- `ops-room/src/lib/github-ops.js` — shared comment/label/API helpers
+- `ops-room/src/lib/issue-poller.js` — shared poll loop used by both server entrypoints
 
 ## GitHub App authentication
 
@@ -42,7 +42,7 @@ Three GitHub Apps provide per-agent bot identities:
 | Berlin | 4131786 | `lihsheng-berlin[bot]` | `/home/node/.ssh/berlin-key.pem` |
 | Tokyo | 4131816 | `lihsheng-tokyo[bot]` | `/home/node/.ssh/tokyo-key.pem` |
 
-Env vars used by `githubEnvForAgent()` in `ops-room/src/lib/github-app.mjs`:
+Env vars used by `githubEnvForAgent()` in `ops-room/src/lib/github-app.js`:
 
 ```javascript
 const GITHUB_APP_CONFIG = {
@@ -54,10 +54,10 @@ const GITHUB_APP_CONFIG = {
 
 ### Token generation
 
-Use `node ops-room/src/server/github-app-token.mjs` with the right env vars:
+Use `node ops-room/src/server/github-app-token.js` with the right env vars:
 
 ```javascript
-const tokenResult = execFileSync('node', ['ops-room/src/server/github-app-token.mjs'], {
+const tokenResult = execFileSync('node', ['ops-room/src/server/github-app-token.js'], {
   encoding: 'utf-8',
   env: { ...process.env, ...githubEnvForAgent('tokyo') },
 }).trim();
@@ -74,7 +74,7 @@ Berlin's GitHub App (`lihsheng-berlin`) **lacks `issues: write` permission**. Po
 gh: Resource not accessible by integration (HTTP 403)
 ```
 
-The `addComment` function in `server.mjs` handles this by falling back to the professor token:
+The `addComment` function in `server.js` handles this by falling back to the professor token:
 
 ```javascript
 function addComment(issueNumber, body, agentKey = 'professor') {
@@ -97,7 +97,7 @@ To verify permissions, use the installation token to check accessible repos:
 
 ```bash
 GITHUB_APP_ID=4131786 GITHUB_APP_INSTALLATION_ID=142302463 GITHUB_APP_KEY_PATH=/home/node/.ssh/berlin-key.pem \
-  node /scripts/github-app-token.mjs | jq -r '.token' | xargs -I{} \
+  node /scripts/github-app-token.js | jq -r '.token' | xargs -I{} \
   curl -H "Authorization: Bearer {}" https://api.github.com/installation/repositories
 ```
 
@@ -107,7 +107,7 @@ Use `gh api` with the professor token (has full access):
 
 ```javascript
 function ghApi(method, path) {
-  const tokenResult = execFileSync('node', ['/scripts/github-app-token.mjs'], {
+  const tokenResult = execFileSync('node', ['/scripts/github-app-token.js'], {
     encoding: 'utf-8',
     env: { ...process.env, ...githubEnvForAgent('professor') },
   }).trim();
@@ -271,7 +271,7 @@ Look for:
 
 There are still two entrypoints:
 
-- `ops-room/src/server/webhook.mjs` — live HTTP server with in-process poller
-- `ops-room/src/server/poller.mjs` — standalone poller
+- `ops-room/src/server/webhook.js` — live HTTP server with in-process poller
+- `ops-room/src/server/poller.js` — standalone poller
 
 The duplicated poll-loop, task-routing, GitHub App auth, and GitHub operations logic has been moved into `ops-room/src/lib/` so changes no longer need to be mirrored manually across both entrypoints.
