@@ -64,12 +64,6 @@ async function stopServer(child) {
 test('operator cancellation requires authentication and replays an identical request', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ops-room-operator-http-'));
   const reviewTasksDir = join(root, 'ops-room', 'review-tasks');
-  const task = (await createOrClaimTask({
-    dir: reviewTasksDir,
-    input: {
-      repository: 'LihSheng/LinkUp', pr: 42, headSha: 'f'.repeat(40), agent: 'professor', mode: 'review',
-    },
-  })).task;
   const port = await availablePort();
   const child = startServer({ root, port, operatorEnabled: true });
   let stderr = '';
@@ -77,8 +71,14 @@ test('operator cancellation requires authentication and replays an identical req
 
   try {
     const base = `http://127.0.0.1:${port}`;
-    const taskPath = `/api/operator/tasks/${task.id}/cancel`;
     await waitForHealth(`${base}/health`);
+    const task = (await createOrClaimTask({
+      dir: reviewTasksDir,
+      input: {
+        repository: 'LihSheng/LinkUp', pr: 42, headSha: 'f'.repeat(40), agent: 'professor', mode: 'review',
+      },
+    })).task;
+    const taskPath = `/api/operator/tasks/${task.id}/cancel`;
     const payload = JSON.stringify({ reason: 'Duplicate task', idempotency_key: 'http-cancel-0001' });
 
     const unauthorized = await fetch(`${base}${taskPath}`, {
