@@ -10,6 +10,7 @@ import { buildReleaseArtifact } from '../scripts/deploy/release-artifact.js';
 
 const windows = process.platform === 'win32';
 const scriptRoot = resolve(fileURLToPath(new URL('../scripts/deploy/', import.meta.url)));
+const PROFILE_IDS = ['professor', 'berlin', 'tokyo', 'gemini'];
 
 function run(command, args, env) {
   return new Promise((resolvePromise) => {
@@ -28,6 +29,10 @@ async function makeSource(root) {
   await writeFile(join(root, 'src', 'server', 'webhook.js'), 'console.log("release");\n');
   await writeFile(join(root, 'dist', 'dashboard', 'index.html'), '<!doctype html>\n');
   await writeFile(join(root, 'package.json'), JSON.stringify({ version: '1.0.0', engines: { node: '>=20' } }));
+  await mkdir(join(root, '..', 'config', 'agent-profiles'), { recursive: true });
+  for (const id of PROFILE_IDS) {
+    await writeFile(join(root, '..', 'config', 'agent-profiles', `${id}.json`), JSON.stringify({ id }));
+  }
 }
 
 test('manual activation and rollback switch immutable release links', { skip: windows && 'Linux deployment contract' }, async () => {
