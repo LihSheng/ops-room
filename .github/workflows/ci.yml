@@ -60,6 +60,9 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
 
+      - name: Build server
+        run: npm run build:server
+
       - name: Build dashboard
         run: npm run build:dashboard
 
@@ -69,7 +72,7 @@ jobs:
           OPENAB_WEBHOOK_PORT: '17380'
           OPS_ROOM_RELEASE_SHA: ${{ github.sha }}
         run: |
-          node src/server/webhook.mjs > /tmp/ops-room-smoke.log 2>&1 &
+          node src/server/webhook.js > /tmp/ops-room-smoke.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           for attempt in {1..30}; do
