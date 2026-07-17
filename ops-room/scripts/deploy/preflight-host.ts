@@ -6,17 +6,26 @@ import { fileURLToPath } from 'node:url';
 
 const MINIMUM_NODE_VERSION = [20, 19, 0];
 const ABSOLUTE_PATH_KEYS = new Set([
+  'GITHUB_APP_KEY_PATH',
+  'GITHUB_APP_KEY_PATH_BERLIN',
+  'GITHUB_APP_KEY_PATH_TOKYO',
+  'OPENAB_AGENT_KNOWLEDGE_DIR',
   'OPENAB_AGENTS_CONFIG_DIR',
+  'OPENAB_AGENTS_DIR',
+  'OPENAB_CONFIG_DIR',
   'OPENAB_DATA_DIR',
+  'OPENAB_ROOT',
   'OPENAB_SECRETS_DIR',
   'OPENAB_SHARED_DIR',
   'OPENAB_WORKSPACES_DIR',
   'OPS_ROOM_DATA_DIR',
   'OPS_ROOM_LOGS_DIR',
   'OPS_ROOM_REVIEW_TASKS_DIR',
+  'OPS_ROOM_ROOT',
   'OPS_ROOM_STATE_DIR',
   'OPS_ROOM_TASKS_DIR',
 ]);
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 
 function versionTuple(value: string) {
   return value.trim().split('.').slice(0, 3).map((part) => Number.parseInt(part, 10) || 0);
@@ -148,10 +157,24 @@ export async function runPreflight({
     } else {
       record('persistent path configuration', 'pass', 'configured path values are absolute');
     }
+
     if (!values.get('OPENAB_WEBHOOK_SECRET')) {
       record('webhook credential reference', 'fail', 'OPENAB_WEBHOOK_SECRET is empty');
     } else {
       record('webhook credential reference', 'pass', 'configured (value not displayed)');
+    }
+
+    const bindHost = values.get('OPENAB_WEBHOOK_HOST') || '127.0.0.1';
+    if (!LOOPBACK_HOSTS.has(bindHost)) {
+      record('network bind boundary', 'fail', `OPENAB_WEBHOOK_HOST must be loopback, found ${bindHost}`);
+    } else {
+      record('network bind boundary', 'pass', bindHost);
+    }
+
+    if (values.get('OPS_ROOM_OPERATOR_API_ENABLED') === 'true') {
+      record('operator API safety', 'fail', 'operator mutations must remain disabled during the deployment drill');
+    } else {
+      record('operator API safety', 'pass', 'disabled');
     }
   }
 
@@ -170,17 +193,19 @@ export async function runPreflight({
   }
 
   const currentLink = join(installRoot, 'current');
-  if (!(await exists(currentLink))) {
-    record('current release link', 'warn', 'not present yet; expected before the first activation only');
-  } else {
-    try {
-      const info = await lstat(currentLink);
-      if (!info.isSymbolicLink()) {
-        record('current release link', 'fail', `${currentLink} is not a symbolic link`);
-      } else {
-        record('current release link', 'pass', currentLink);
-      }
-    } catch (error) {
+  try {
+    const info = await lstat(currentLink);
+    if (!info.isSymbolicLink()) {
+      record('current release link', 'fail', `${currentLink} is not a symbolic link`);
+    } else if (!(await exists(currentLink))) {
+      record('current release link', 'fail', `${currentLink} is a broken symbolic link`);
+    } else {
+      record('current release link', 'pass', currentLink);
+    }
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      record('current release link', 'warn', 'not present yet; expected before the first activation only');
+    } else {
       record('current release link', 'fail', error?.message || 'cannot inspect current link');
     }
   }
