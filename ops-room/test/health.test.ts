@@ -20,8 +20,8 @@ test('health reports release revision and critical dependency readiness', async 
   assert.ok(health.version);
   assert.ok(health.revision);
   assert.deepEqual(Object.keys(health.dependencies), [
-    'task_store', 'review_task_store', 'state_store', 'log_store', 'workspace_store',
-    'release_identity', 'command_git', 'command_gh',
+    'task_store', 'review_task_store', 'state_store', 'log_store', 'audit_store',
+    'idempotency_store', 'workspace_store', 'release_identity', 'command_git', 'command_gh',
   ]);
 });
 
