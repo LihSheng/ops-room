@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { loadAgentProfiles } from '../src/services/agent-profile/loader.js';
 import { initializeAgentProfileRegistry, listAgentProfiles, resetAgentProfileRegistryForTests } from '../src/services/agent-profile/registry.js';
 import { AgentProfileValidationError } from '../src/services/agent-profile/schema.js';
 
-const sourceProfiles = resolve(new URL('../../config/agent-profiles', import.meta.url).pathname);
+const sourceProfiles = fileURLToPath(new URL('../../config/agent-profiles/', import.meta.url));
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'ops-room-profiles-'));
