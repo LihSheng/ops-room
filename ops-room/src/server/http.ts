@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import { POLL_AGENTS } from '../lib/config.js';
 import { pollAgentIssues, startIssuePoller } from '../lib/issue-poller.js';
 import {
-  REPO, PORT, HOST, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR,
+  REPO, PORT, HOST, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR, AUDIT_DIR, IDEMPOTENCY_DIR,
   OPENAB_SERVER_VERSION, OPERATOR_API_ENABLED, SHUTDOWN_TIMEOUT_MS, ISSUE_POLLING_ENABLED,
 } from '../services/runtime-paths.js';
 import { initDirs } from '../services/task-store.js';
@@ -32,6 +32,9 @@ import { configurePrReviewController, handleWebhook, isPrReviewWebhook } from '.
 import { handleAgentsList } from '../routes/agents.js';
 import { handleOpenABInstances } from '../routes/openab-instances.js';
 import { handleStaticApp } from '../routes/static-app.js';
+import { handleOperatorTaskCancellation } from '../routes/operator-tasks.js';
+import { handleAuditEventDetail, handleAuditEventsList } from '../routes/audit-events.js';
+import { resolveOperatorIdentity } from '../services/operator-identity.js';
 import { sendJSON, verifyAuth, verifyOperatorAuth, parseBody } from '../routes/helpers.js';
 import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.js';
 
@@ -50,13 +53,18 @@ const reviewStatus = createGitHubReviewStatusService({
 function requireOperatorMutation(req, res) {
   if (!OPERATOR_API_ENABLED) {
     sendJSON(res, 404, { error: 'Not found' });
-    return false;
+    return null;
   }
   if (!verifyOperatorAuth(req.headers.authorization)) {
     sendJSON(res, 401, { error: 'Unauthorized' });
-    return false;
+    return null;
   }
-  return true;
+  try {
+    return resolveOperatorIdentity();
+  } catch {
+    sendJSON(res, 503, { error: 'Operator identity unavailable' });
+    return null;
+  }
 }
 
 function scheduleTracked(label, operation, errorPrefix) {
@@ -338,15 +346,53 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const operatorCancelMatch = pathname.match(/^\/api\/operator\/tasks\/([A-Za-z0-9._:-]+)\/cancel$/);
+  if (req.method === 'POST' && operatorCancelMatch) {
+    const actor = requireOperatorMutation(req, res);
+    if (!actor) return;
+    try {
+      const body = await parseBody(req);
+      const result = await handleOperatorTaskCancellation({
+        taskId: operatorCancelMatch[1],
+        body,
+        actor,
+        reviewTasksDir: REVIEW_TASKS_DIR,
+        auditDir: AUDIT_DIR,
+        idempotencyDir: IDEMPOTENCY_DIR,
+      });
+      sendJSON(res, result.status, result.body);
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Cancellation failed' });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/audit-events') {
+    if (!requireOperatorMutation(req, res)) return;
+    const data = await handleAuditEventsList(searchParams, { auditDir: AUDIT_DIR });
+    sendJSON(res, 200, data);
+    return;
+  }
+
+  const auditDetailMatch = pathname.match(/^\/api\/audit-events\/([A-Fa-f0-9-]+)$/);
+  if (req.method === 'GET' && auditDetailMatch) {
+    if (!requireOperatorMutation(req, res)) return;
+    const event = await handleAuditEventDetail(auditDetailMatch[1], { auditDir: AUDIT_DIR });
+    if (!event) sendJSON(res, 404, { error: 'Audit event not found' });
+    else sendJSON(res, 200, { event });
+    return;
+  }
+
   const reviewCancelMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/cancel$/);
   if (req.method === 'POST' && reviewCancelMatch) {
-    if (!requireOperatorMutation(req, res)) return;
+    const actor = requireOperatorMutation(req, res);
+    if (!actor) return;
     try {
       const body = await parseBody(req);
       const task = await requestCancellation({
         dir: REVIEW_TASKS_DIR,
         id: reviewCancelMatch[1],
-        actor: 'operator-api',
+        actor: actor.actor_id,
         reason: String(body?.reason || 'operator_requested'),
       });
       sendJSON(res, 202, { task });

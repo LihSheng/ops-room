@@ -2,7 +2,7 @@ import { commandExists } from '../workflows/github-code.js';
 import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import {
-  TASKS_DIR, REVIEW_TASKS_DIR, STATE_DIR, LOG_DIR, WORKSPACE_BASE,
+  TASKS_DIR, REVIEW_TASKS_DIR, STATE_DIR, LOG_DIR, WORKSPACE_BASE, AUDIT_DIR, IDEMPOTENCY_DIR,
   OPENAB_SERVER_VERSION, REQUIRED_COMMANDS
 } from '../services/runtime-paths.js';
 import { processLifecycle } from '../services/process-lifecycle.js';
@@ -64,6 +64,8 @@ export async function handleHealth({
     ['review_task_store', directoryCheckFn(REVIEW_TASKS_DIR)],
     ['state_store', directoryCheckFn(STATE_DIR)],
     ['log_store', directoryCheckFn(LOG_DIR)],
+    ['audit_store', directoryCheckFn(AUDIT_DIR)],
+    ['idempotency_store', directoryCheckFn(IDEMPOTENCY_DIR)],
     ['workspace_store', directoryCheckFn(WORKSPACE_BASE)],
     ['release_identity', releaseIdentity],
     ...requiredCommands.map((command) => [
@@ -89,6 +91,8 @@ export async function handleHealth({
       tasks_dir: TASKS_DIR,
       state_dir: STATE_DIR,
       logs_dir: LOG_DIR,
+      audit_dir: AUDIT_DIR,
+      idempotency_dir: IDEMPOTENCY_DIR,
       workspaces_dir: WORKSPACE_BASE,
     },
     commands,
