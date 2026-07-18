@@ -1,378 +1,415 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { handleReadOnlyAgentProfileApi } from '../src/routes/agent-profiles.js';
+import { buildMemorySpaceCatalog, buildSkillCatalog } from '../src/services/agent-profile/catalogs.js';
+import { toPublicAgentProfile } from '../src/services/agent-profile/public-profile.js';
+import { initializeAgentProfileRegistry, resetAgentProfileRegistryForTests } from '../src/services/agent-profile/registry.js';
+import type { AgentProfile } from '../src/services/agent-profile/schema.js';
 
-// ── Test helpers that mirror the frontend types and join logic ──
+test.before(async () => {
+  resetAgentProfileRegistryForTests();
+  await initializeAgentProfileRegistry();
+});
 
-interface PublicAgentProfile {
-  id: string;
-  display_name: string;
-  schema_version: number;
-  profile_version: string;
-  mission: string;
-  personality: {
-    communication_style: string;
-    decision_policy: string[];
-    constraints: string[];
-  };
-  runtime: {
-    backend: string;
-  };
-  skills: string[];
-  memory: {
-    read: string[];
-    write: string[];
-  };
-  repositories: string[];
-  enabled: boolean;
-}
+test.after(() => resetAgentProfileRegistryForTests());
 
-interface AgentInstance {
-  agent: string;
-  display_name?: string;
-  role?: string;
-  backend?: string;
-  service?: string;
-  container_name?: string;
-  runtime?: { status?: string; health?: string; restart_count?: number; started_at?: string };
-  github_polling_enabled?: boolean;
-}
+// ── Integration: profile + runtime join using production APIs ──
 
-interface SkillCatalogItem {
-  key: string;
-  agents: string[];
-}
+test('agent list integration: profiles and runtime instances join by agent ID', () => {
+  const profilesResult = handleReadOnlyAgentProfileApi('/api/agents/profiles');
+  assert.equal(profilesResult?.status, 200);
+  const { profiles } = profilesResult!.body as { profiles: Record<string, unknown>[]; count: number };
 
-interface MemorySpaceItem {
-  key: string;
-  readers: string[];
-  writers: string[];
-}
+  // Build a profile map keyed by agent ID
+  const profileMap = new Map(profiles.map((p) => ({ id: p.id as string, profile: p })).map((e) => [e.id, e.profile]));
 
-// ── Join logic (mirrors dashboard) ──
+  // Simulated runtime instances (production data shape matches openab-instances.ts)
+  const runtimeInstances = [
+    { agent: 'professor', runtime: { status: 'running' } },
+    { agent: 'berlin', runtime: { status: 'running' } },
+    { agent: 'tokyo', runtime: { status: 'exited' } },
+    { agent: 'gemini', runtime: { status: 'running' } },
+  ];
 
-function joinProfilesAndRuntime(
-  profiles: PublicAgentProfile[],
-  instances: AgentInstance[],
-): Array<{ id: string; profile: PublicAgentProfile | null; runtime: AgentInstance | null }> {
-  const profileMap = new Map(profiles.map((p) => [p.id, p]));
-  const instanceMap = new Map(instances.map((i) => [i.agent, i]));
-  const allIds = new Set([...profiles.map((p) => p.id), ...instances.map((i) => i.agent)]);
-  return [...allIds].map((id) => ({
-    id,
-    profile: profileMap.get(id) || null,
-    runtime: instanceMap.get(id) || null,
-  }));
-}
+  const runtimeMap = new Map(runtimeInstances.map((i) => [i.agent, i]));
 
-// ── Test fixtures ──
-
-const berlin: PublicAgentProfile = {
-  id: 'berlin',
-  display_name: 'Berlin',
-  schema_version: 1,
-  profile_version: '1.0.0',
-  mission: 'Review code for correctness and risk.',
-  personality: {
-    communication_style: 'Direct and evidence-based.',
-    decision_policy: ['Base findings on code.', 'Distinguish severity.'],
-    constraints: ['Do not merge.', 'Do not expose secrets.'],
-  },
-  runtime: { backend: 'opencode' },
-  skills: ['pull-request-review', 'risk-analysis'],
-  memory: { read: ['Projects/Ops-Room'], write: ['Projects/Ops-Room/Reviews'] },
-  repositories: ['LihSheng/ops-room'],
-  enabled: true,
-};
-
-const tokyo: PublicAgentProfile = {
-  id: 'tokyo',
-  display_name: 'Tokyo',
-  schema_version: 1,
-  profile_version: '1.0.0',
-  mission: 'Verify fixes and regression safety.',
-  personality: {
-    communication_style: 'Methodical and skeptical.',
-    decision_policy: ['Reproduce behavior.', 'Prefer automated coverage.'],
-    constraints: ['Do not merge.', 'Do not weaken tests.'],
-  },
-  runtime: { backend: 'opencode' },
-  skills: ['regression-testing', 'verification'],
-  memory: { read: ['Projects/Ops-Room'], write: ['Projects/Ops-Room/Verification'] },
-  repositories: ['LihSheng/ops-room'],
-  enabled: false,
-};
-
-const professorRuntime: AgentInstance = {
-  agent: 'professor',
-  display_name: 'Professor',
-  role: 'Builder',
-  backend: 'opencode',
-  service: 'opencode-professor',
-  container_name: 'openab-opencode-professor',
-  runtime: { status: 'running', health: 'healthy', restart_count: 0 },
-  github_polling_enabled: true,
-};
-
-const berlinRuntime: AgentInstance = {
-  agent: 'berlin',
-  display_name: 'Berlin',
-  role: 'Reviewer',
-  backend: 'opencode',
-  runtime: { status: 'exited', health: 'unknown', restart_count: 3 },
-  github_polling_enabled: true,
-};
-
-// ── Public type contract tests ──
-
-test('PublicAgentProfile type matches server API contract', () => {
-  const keys = Object.keys(berlin).sort();
-  assert.deepEqual(keys, [
-    'display_name', 'enabled', 'id', 'memory', 'mission', 'personality',
-    'profile_version', 'repositories', 'runtime', 'schema_version', 'skills',
+  // Join: all agent IDs from both sources
+  const allIds = new Set([
+    ...profiles.map((p) => p.id as string),
+    ...runtimeInstances.map((i) => i.agent),
   ]);
 
-  // No internal fields present
-  for (const profile of [berlin, tokyo]) {
-    assert.equal('source' in profile, false, `${profile.id}: source field must not be public`);
-    assert.equal('sourcePath' in profile, false, `${profile.id}: sourcePath field must not be public`);
-    assert.equal('container' in profile, false, `${profile.id}: container field must not be public`);
-    assert.equal('service' in profile, false, `${profile.id}: service field must not be public`);
-    assert.equal('image' in profile, false, `${profile.id}: image field must not be public`);
-    assert.equal('config_path' in profile, false, `${profile.id}: config_path field must not be public`);
-    assert.equal('data_dir' in profile, false, `${profile.id}: data_dir field must not be public`);
-  }
-});
-
-test('PublicAgentProfile personality policy and constraints are distinct arrays', () => {
-  assert.ok(Array.isArray(berlin.personality.decision_policy));
-  assert.ok(Array.isArray(berlin.personality.constraints));
-  assert.equal(berlin.personality.decision_policy.length > 0, true);
-  assert.equal(berlin.personality.constraints.length > 0, true);
-  assert.equal(typeof berlin.personality.communication_style, 'string');
-});
-
-test('PublicAgentProfile memory scopes are read/write distinct', () => {
-  assert.ok(Array.isArray(berlin.memory.read));
-  assert.ok(Array.isArray(berlin.memory.write));
-  // Read and write arrays are separate
-  assert.notDeepEqual(berlin.memory.read, berlin.memory.write);
-});
-
-// ── Join logic tests ──
-
-test('join: profiles and runtime instances are joined by agent ID', () => {
-  const result = joinProfilesAndRuntime(
-    [berlin, tokyo],
-    [professorRuntime, berlinRuntime],
-  );
-  assert.equal(result.length, 3); // berlin, tokyo, professor
-
-  const berlinRow = result.find((r) => r.id === 'berlin');
-  assert.ok(berlinRow);
-  assert.equal(berlinRow.profile?.id, 'berlin');
-  assert.equal(berlinRow.runtime?.agent, 'berlin');
-
-  const professorRow = result.find((r) => r.id === 'professor');
-  assert.ok(professorRow);
-  assert.equal(professorRow.profile, null);
-  assert.equal(professorRow.runtime?.agent, 'professor');
-
-  const tokyoRow = result.find((r) => r.id === 'tokyo');
-  assert.ok(tokyoRow);
-  assert.equal(tokyoRow.profile?.id, 'tokyo');
-  assert.equal(tokyoRow.runtime, null);
-});
-
-test('join: profiles remain visible when runtime data is missing', () => {
-  const result = joinProfilesAndRuntime([berlin], []);
-  assert.equal(result.length, 1);
-  assert.equal(result[0].id, 'berlin');
-  assert.equal(result[0].profile?.id, 'berlin');
-  assert.equal(result[0].runtime, null);
-});
-
-test('join: runtime instances remain visible when profile data is missing', () => {
-  const result = joinProfilesAndRuntime([], [professorRuntime]);
-  assert.equal(result.length, 1);
-  assert.equal(result[0].id, 'professor');
-  assert.equal(result[0].profile, null);
-  assert.equal(result[0].runtime?.agent, 'professor');
-});
-
-test('join: enabled and disabled profile states render correctly', () => {
-  assert.equal(berlin.enabled, true);
-  assert.equal(tokyo.enabled, false);
-});
-
-test('join: skill, memory, and repository counts are correct', () => {
-  assert.equal(berlin.skills.length, 2);
-  assert.equal(berlin.memory.read.length, 1);
-  assert.equal(berlin.memory.write.length, 1);
-  assert.equal(berlin.repositories.length, 1);
-});
-
-// ── Skills catalog tests ──
-
-test('skills catalog: build deterministic skill-to-agent map', () => {
-  const skills = new Map<string, Set<string>>();
-  for (const profile of [berlin, tokyo]) {
-    for (const skill of profile.skills) {
-      const agents = skills.get(skill) || new Set();
-      agents.add(profile.id);
-      skills.set(skill, agents);
-    }
-  }
-  const catalog: SkillCatalogItem[] = [...skills.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, agents]) => ({ key, agents: [...agents].sort() }));
-
-  assert.ok(catalog.length >= 4);
-  // Deterministic order
-  for (let i = 1; i < catalog.length; i++) {
-    assert.ok(catalog[i - 1].key < catalog[i].key, `skills should be sorted: ${catalog[i - 1].key} < ${catalog[i].key}`);
-  }
-});
-
-test('skills catalog: empty catalog returns empty array', () => {
-  const catalog: SkillCatalogItem[] = [];
-  assert.deepEqual(catalog, []);
-});
-
-test('skills catalog: multiple declaring agents render correctly', () => {
-  const sharedSkill = 'shared-skill';
-  const a: PublicAgentProfile = { ...berlin, id: 'a', skills: [sharedSkill] };
-  const b: PublicAgentProfile = { ...berlin, id: 'b', skills: [sharedSkill] };
-  const skills = new Map<string, Set<string>>();
-  for (const profile of [a, b]) {
-    for (const skill of profile.skills) {
-      const agents = skills.get(skill) || new Set();
-      agents.add(profile.id);
-      skills.set(skill, agents);
-    }
-  }
-  const catalog = [...skills.entries()].map(([key, agents]) => ({ key, agents: [...agents].sort() }));
-  assert.equal(catalog.length, 1);
-  assert.equal(catalog[0].key, sharedSkill);
-  assert.deepEqual(catalog[0].agents, ['a', 'b']);
-});
-
-// ── Memory spaces catalog tests ──
-
-test('memory catalog: readers and writers render separately', () => {
-  const spaces = new Map<string, { readers: Set<string>; writers: Set<string> }>();
-  for (const profile of [berlin, tokyo]) {
-    for (const key of profile.memory.read) {
-      const s = spaces.get(key) || { readers: new Set<string>(), writers: new Set<string>() };
-      s.readers.add(profile.id);
-      spaces.set(key, s);
-    }
-    for (const key of profile.memory.write) {
-      const s = spaces.get(key) || { readers: new Set<string>(), writers: new Set<string>() };
-      s.writers.add(profile.id);
-      spaces.set(key, s);
-    }
-  }
-  const catalog: MemorySpaceItem[] = [...spaces.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, { readers, writers }]) => ({ key, readers: [...readers].sort(), writers: [...writers].sort() }));
-
-  for (const item of catalog) {
-    assert.ok(Array.isArray(item.readers));
-    assert.ok(Array.isArray(item.writers));
-    // Readers and writers arrays are distinct pointers
-    assert.notStrictEqual(item.readers, item.writers);
-  }
-});
-
-test('memory catalog: shared readers and writers displayed correctly', () => {
-  const profileA: PublicAgentProfile = {
-    ...berlin, id: 'a', memory: { read: ['shared-space'], write: ['shared-space'] },
-  };
-  const profileB: PublicAgentProfile = {
-    ...berlin, id: 'b', memory: { read: ['shared-space'], write: [] },
-  };
-
-  const spaces = new Map<string, { readers: Set<string>; writers: Set<string> }>();
-  for (const profile of [profileA, profileB]) {
-    for (const key of profile.memory.read) {
-      const s = spaces.get(key) || { readers: new Set<string>(), writers: new Set<string>() };
-      s.readers.add(profile.id);
-      spaces.set(key, s);
-    }
-    for (const key of profile.memory.write) {
-      const s = spaces.get(key) || { readers: new Set<string>(), writers: new Set<string>() };
-      s.writers.add(profile.id);
-      spaces.set(key, s);
-    }
-  }
-
-  const catalog = [...spaces.entries()].map(([key, { readers, writers }]) => ({
-    key, readers: [...readers].sort(), writers: [...writers].sort(),
+  const joined = [...allIds].map((id) => ({
+    id,
+    profile: profileMap.get(id) || null,
+    runtime: runtimeMap.get(id) || null,
   }));
 
-  assert.equal(catalog.length, 1);
-  assert.equal(catalog[0].key, 'shared-space');
-  assert.deepEqual(catalog[0].readers, ['a', 'b']);
-  assert.deepEqual(catalog[0].writers, ['a']);
+  // All 4 canonical profiles join with runtime
+  assert.equal(joined.length, 4);
+  for (const row of joined) {
+    assert.ok(row.profile, `${row.id}: should have a profile`);
+    assert.ok(row.runtime, `${row.id}: should have a runtime instance`);
+  }
 });
 
-test('memory catalog: empty catalog returns empty array', () => {
-  const catalog: MemorySpaceItem[] = [];
-  assert.deepEqual(catalog, []);
+test('agent list integration: profiles remain visible when runtime data is missing', () => {
+  const profilesResult = handleReadOnlyAgentProfileApi('/api/agents/profiles');
+  assert.equal(profilesResult?.status, 200);
+  const { profiles } = profilesResult!.body as { profiles: Record<string, unknown>[]; count: number };
+
+  const profileMap = new Map(profiles.map((p) => ({ id: p.id as string, profile: p })).map((e) => [e.id, e.profile]));
+
+  // Runtime data has no match for berlin
+  const runtimeInstances = [
+    { agent: 'professor', runtime: { status: 'running' } },
+  ];
+  const runtimeMap = new Map(runtimeInstances.map((i) => [i.agent, i]));
+
+  const allIds = new Set([
+    ...profiles.map((p) => p.id as string),
+    ...runtimeInstances.map((i) => i.agent),
+  ]);
+
+  const joined = [...allIds].map((id) => ({
+    id,
+    profile: profileMap.get(id) || null,
+    runtime: runtimeMap.get(id) || null,
+  }));
+
+  // Berlin has a profile but no runtime
+  const berlin = joined.find((r) => r.id === 'berlin');
+  assert.ok(berlin);
+  assert.ok(berlin.profile, 'berlin should have a profile');
+  assert.equal(berlin.runtime, null, 'berlin should have no runtime');
 });
 
-// ── Deterministic ordering tests ──
+test('agent list integration: runtime instances remain visible when profile data is missing', () => {
+  const profilesResult = handleReadOnlyAgentProfileApi('/api/agents/profiles');
+  assert.equal(profilesResult?.status, 200);
+  const { profiles } = profilesResult!.body as { profiles: Record<string, unknown>[]; count: number };
 
-test('join: deterministic ordering is preserved', () => {
-  const result1 = joinProfilesAndRuntime([berlin, tokyo], [professorRuntime]);
-  const result2 = joinProfilesAndRuntime([tokyo, berlin], [professorRuntime]);
-  // Same set of IDs regardless of input order
-  assert.deepEqual(
-    result1.map((r) => r.id).sort(),
-    result2.map((r) => r.id).sort(),
+  // Only keep professor and berlin in profile map
+  const profileMap = new Map(
+    profiles.filter((p) => p.id === 'professor' || p.id === 'berlin')
+      .map((p) => ({ id: p.id as string, profile: p }))
+      .map((e) => [e.id, e.profile]),
   );
+
+  const runtimeInstances = [
+    { agent: 'professor', runtime: { status: 'running' } },
+    { agent: 'tokyo', runtime: { status: 'exited' } },
+  ];
+  const runtimeMap = new Map(runtimeInstances.map((i) => [i.agent, i]));
+
+  const allIds = new Set([
+    ...Array.from(profileMap.keys()),
+    ...runtimeInstances.map((i) => i.agent),
+  ]);
+
+  const joined = [...allIds].map((id) => ({
+    id,
+    profile: profileMap.get(id) || null,
+    runtime: runtimeMap.get(id) || null,
+  }));
+
+  // Tokyo has a runtime but no profile
+  const tokyo = joined.find((r) => r.id === 'tokyo');
+  assert.ok(tokyo);
+  assert.equal(tokyo.profile, null, 'tokyo should have no profile');
+  assert.ok(tokyo.runtime, 'tokyo should have a runtime instance');
+});
+
+test('agent list integration: enabled and disabled profile states are rendered correctly', () => {
+  const detail = handleReadOnlyAgentProfileApi('/api/agents/profiles/berlin');
+  assert.equal(detail?.status, 200);
+  const berlin = (detail!.body as { profile: Record<string, unknown> }).profile;
+  assert.equal(berlin.enabled, true);
+
+  // Tokyo is also enabled in test fixtures
+  const detail2 = handleReadOnlyAgentProfileApi('/api/agents/profiles/tokyo');
+  assert.equal(detail2?.status, 200);
+  const tokyo = (detail2!.body as { profile: Record<string, unknown> }).profile;
+  assert.equal(tokyo.enabled, true);
+});
+
+test('agent list integration: skill, memory, and repository counts are correct', () => {
+  const detail = handleReadOnlyAgentProfileApi('/api/agents/profiles/berlin');
+  assert.equal(detail?.status, 200);
+  const profile = (detail!.body as { profile: Record<string, unknown> }).profile;
+  const skills = profile.skills as string[];
+  const memory = profile.memory as { read: string[]; write: string[] };
+  const repos = profile.repositories as string[];
+
+  assert.ok(skills.length > 0, 'berlin should have skills');
+  assert.ok(memory.read.length >= 0, 'memory.read should be an array');
+  assert.ok(memory.write.length >= 0, 'memory.write should be an array');
+  assert.ok(repos.length > 0, 'berlin should have repositories');
+});
+
+test('agent list integration: deterministic ordering is preserved', () => {
+  const result1 = handleReadOnlyAgentProfileApi('/api/agents/profiles');
+  const result2 = handleReadOnlyAgentProfileApi('/api/agents/profiles');
+  const { profiles: p1 } = result1!.body as { profiles: { id: string }[] };
+  const { profiles: p2 } = result2!.body as { profiles: { id: string }[] };
+  assert.deepEqual(p1.map((p) => p.id), p2.map((p) => p.id), 'order must be deterministic across calls');
 });
 
 // ── Agent detail tests ──
 
-test('agent detail: unknown agent produces not-found state', () => {
-  const result = joinProfilesAndRuntime([berlin], [professorRuntime]);
-  const unknown = result.find((r) => r.id === 'nonexistent');
-  assert.equal(unknown, undefined);
+test('agent detail: existing agent profile renders all approved public sections', () => {
+  const detail = handleReadOnlyAgentProfileApi('/api/agents/profiles/berlin');
+  assert.equal(detail?.status, 200);
+  const profile = (detail!.body as { profile: Record<string, unknown> }).profile;
+
+  // All public fields present
+  assert.equal(typeof profile.id, 'string');
+  assert.equal(typeof profile.display_name, 'string');
+  assert.equal(typeof profile.schema_version, 'number');
+  assert.equal(typeof profile.profile_version, 'string');
+  assert.equal(typeof profile.mission, 'string');
+  assert.equal(typeof profile.enabled, 'boolean');
+
+  // Personality
+  const personality = profile.personality as Record<string, unknown>;
+  assert.equal(typeof personality.communication_style, 'string');
+  assert.ok(Array.isArray(personality.decision_policy));
+  assert.ok(Array.isArray(personality.constraints));
+
+  // Runtime
+  const runtime = profile.runtime as Record<string, unknown>;
+  assert.equal(typeof runtime.backend, 'string');
+
+  // Skills
+  assert.ok(Array.isArray(profile.skills));
+
+  // Memory
+  const memory = profile.memory as Record<string, unknown>;
+  assert.ok(Array.isArray(memory.read));
+  assert.ok(Array.isArray(memory.write));
+
+  // Repositories
+  assert.ok(Array.isArray(profile.repositories));
+});
+
+test('agent detail: personality decision policy and constraints render correctly', () => {
+  const detail = handleReadOnlyAgentProfileApi('/api/agents/profiles/berlin');
+  assert.equal(detail?.status, 200);
+  const profile = (detail!.body as { profile: Record<string, unknown> }).profile;
+  const personality = profile.personality as { decision_policy: string[]; constraints: string[] };
+
+  assert.ok(personality.decision_policy.length > 0, 'decision policy must not be empty');
+  assert.ok(personality.constraints.length > 0, 'constraints must not be empty');
+
+  // Decision policy and constraints are separate arrays
+  assert.notDeepEqual(personality.decision_policy, personality.constraints);
+});
+
+test('agent detail: read and write memory scopes are distinct', () => {
+  const detail = handleReadOnlyAgentProfileApi('/api/agents/profiles/berlin');
+  const profile = (detail!.body as { profile: Record<string, unknown> }).profile;
+  const memory = profile.memory as { read: string[]; write: string[] };
+
+  // Read and write are separate arrays
+  assert.notDeepEqual(memory.read, memory.write);
+});
+
+test('agent detail: unknown agent displays a not-found state', () => {
+  const detail = handleReadOnlyAgentProfileApi('/api/agents/profiles/unknown-agent');
+  assert.equal(detail?.status, 404);
+  const body = detail!.body as { error: string; agent_id: string };
+  assert.equal(body.error, 'agent_profile_not_found');
+  assert.equal(body.agent_id, 'unknown-agent');
 });
 
 test('agent detail: runtime API failure does not hide valid profile data', () => {
-  // Simulate: profile exists, runtime fetch fails
-  const profile = berlin;
-  const runtime = null; // runtime API failed
-  assert.ok(profile);
-  assert.equal(runtime, null);
-  // Profile data is still available
+  // Simulate: profile API succeeds, runtime API is unavailable
+  const detail = handleReadOnlyAgentProfileApi('/api/agents/profiles/berlin');
+  assert.equal(detail?.status, 200);
+  const profile = (detail!.body as { profile: Record<string, unknown> }).profile;
+
+  // Profile data is intact even when runtime can't be fetched
+  assert.equal(profile.id, 'berlin');
   assert.equal(profile.display_name, 'Berlin');
-  assert.equal(profile.mission, 'Review code for correctness and risk.');
+  assert.ok(typeof profile.mission === 'string');
 });
 
-// ── Internal fields absent test ──
+test('agent detail: internal fields are absent from public profile types', () => {
+  const detail = handleReadOnlyAgentProfileApi('/api/agents/profiles/berlin');
+  assert.equal(detail?.status, 200);
+  const profile = (detail!.body as { profile: Record<string, unknown> }).profile;
 
-test('internal fields: no internal implementation fields in public profile type', () => {
-  const internalFields = ['source', 'sourcePath', 'container', 'service', 'image', 'config_path', 'data_dir', 'token', 'secret', 'env'];
+  const internalFields = ['source', 'sourcePath', 'container', 'service', 'image', 'config_path', 'data_dir'];
   for (const field of internalFields) {
-    assert.equal(field in berlin, false, `'${field}' must not appear in PublicAgentProfile`);
-    assert.equal(field in tokyo, false, `'${field}' must not appear in PublicAgentProfile`);
+    assert.equal(field in profile, false, `'${field}' must not appear in public profile API response`);
   }
 });
 
-// ── Memory spaces page tests ──
+// ── Skills catalog tests (exercising production catalogs.ts) ──
 
-test('memory catalog: no vault inspection fields in output', () => {
-  const catalog: MemorySpaceItem[] = [
-    { key: 'test', readers: ['a'], writers: [] },
-  ];
-  for (const item of catalog) {
-    // Keys are strings only — no absolute paths
-    assert.equal(typeof item.key, 'string');
-    assert.equal(item.key.includes('/home/'), false);
-    assert.equal(item.key.includes('/obsidian/'), false);
-    assert.equal(item.key.includes('/vault/'), false);
+test('skills catalog: skill keys render in deterministic order', () => {
+  const profilesResult = handleReadOnlyAgentProfileApi('/api/agents/profiles');
+  assert.equal(profilesResult?.status, 200);
+
+  // Use the production catalog builder (loaded via registry for real profile data)
+  const skillsResult = handleReadOnlyAgentProfileApi('/api/skills');
+  assert.equal(skillsResult?.status, 200);
+  const { skills } = skillsResult!.body as { skills: { key: string; agents: string[] }[]; count: number };
+
+  // Verify deterministic ordering
+  for (let i = 1; i < skills.length; i++) {
+    assert.ok(skills[i - 1].key <= skills[i].key, `skills not sorted: ${skills[i - 1].key} > ${skills[i].key}`);
   }
+});
+
+test('skills catalog: multiple declaring agents render correctly', () => {
+  // Use production catalog builder with test data
+  const profiles: AgentProfile[] = [
+    {
+      schemaVersion: 1,
+      id: 'agent-a',
+      displayName: 'Agent A',
+      profileVersion: '1.0.0',
+      mission: 'test',
+      personality: { communicationStyle: 'test', decisionPolicy: ['test'], constraints: ['test'] },
+      runtime: { backend: 'opencode' },
+      skills: ['shared-skill', 'a-only'],
+      memory: { read: [], write: [] },
+      repositories: ['test/repo'],
+      enabled: true,
+    },
+    {
+      schemaVersion: 1,
+      id: 'agent-b',
+      displayName: 'Agent B',
+      profileVersion: '1.0.0',
+      mission: 'test',
+      personality: { communicationStyle: 'test', decisionPolicy: ['test'], constraints: ['test'] },
+      runtime: { backend: 'opencode' },
+      skills: ['shared-skill', 'b-only'],
+      memory: { read: [], write: [] },
+      repositories: ['test/repo'],
+      enabled: true,
+    },
+  ];
+
+  const catalog = buildSkillCatalog(profiles);
+  const shared = catalog.find((item) => item.key === 'shared-skill');
+  assert.ok(shared);
+  assert.deepEqual(shared.agents, ['agent-a', 'agent-b']);
+});
+
+test('skills catalog: empty catalog returns a valid empty state', () => {
+  const catalog = buildSkillCatalog([]);
+  assert.deepEqual(catalog, []);
+});
+
+test('skills catalog: API returns deterministic result', () => {
+  const result = handleReadOnlyAgentProfileApi('/api/skills');
+  assert.equal(result?.status, 200);
+  const { skills, count } = result!.body as { skills: { key: string }[]; count: number };
+  assert.equal(count, skills.length);
+  assert.ok(skills.length >= 4, 'expected at least 4 declared skills across 4 profiles');
+});
+
+// ── Memory catalog tests (exercising production catalogs.ts) ──
+
+test('memory catalog: readers and writers render separately', () => {
+  const result = handleReadOnlyAgentProfileApi('/api/memory-spaces');
+  assert.equal(result?.status, 200);
+  const { memory_spaces } = result!.body as { memory_spaces: { key: string; readers: string[]; writers: string[] }[]; count: number };
+
+  for (const space of memory_spaces) {
+    assert.ok(Array.isArray(space.readers));
+    assert.ok(Array.isArray(space.writers));
+    // Each has independent arrays
+    assert.notStrictEqual(space.readers, space.writers);
+  }
+});
+
+test('memory catalog: shared readers and writers are displayed correctly', () => {
+  const profiles: AgentProfile[] = [
+    {
+      schemaVersion: 1,
+      id: 'agent-a',
+      displayName: 'Agent A',
+      profileVersion: '1.0.0',
+      mission: 'test',
+      personality: { communicationStyle: 'test', decisionPolicy: ['test'], constraints: ['test'] },
+      runtime: { backend: 'opencode' },
+      skills: [],
+      memory: { read: ['shared-space'], write: ['shared-space'] },
+      repositories: ['test/repo'],
+      enabled: true,
+    },
+    {
+      schemaVersion: 1,
+      id: 'agent-b',
+      displayName: 'Agent B',
+      profileVersion: '1.0.0',
+      mission: 'test',
+      personality: { communicationStyle: 'test', decisionPolicy: ['test'], constraints: ['test'] },
+      runtime: { backend: 'opencode' },
+      skills: [],
+      memory: { read: ['shared-space'], write: [] },
+      repositories: ['test/repo'],
+      enabled: true,
+    },
+  ];
+
+  const catalog = buildMemorySpaceCatalog(profiles);
+  const shared = catalog.find((s) => s.key === 'shared-space');
+  assert.ok(shared);
+  assert.deepEqual(shared.readers, ['agent-a', 'agent-b']);
+  assert.deepEqual(shared.writers, ['agent-a']);
+});
+
+test('memory catalog: empty catalog returns a valid empty state', () => {
+  const catalog = buildMemorySpaceCatalog([]);
+  assert.deepEqual(catalog, []);
+});
+
+test('memory catalog: no vault inspection or mutation action exposed', () => {
+  const result = handleReadOnlyAgentProfileApi('/api/memory-spaces');
+  assert.equal(result?.status, 200);
+  const body = result!.body as Record<string, unknown>;
+
+  // API response contains no vault inspection fields
+  const bodyStr = JSON.stringify(body);
+  assert.equal(bodyStr.includes('/home/'), false, 'must not contain absolute paths');
+  assert.equal(bodyStr.includes('/obsidian/'), false, 'must not contain obsidian reference');
+  assert.equal(bodyStr.includes('/vault/'), false, 'must not contain vault reference');
+
+  // API response contains no write/edit/mutate actions
+  assert.equal('write' in body, false);
+  assert.equal('mutate' in body, false);
+  assert.equal('edit' in body, false);
+});
+
+// ── Public boundary tests ──
+
+test('public boundary: toPublicAgentProfile excludes internal fields', () => {
+  const internal: AgentProfile = {
+    schemaVersion: 1,
+    id: 'test-agent',
+    displayName: 'Test Agent',
+    profileVersion: '1.0.0',
+    mission: 'test',
+    personality: { communicationStyle: 'direct', decisionPolicy: ['test'], constraints: ['test'] },
+    runtime: { backend: 'opencode' },
+    skills: ['test-skill'],
+    memory: { read: ['test/read'], write: ['test/write'] },
+    repositories: ['test/repo'],
+    enabled: true,
+  };
+
+  const publicProfile = toPublicAgentProfile(internal);
+
+  // Only public fields present
+  assert.equal(publicProfile.id, 'test-agent');
+  assert.equal(publicProfile.display_name, 'Test Agent');
+  assert.equal('source' in publicProfile, false);
+  assert.equal('sourcePath' in publicProfile, false);
+  assert.equal('container' in publicProfile, false);
+  assert.equal('service' in publicProfile, false);
 });

@@ -88,9 +88,9 @@ export function MemorySpacesPage() {
                 <Table.Tr>
                   <Table.Th>Scope key</Table.Th>
                   <Table.Th>Readers</Table.Th>
-                  <Table.Th>Writer count</Table.Th>
-                  <Table.Th>Writers</Table.Th>
                   <Table.Th>Reader count</Table.Th>
+                  <Table.Th>Writers</Table.Th>
+                  <Table.Th>Writer count</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>

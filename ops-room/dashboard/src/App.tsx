@@ -282,7 +282,8 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs }: {
   const navigate = useNavigate();
   const profileMap = new Map(profiles.map((p) => [p.id, p]));
 
-  // Build combined view: join by agent ID
+  // Build combined view: join by agent ID. Start from agent definitions as the
+  // authoritative set, then include any profiles without a matching runtime.
   const agentIds = new Set([
     ...agents.map((a) => a.agent),
     ...profiles.map((p) => p.id),
@@ -296,35 +297,43 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs }: {
   if (joined.length === 0) return <EmptyState icon={<IconRobot size={20} />} title="No agents configured" description="Add agents to the server registry before they can appear here." />;
 
   return (
-    <Table.ScrollContainer minWidth={900}>
+    <Table.ScrollContainer minWidth={1200}>
       <Table verticalSpacing="md" highlightOnHover>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Agent</Table.Th>
             <Table.Th>Profile</Table.Th>
             <Table.Th>Runtime</Table.Th>
+            <Table.Th>Role</Table.Th>
             <Table.Th>Mission</Table.Th>
             <Table.Th>Skills</Table.Th>
             <Table.Th>Memory</Table.Th>
             <Table.Th>Repos</Table.Th>
+            <Table.Th>Current work</Table.Th>
+            <Table.Th>Polling</Table.Th>
+            <Table.Th />
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {joined.map(({ id, agent, profile }) => {
             const current = agent ? tasks.find((task) => task.agent?.toLowerCase() === agent.agent.toLowerCase() && ACTIVE_STATES.has(normalizeState(task))) : undefined;
             const displayName = profile?.display_name || agent?.display_name || id;
+            const role = agent?.role || profile?.runtime?.backend || '—';
+            const description = agent?.description || '';
             return (
-              <Table.Tr key={id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/agents/${id}`)}>
+              <Table.Tr key={id}>
                 <Table.Td>
-                  <Group gap="sm" wrap="nowrap">
-                    <Indicator color={agent ? statusColor(agent.runtime?.status) : 'gray'} size={9} offset={4} position="bottom-end" withBorder>
-                      <Avatar radius="md" color="violet" variant="light">{displayName.slice(0, 2).toUpperCase()}</Avatar>
-                    </Indicator>
-                    <Box>
-                      <Text fw={600} size="sm">{displayName}</Text>
-                      <Text size="xs" c="dimmed" ff="monospace">{id}</Text>
-                    </Box>
-                  </Group>
+                  <UnstyledButton onClick={() => navigate(`/agents/${id}`)}>
+                    <Group gap="sm" wrap="nowrap">
+                      <Indicator color={agent ? statusColor(agent.runtime?.status) : 'gray'} size={9} offset={4} position="bottom-end" withBorder>
+                        <Avatar radius="md" color="violet" variant="light">{displayName.slice(0, 2).toUpperCase()}</Avatar>
+                      </Indicator>
+                      <Box>
+                        <Text fw={600} size="sm">{displayName}</Text>
+                        <Text size="xs" c="dimmed" ff="monospace">{id}</Text>
+                      </Box>
+                    </Group>
+                  </UnstyledButton>
                 </Table.Td>
                 <Table.Td>
                   {profile ? (
@@ -340,15 +349,19 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs }: {
                   {agent ? (
                     <Stack gap={4}>
                       <StatusBadge status={agent.runtime?.status} />
-                      <Text size="xs" c="dimmed">{agent.backend || '-'}</Text>
+                      <Text size="xs" c="dimmed">{agent.runtime?.restart_count || 0} restarts</Text>
                     </Stack>
                   ) : (
                     <Badge color="gray" variant="light" size="sm">Runtime unavailable</Badge>
                   )}
                 </Table.Td>
                 <Table.Td>
+                  <Text size="sm" fw={500}>{role}</Text>
+                  {description && <Text size="xs" c="dimmed" lineClamp={1}>{description}</Text>}
+                </Table.Td>
+                <Table.Td>
                   {profile ? (
-                    <Text size="xs" lineClamp={2} maw={180}>{profile.mission}</Text>
+                    <Text size="xs" lineClamp={2} maw={160}>{profile.mission}</Text>
                   ) : (
                     <Text size="xs" c="dimmed">—</Text>
                   )}
@@ -364,6 +377,39 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs }: {
                 </Table.Td>
                 <Table.Td>
                   <Badge variant="light" color="gray">{profile?.repositories.length ?? 0}</Badge>
+                </Table.Td>
+                <Table.Td>
+                  {current ? (
+                    <Box style={{ minWidth: 0 }}>
+                      <Text size="sm" fw={500} lineClamp={1}>{taskTitle(current)}</Text>
+                      <Text size="xs" c="dimmed">{relativeTime(taskTimestamp(current))}</Text>
+                    </Box>
+                  ) : (
+                    <Text size="sm" c="dimmed">Idle</Text>
+                  )}
+                </Table.Td>
+                <Table.Td>
+                  <Badge variant="dot" color={agent?.github_polling_enabled ? 'teal' : 'gray'}>
+                    {agent?.github_polling_enabled ? 'enabled' : 'disabled'}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>
+                  <Group gap={4} justify="flex-end" wrap="nowrap">
+                    {agent && (
+                      <>
+                        <Tooltip label="View logs">
+                          <ActionIcon variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); openLogs(agent); }}>
+                            <IconTerminal2 size={17} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Agent details">
+                          <ActionIcon variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); openAgent(agent); }}>
+                            <IconChevronRight size={17} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </>
+                    )}
+                  </Group>
                 </Table.Td>
               </Table.Tr>
             );
@@ -503,7 +549,7 @@ export default function App() {
       <AppShell.Header className="app-header">
         <Group h="100%" px="lg" justify="space-between">
           <Group gap="sm"><Burger opened={mobileOpened} onClick={mobile.toggle} hiddenFrom="md" size="sm" /><ThemeIcon size={34} radius="md" variant="gradient" gradient={{ from: 'violet', to: 'indigo' }}><IconSparkles size={19} /></ThemeIcon><Box><Text fw={700} lh={1.1}>Ops Room</Text><Text size="xs" c="dimmed">Agent control plane</Text></Box></Group>
-          <Group gap="md"><Group gap={6} visibleFrom="sm"><Badge variant="dot" color="teal">Live</Badge><Text size="xs" c="dimmed">Updated {lastUpdated}</Text></Group><Tooltip label="Refresh all data"><ActionIcon variant="default" size="lg" onClick={() => queryClient.invalidateQueries({ queryKey: ['ops-dashboard'] })}><IconRefresh size={17} /></ActionIcon></Tooltip></Group>
+          <Group gap="md"><Group gap={6} visibleFrom="sm"><Badge variant="dot" color="teal">Live</Badge><Text size="xs" c="dimmed">Updated {lastUpdated}</Text></Group><Tooltip label="Refresh all data"><ActionIcon variant="default" size="lg" onClick={() => { queryClient.invalidateQueries({ queryKey: ['ops-dashboard'] }); queryClient.invalidateQueries({ queryKey: ['agent-profiles'] }); queryClient.invalidateQueries({ queryKey: ['skills-catalog'] }); queryClient.invalidateQueries({ queryKey: ['memory-spaces'] }); queryClient.invalidateQueries({ queryKey: ['openab-instances'] }); }}><IconRefresh size={17} /></ActionIcon></Tooltip></Group>
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="md" className="app-navbar">

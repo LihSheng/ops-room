@@ -178,6 +178,7 @@ export function AgentDetailPage() {
   const profileError = profileQuery.isError;
   const profileLoading = profileQuery.isLoading;
   const profile = profileQuery.data?.profile || null;
+  const instancesError = instancesQuery.isError;
 
   // Loading
   if (profileLoading) {
@@ -189,17 +190,17 @@ export function AgentDetailPage() {
     );
   }
 
-  // Error loading profile (API failure)
-  if (profileError && !profile) {
+  // Profile API failure — distinguish from genuinely missing profile
+  if (profileError) {
     if (runtimeAgent) {
       return (
         <Stack gap="lg">
           <Box>
             <Title order={1} className="page-title">{id}</Title>
-            <Text c="dimmed" mt={6}>Runtime instance without profile policy metadata.</Text>
+            <Text c="dimmed" mt={6}>Runtime instance with profile API error.</Text>
           </Box>
-          <Alert color="orange" icon={<IconAlertTriangle size={18} />} title="Profile unavailable">
-            A runtime instance exists for this agent, but no matching profile was found. This represents a policy inconsistency.
+          <Alert color="red" icon={<IconAlertTriangle size={18} />} title="Profile API unavailable">
+            The profile API request failed. A runtime instance exists for this agent, but profile policy metadata could not be loaded.
           </Alert>
           <RuntimeSection agent={runtimeAgent} />
         </Stack>
@@ -208,28 +209,24 @@ export function AgentDetailPage() {
     return (
       <Stack gap="lg">
         <Box>
-          <Title order={1} className="page-title">Agent not found</Title>
-          <Text c="dimmed" mt={6}>No profile or runtime instance exists for "{id}".</Text>
+          <Title order={1} className="page-title">Agent data unavailable</Title>
+          <Text c="dimmed" mt={6}>The profile API request failed for "{id}".</Text>
         </Box>
-        <Center py={48}>
-          <Stack align="center" gap={8}>
-            <ThemeIcon size={48} radius="xl" variant="light" color="gray"><IconRobot size={24} /></ThemeIcon>
-            <Text fw={600}>Unknown agent</Text>
-            <Text size="sm" c="dimmed">The agent ID "{id}" does not match any known profile or runtime instance.</Text>
-          </Stack>
-        </Center>
+        <Alert color="red" icon={<IconAlertTriangle size={18} />} title="Profile API error">
+          Could not load profile data. Check server health and try again.
+        </Alert>
       </Stack>
     );
   }
 
-  // Profile not found (404)
+  // Profile not found (404 from API — genuinely missing)
   if (!profile) {
     if (runtimeAgent) {
       return (
         <Stack gap="lg">
           <Box>
             <Title order={1} className="page-title">{id}</Title>
-            <Text c="dimmed" mt={6}>Runtime instance without profile policy metadata.</Text>
+            <Text c="dimmed" mt={6}>Runtime instance without matching profile.</Text>
           </Box>
           <Alert color="orange" icon={<IconAlertTriangle size={18} />} title="Profile unavailable">
             A runtime instance exists for this agent, but no matching profile was found. This represents a policy inconsistency.
@@ -277,7 +274,17 @@ export function AgentDetailPage() {
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 5 }}>
           <Stack gap="lg">
-            {runtimeAgent ? (
+            {instancesError ? (
+              <Paper withBorder p="lg">
+                <Group mb="md" gap="sm">
+                  <ThemeIcon variant="light" color="gray" size={28}><IconServer size={16} /></ThemeIcon>
+                  <Title order={4}>Runtime State</Title>
+                </Group>
+                <Alert color="red" icon={<IconAlertTriangle size={16} />} title="Runtime API error">
+                  The runtime instances API request failed. Runtime state could not be loaded.
+                </Alert>
+              </Paper>
+            ) : runtimeAgent ? (
               <RuntimeSection agent={runtimeAgent} />
             ) : (
               <Paper withBorder p="lg">
