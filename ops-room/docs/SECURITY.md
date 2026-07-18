@@ -11,6 +11,8 @@ Ops Room may be developed in a public repository, but its runtime is an operatio
 - Require `OPS_ROOM_DASHBOARD_TOKEN` for read-only operational APIs.
 - Keep `OPENAB_WEBHOOK_SECRET` separate from the dashboard token.
 - Keep the operator mutation API disabled unless it is actively required.
+- Cloudflare Tunnel should target Caddy, not Ops Room directly.
+- Port `7381` remains bound to `127.0.0.1` in production.
 
 Generate independent secrets:
 
@@ -31,9 +33,12 @@ The following read-only routes require `Authorization: Bearer <OPS_ROOM_DASHBOAR
 - `/api/logs`
 - `/api/agents`
 - `/api/openab/instances`
-- Agent-profile, skill, and memory-space API routes
+- `/api/agents/profiles` and detail routes `/api/agents/profiles/:id`
+- `/api/skills` and detail routes `/api/skills/:key/:version`
+- `/api/memory-spaces`
 
 The public `/health` endpoint returns only basic service status and uptime.
+The `/webhook` endpoint uses its own `OPENAB_WEBHOOK_SECRET`, not the dashboard token.
 
 ## Reverse proxy example
 
@@ -58,17 +63,43 @@ ops.example.com {
 
 The Caddy service must receive `OPS_ROOM_DASHBOARD_TOKEN` through a protected environment file. Do not place the token directly in a tracked Caddyfile.
 
+## Git authentication
+
+Git operations (clone, fetch, push) use ephemeral credential injection:
+
+- Git remote URLs must never contain credentials.
+- The remote URL stored in `.git/config` is always the clean `https://github.com/<owner>/<repo>.git` form.
+- Authentication is provided through `GIT_ASKPASS` temporary helper scripts.
+- The askpass helper reads the installation token from the `GIT_ASKPASS_TOKEN` environment variable.
+- The token is never written into the askpass script itself.
+- The helper is created outside the repository workspace under a temp directory.
+- Restrictive file permissions are set on Unix (mode `500`).
+- The helper is deleted in a `finally` block after each operation.
+- `GIT_TERMINAL_PROMPT=0` prevents interactive credential prompts.
+
 ## Credential handling
 
-Ops Room applies centralized redaction before writing task logs and before publishing GitHub issue comments. The redactor covers common GitHub, AI-provider, cloud, bearer-header, secret-assignment, and private-key formats.
+Ops Room applies centralized redaction before writing task logs, before publishing GitHub issue comments, before sending external notification payloads, and before writing console output. The redactor covers common GitHub, AI-provider, cloud, bearer-header, secret-assignment, and private-key formats.
 
 Redaction is defence in depth, not a credential-storage mechanism:
 
 - Never commit `.env`, private keys, agent data, workspaces, task payloads, or logs.
-- Never intentionally print environment variables or request headers.
+- Never intentionally print environment variables or request authorization headers.
 - Do not commit CI diagnostic output back into a branch.
 - Use short-retention GitHub Actions artifacts for diagnostics.
 - Rotate a credential immediately if it appears in a public issue, PR, workflow log, artifact, or Git history.
+- Public failure comments intentionally omit local workspace paths (e.g., `/data/workspaces/`).
+- Askpass credential helpers are always cleaned up after use.
+
+## Environment isolation
+
+Coding-agent subprocesses receive an explicit environment allowlist:
+
+- Only variables required for OS execution, model/provider selection, and Git operations are passed.
+- The allowlist excludes: `OPENAB_WEBHOOK_SECRET`, `OPS_ROOM_DASHBOARD_TOKEN`, `OPS_ROOM_OPERATOR_TOKEN`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_KEY_PATH`, and other unrelated secrets.
+- The allowlist is defined in `AGENT_ENV_ALLOWLIST` within the coding workflow.
+
+Deferred hardening: per-provider scoping and per-agent environment profiles.
 
 ## Repository controls
 

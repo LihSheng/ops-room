@@ -10,7 +10,7 @@ const DASHBOARD_READ_ROUTES = [
   /^\/api\/logs$/,
   /^\/api\/agents$/,
   /^\/api\/openab\/instances$/,
-  /^\/api\/agent-profiles(?:\/|$)/,
+  /^\/api\/agents\/profiles(?:\/|$)/,
   /^\/api\/skills(?:\/|$)/,
   /^\/api\/memory-spaces(?:\/|$)/,
 ];

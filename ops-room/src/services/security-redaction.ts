@@ -1,7 +1,7 @@
 const REDACTED = 'REDACTED';
 
 const PRIVATE_KEY_BLOCK = /-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/g;
-const SECRET_ASSIGNMENT = /((?:api[_-]?key|token|secret|password|credential|private[_-]?key)\s*[=:]\s*["']?)[^\s"',;]+/gi;
+const SECRET_ASSIGNMENT = /((?:api[_-]?key|token|secret|password|credential|private[_-]?key)\s*[=:]\s*["']?)[^\s"',;@]+/gi;
 
 /**
  * Redact credential-shaped values before they reach logs, HTTP responses,

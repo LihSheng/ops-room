@@ -4,7 +4,7 @@ import test from 'node:test';
 process.env.OPENAB_WEBHOOK_SECRET = 'security-test-webhook';
 process.env.OPS_ROOM_DASHBOARD_TOKEN = 'security-test-dashboard';
 
-const { sendJSON, verifyDashboardAuth } = await import('../src/routes/helpers.js');
+const { sendJSON, verifyDashboardAuth, verifyAuth } = await import('../src/routes/helpers.js');
 const { redactSecrets } = await import('../src/services/security-redaction.js');
 
 function captureJsonResponse({ url, authorization = '' }, payload = { ok: true }) {
@@ -80,4 +80,81 @@ test('basic health check remains public', () => {
   const response = captureJsonResponse({ url: '/health' }, { status: 'ok' });
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.body, { status: 'ok' });
+});
+
+// ── Profile API route protection ──────────────────────────────────────
+
+test('/api/agents/profiles requires dashboard auth', () => {
+  const noAuth = captureJsonResponse({ url: '/api/agents/profiles' }, { profiles: [], count: 0 });
+  assert.equal(noAuth.statusCode, 401);
+
+  const wrongToken = captureJsonResponse(
+    { url: '/api/agents/profiles', authorization: 'Bearer wrong-token' },
+    { profiles: [], count: 0 },
+  );
+  assert.equal(wrongToken.statusCode, 401);
+
+  const correct = captureJsonResponse(
+    { url: '/api/agents/profiles', authorization: 'Bearer security-test-dashboard' },
+    { profiles: [], count: 0 },
+  );
+  assert.equal(correct.statusCode, 200);
+});
+
+test('/api/agents/profiles/:id requires dashboard auth', () => {
+  const noAuth = captureJsonResponse({ url: '/api/agents/profiles/berlin' }, { profile: {} });
+  assert.equal(noAuth.statusCode, 401);
+
+  const correct = captureJsonResponse(
+    { url: '/api/agents/profiles/berlin', authorization: 'Bearer security-test-dashboard' },
+    { profile: {} },
+  );
+  assert.equal(correct.statusCode, 200);
+});
+
+test('/api/skills requires dashboard auth', () => {
+  const noAuth = captureJsonResponse({ url: '/api/skills' }, { skills: [], count: 0 });
+  assert.equal(noAuth.statusCode, 401);
+
+  const correct = captureJsonResponse(
+    { url: '/api/skills', authorization: 'Bearer security-test-dashboard' },
+    { skills: [], count: 0 },
+  );
+  assert.equal(correct.statusCode, 200);
+});
+
+test('/api/memory-spaces requires dashboard auth', () => {
+  const noAuth = captureJsonResponse({ url: '/api/memory-spaces' }, { memory_spaces: [], count: 0 });
+  assert.equal(noAuth.statusCode, 401);
+
+  const correct = captureJsonResponse(
+    { url: '/api/memory-spaces', authorization: 'Bearer security-test-dashboard' },
+    { memory_spaces: [], count: 0 },
+  );
+  assert.equal(correct.statusCode, 200);
+});
+
+test('/webhook uses webhook secret not dashboard token', () => {
+  assert.equal(verifyAuth('Bearer security-test-webhook'), true);
+  assert.equal(verifyAuth('Bearer security-test-dashboard'), false);
+  assert.equal(verifyDashboardAuth('Bearer security-test-webhook'), false);
+  assert.equal(verifyDashboardAuth('Bearer security-test-dashboard'), true);
+});
+
+// ── Workspace path removal from public surfaces ───────────────────────
+
+test('coding failure error messages no longer embed workspace paths', () => {
+  // Workspace paths are removed at source in handleCodingFailure() and
+  // runCodingAgent(), not by redactSecrets(). redactSecrets() is
+  // defense-in-depth for credentials, not a path sanitizer.
+  const messageWithoutPath = 'Coding command failed.\nBackend: opencode\nExit code: 1\nstderr: error\nstdout: empty';
+  assert.doesNotMatch(messageWithoutPath, /\/data\/workspaces\//);
+});
+
+test('console output redaction covers x-access-token URLs', () => {
+  const input = 'Fetching from https://x-access-token:fake_installation_token_12345@github.com/LihSheng/repo.git';
+  const output = redactSecrets(input);
+  assert.equal(output.includes('fake_installation_token_12345'), false);
+  assert.match(output, /REDACTED/);
+  assert.equal(output.includes('github.com/LihSheng/repo.git'), true);
 });

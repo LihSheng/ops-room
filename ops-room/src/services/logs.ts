@@ -8,9 +8,9 @@ export { redactSecrets } from './security-redaction.js';
 const _origLog = console.log;
 const _origError = console.error;
 const _origWarn = console.warn;
-console.log = (...args) => _origLog(`[${utcTimestamp()}]`, ...args);
-console.error = (...args) => _origError(`[${utcTimestamp()}]`, ...args);
-console.warn = (...args) => _origWarn(`[${utcTimestamp()}]`, ...args);
+console.log = (...args) => _origLog(`[${utcTimestamp()}]`, ...args.map(a => typeof a === 'string' ? redactSecrets(a) : a));
+console.error = (...args) => _origError(`[${utcTimestamp()}]`, ...args.map(a => typeof a === 'string' ? redactSecrets(a) : a));
+console.warn = (...args) => _origWarn(`[${utcTimestamp()}]`, ...args.map(a => typeof a === 'string' ? redactSecrets(a) : a));
 
 export function taskLogFile(ctx) {
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
