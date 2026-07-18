@@ -42,6 +42,38 @@ jobs:
       - name: Build dashboard
         run: npm run build:dashboard
 
+  diagnostic-tests:
+    name: Diagnostic / ${{ matrix.test-file }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test-file:
+          - agent-profile-api.test.js
+          - agent-profile-catalogs.test.js
+          - agent-profile-dashboard.test.js
+          - agent-profile.test.js
+          - health.test.js
+          - release-artifact.test.js
+          - skill-dashboard.test.js
+          - skill-registry.test.js
+    defaults:
+      run:
+        working-directory: ops-room
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: ops-room/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Build server tests
+        run: npm run build:server
+      - name: Run focused test
+        run: node --test "test/${{ matrix.test-file }}"
+
   smoke:
     name: OpenAB instances smoke
     runs-on: ubuntu-latest
