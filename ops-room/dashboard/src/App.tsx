@@ -198,15 +198,20 @@ function DashboardPage({ openAgent, openLogs }: {
 }) {
   const query = useDashboardData();
   const profilesQuery = useAgentProfiles();
+  const fleetInstancesQuery = useQuery({
+    queryKey: ['openab-instances'],
+    queryFn: () => opsApi.instances(),
+    refetchInterval: 10_000,
+  });
   const navigate = useNavigate();
   const data = query.data;
-  const agents = data?.instances.instances || [];
+  const fleetAgents = fleetInstancesQuery.data?.instances || [];
   const profiles = profilesQuery.data?.profiles || [];
   const tasks = data?.tasks.tasks || [];
   const activeTasks = tasks.filter((task) => ACTIVE_STATES.has(normalizeState(task)));
   const attentionTasks = tasks.filter((task) => ATTENTION_STATES.has(normalizeState(task)));
-  const runningAgents = agents.filter((agent) => String(agent.runtime?.status).toLowerCase() === 'running');
-  const capacity = agents.length ? Math.round((runningAgents.length / agents.length) * 100) : 0;
+  const runningAgents = fleetAgents.filter((agent) => String(agent.runtime?.status).toLowerCase() === 'running');
+  const capacity = fleetAgents.length ? Math.round((runningAgents.length / fleetAgents.length) * 100) : 0;
 
   if (query.isLoading) {
     return <Stack gap="lg">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} height={120} radius="lg" />)}</Stack>;
@@ -229,7 +234,7 @@ function DashboardPage({ openAgent, openLogs }: {
       </Box>
 
       <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }} spacing="md">
-        <MetricCard label="Fleet online" value={`${runningAgents.length}/${agents.length}`} helper={`${capacity}% runtime capacity available`} icon={<IconRobot size={20} />} color="teal" progress={capacity} />
+        <MetricCard label="Fleet online" value={`${runningAgents.length}/${fleetAgents.length}`} helper={`${capacity}% runtime capacity available`} icon={<IconRobot size={20} />} color="teal" progress={capacity} />
         <MetricCard label="Active work" value={activeTasks.length} helper="Tasks currently queued or executing" icon={<IconActivity size={20} />} />
         <MetricCard label="Needs attention" value={attentionTasks.length} helper="Human decisions, failed runs, or requested changes" icon={<IconAlertTriangle size={20} />} color={attentionTasks.length ? 'orange' : 'gray'} />
         <MetricCard label="Control plane" value={data.health.status || 'unknown'} helper={`Uptime ${duration(data.health.uptime_seconds)} · ${data.health.version || 'version unknown'}`} icon={<IconServer size={20} />} color={data.health.status === 'ok' ? 'teal' : 'orange'} />
@@ -267,7 +272,7 @@ function DashboardPage({ openAgent, openLogs }: {
       <Paper withBorder p="lg">
         <SectionHeading title="Agent fleet" description="Runtime health, responsibility, and current assignment for each OpenAB instance." action={<Button variant="subtle" size="compact-sm" rightSection={<IconChevronRight size={14} />} onClick={() => navigate('/agents')}>Manage fleet</Button>} />
         <AgentTable
-          agents={agents}
+          agents={fleetAgents}
           profiles={profiles}
           tasks={tasks}
           openAgent={openAgent}
@@ -275,9 +280,9 @@ function DashboardPage({ openAgent, openLogs }: {
           profilesLoading={profilesQuery.isLoading}
           profilesError={profilesQuery.isError}
         />
-        {data.instances.docker && !data.instances.docker.available && (
+        {fleetInstancesQuery.data?.docker && !fleetInstancesQuery.data.docker.available && (
           <Alert mt="md" color="orange" variant="light" icon={<IconAlertTriangle size={17} />} title="Docker inspection unavailable">
-            {data.instances.docker.error || 'Runtime metadata is degraded, but configured agents are still listed.'}
+            {fleetInstancesQuery.data.docker.error || 'Runtime metadata is degraded, but configured agents are still listed.'}
           </Alert>
         )}
       </Paper>
@@ -474,6 +479,11 @@ function TaskTable({ tasks, compact = false }: { tasks: OpsTask[]; compact?: boo
 function AgentsPage({ openAgent, openLogs }: { openAgent: (agent: AgentInstance) => void; openLogs: (agent: AgentInstance) => void }) {
   const query = useDashboardData();
   const profilesQuery = useAgentProfiles();
+  const fleetInstancesQuery = useQuery({
+    queryKey: ['openab-instances'],
+    queryFn: () => opsApi.instances(),
+    refetchInterval: 10_000,
+  });
   return (
     <Stack gap="lg">
       <Box>
@@ -481,9 +491,9 @@ function AgentsPage({ openAgent, openLogs }: { openAgent: (agent: AgentInstance)
         <Text c="dimmed" mt={6}>The runtime fleet and each agent's operational responsibility, joined with Git-backed profile policy.</Text>
       </Box>
       <Paper withBorder p="lg">
-        {query.isLoading ? <Skeleton height={360} /> : (
+        {query.isLoading && fleetInstancesQuery.isLoading ? <Skeleton height={360} /> : (
           <AgentTable
-            agents={query.data?.instances.instances || []}
+            agents={fleetInstancesQuery.data?.instances || []}
             profiles={profilesQuery.data?.profiles || []}
             tasks={query.data?.tasks.tasks || []}
             openAgent={openAgent}
@@ -582,7 +592,7 @@ export default function App() {
       <AppShell.Header className="app-header">
         <Group h="100%" px="lg" justify="space-between">
           <Group gap="sm"><Burger opened={mobileOpened} onClick={mobile.toggle} hiddenFrom="md" size="sm" /><ThemeIcon size={34} radius="md" variant="gradient" gradient={{ from: 'violet', to: 'indigo' }}><IconSparkles size={19} /></ThemeIcon><Box><Text fw={700} lh={1.1}>Ops Room</Text><Text size="xs" c="dimmed">Agent control plane</Text></Box></Group>
-          <Group gap="md"><Group gap={6} visibleFrom="sm"><Badge variant="dot" color="teal">Live</Badge><Text size="xs" c="dimmed">Updated {lastUpdated}</Text></Group><Tooltip label="Refresh all data"><ActionIcon variant="default" size="lg" onClick={() => { queryClient.invalidateQueries({ queryKey: ['ops-dashboard'] }); queryClient.invalidateQueries({ queryKey: ['agent-profiles'] }); queryClient.invalidateQueries({ queryKey: ['skills-catalog'] }); queryClient.invalidateQueries({ queryKey: ['memory-spaces'] }); queryClient.invalidateQueries({ queryKey: ['openab-instances'] }); }}><IconRefresh size={17} /></ActionIcon></Tooltip></Group>
+          <Group gap="md"><Group gap={6} visibleFrom="sm"><Badge variant="dot" color="teal">Live</Badge><Text size="xs" c="dimmed">Updated {lastUpdated}</Text></Group><Tooltip label="Refresh all data"><ActionIcon variant="default" size="lg" onClick={() => { queryClient.invalidateQueries({ queryKey: ['ops-dashboard'] }); queryClient.invalidateQueries({ queryKey: ['agent-profiles'] }); queryClient.invalidateQueries({ queryKey: ['agent-profile'] }); queryClient.invalidateQueries({ queryKey: ['skills-catalog'] }); queryClient.invalidateQueries({ queryKey: ['memory-spaces'] }); queryClient.invalidateQueries({ queryKey: ['openab-instances'] }); }}><IconRefresh size={17} /></ActionIcon></Tooltip></Group>
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="md" className="app-navbar">

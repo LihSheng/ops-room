@@ -9,10 +9,8 @@ export interface JoinedAgentRow {
 
 /**
  * Join profile policy and runtime data by agent ID.
- *
- * - Every runtime instance and every profile contributes a row.
- * - Rows are sorted deterministically by agent ID.
- * - Missing profile or runtime is represented as `null` in its field.
+ * Mirrors src/services/agent-profile/profile-runtime-join.ts so server-side
+ * tests can exercise the same contract through that module.
  */
 export function joinProfileRuntime(
   profiles: PublicAgentProfile[],

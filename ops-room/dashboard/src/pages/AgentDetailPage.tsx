@@ -235,6 +235,18 @@ export function AgentDetailPage() {
         </Stack>
       );
     }
+    // Runtime still loading — don't conclude "Agent not found" yet
+    if (instancesQuery.isLoading) {
+      return (
+        <Stack gap="lg">
+          <Box>
+            <Title order={1} className="page-title">{id}</Title>
+            <Text c="dimmed" mt={6}>Checking runtime state...</Text>
+          </Box>
+          <Skeleton height={120} radius="lg" />
+        </Stack>
+      );
+    }
     return (
       <Stack gap="lg">
         <Box>
