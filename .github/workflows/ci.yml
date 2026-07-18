@@ -37,6 +37,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Test
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set +e
@@ -50,6 +51,20 @@ jobs:
           fi
           cat test-output.txt
           rm -f test-output.txt
+
+      - name: Test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm test *> test-output.txt
+          $testStatus = $LASTEXITCODE
+          if ($testStatus -ne 0) {
+            Write-Output "Test failure summary:"
+            Get-Content test-output.txt -Tail 220
+            exit $testStatus
+          }
+          Get-Content test-output.txt
+          Remove-Item test-output.txt -Force
 
       - name: Upload test failure diagnostics
         if: failure()
