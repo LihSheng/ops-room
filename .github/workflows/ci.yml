@@ -26,57 +26,21 @@ jobs:
         working-directory: ops-room
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: ops-room/package-lock.json
+
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
+
       - name: Test
         run: npm test
+
       - name: Build dashboard
         run: npm run build:dashboard
-
-  discover-tests:
-    name: Discover diagnostic tests
-    runs-on: ubuntu-latest
-    outputs:
-      files: ${{ steps.files.outputs.files }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - id: files
-        name: List compiled test filenames
-        working-directory: ops-room
-        shell: bash
-        run: |
-          files=$(node -e "const fs=require('fs'); console.log(JSON.stringify(fs.readdirSync('test').filter((name)=>name.endsWith('.test.ts')).sort().map((name)=>name.replace(/\.ts$/, '.js'))))")
-          echo "files=$files" >> "$GITHUB_OUTPUT"
-
-  diagnostic-tests:
-    name: Diagnostic / ${{ matrix.test-file }}
-    needs: discover-tests
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        test-file: ${{ fromJSON(needs.discover-tests.outputs.files) }}
-    defaults:
-      run:
-        working-directory: ops-room
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '20.19.0'
-          cache: npm
-          cache-dependency-path: ops-room/package-lock.json
-      - name: Install locked dependencies
-        run: npm ci --ignore-scripts
-      - name: Build server tests
-        run: npm run build:server
-      - name: Run focused test
-        run: node --test "test/${{ matrix.test-file }}"
 
   smoke:
     name: OpenAB instances smoke
@@ -86,17 +50,22 @@ jobs:
         working-directory: ops-room
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.19.0'
           cache: npm
           cache-dependency-path: ops-room/package-lock.json
+
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
+
       - name: Build server
         run: npm run build:server
+
       - name: Build dashboard
         run: npm run build:dashboard
+
       - name: Start Ops Room and smoke test instances
         env:
           OPENAB_WEBHOOK_SECRET: ci-smoke-secret
@@ -131,15 +100,19 @@ jobs:
         working-directory: ops-room
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.19.0'
           cache: npm
           cache-dependency-path: ops-room/package-lock.json
+
       - name: Install locked build dependencies
         run: npm ci --ignore-scripts
+
       - name: Build dashboard
         run: npm run build:dashboard
+
       - name: Build and verify immutable artifact
         run: |
           npm run release:build -- "${{ github.sha }}" "$RUNNER_TEMP/releases"
