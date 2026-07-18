@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { buildReleaseArtifact } from '../scripts/deploy/release-artifact.js';
+import { buildReleaseArtifact, REQUIRED_SKILL_MANIFESTS } from '../scripts/deploy/release-artifact.js';
 
 const windows = process.platform === 'win32';
 const scriptRoot = resolve(fileURLToPath(new URL('../scripts/deploy/', import.meta.url)));
@@ -23,6 +23,19 @@ function run(command, args, env) {
   });
 }
 
+function manifestFor(key) {
+  return {
+    schemaVersion: 1,
+    key,
+    version: '1.0.0',
+    description: `Safe deployment fixture for ${key}.`,
+    supportedRuntimes: ['opencode'],
+    requiredCommands: [],
+    requiredCredentials: [],
+    permissions: ['repository.read'],
+  };
+}
+
 async function makeSource(root) {
   await mkdir(join(root, 'src', 'server'), { recursive: true });
   await mkdir(join(root, 'dist', 'dashboard'), { recursive: true });
@@ -32,6 +45,12 @@ async function makeSource(root) {
   await mkdir(join(root, '..', 'config', 'agent-profiles'), { recursive: true });
   for (const id of PROFILE_IDS) {
     await writeFile(join(root, '..', 'config', 'agent-profiles', `${id}.json`), JSON.stringify({ id }));
+  }
+  for (const path of REQUIRED_SKILL_MANIFESTS) {
+    const [, , key, version] = path.split('/');
+    const directory = join(root, '..', 'config', 'skills', key, version);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifestFor(key)));
   }
 }
 
