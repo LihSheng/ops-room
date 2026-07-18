@@ -37,7 +37,19 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Test
-        run: npm test
+        shell: bash
+        run: |
+          set +e
+          npm test > test-output.txt 2>&1
+          test_status=$?
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            echo "Test failure summary:"
+            tail -n 220 test-output.txt
+            exit "$test_status"
+          fi
+          cat test-output.txt
+          rm -f test-output.txt
 
       - name: Build dashboard
         run: npm run build:dashboard
