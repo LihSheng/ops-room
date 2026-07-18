@@ -274,7 +274,15 @@ export function AgentDetailPage() {
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 5 }}>
           <Stack gap="lg">
-            {instancesError ? (
+            {instancesQuery.isLoading ? (
+              <Paper withBorder p="lg">
+                <Group mb="md" gap="sm">
+                  <ThemeIcon variant="light" color="gray" size={28}><IconServer size={16} /></ThemeIcon>
+                  <Title order={4}>Runtime State</Title>
+                </Group>
+                <Skeleton height={80} radius="sm" />
+              </Paper>
+            ) : instancesError ? (
               <Paper withBorder p="lg">
                 <Group mb="md" gap="sm">
                   <ThemeIcon variant="light" color="gray" size={28}><IconServer size={16} /></ThemeIcon>

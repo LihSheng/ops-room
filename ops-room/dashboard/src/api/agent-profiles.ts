@@ -27,7 +27,7 @@ export interface ProfilesResponse {
 }
 
 export interface ProfileDetailResponse {
-  profile: PublicAgentProfile;
+  profile: PublicAgentProfile | null;
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -40,5 +40,16 @@ async function getJson<T>(url: string): Promise<T> {
 
 export const agentProfileApi = {
   list: () => getJson<ProfilesResponse>('/api/agents/profiles'),
-  detail: (id: string) => getJson<ProfileDetailResponse>(`/api/agents/profiles/${encodeURIComponent(id)}`),
+  detail: async (id: string): Promise<ProfileDetailResponse> => {
+    const response = await fetch(`/api/agents/profiles/${encodeURIComponent(id)}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (response.status === 404) {
+      return { profile: null };
+    }
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+    return response.json() as Promise<ProfileDetailResponse>;
+  },
 };

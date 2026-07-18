@@ -61,6 +61,7 @@ import type { ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { opsApi } from './api';
 import { useAgentProfiles } from './hooks/use-agent-profiles';
+import { joinProfileRuntime } from './lib/join-profile-runtime';
 import { ActivityPage, SettingsPage, WorkflowsPage } from './operational-pages';
 import { AgentDetailPage } from './pages/AgentDetailPage';
 import { SkillsPage } from './pages/SkillsPage';
@@ -265,7 +266,15 @@ function DashboardPage({ openAgent, openLogs }: {
 
       <Paper withBorder p="lg">
         <SectionHeading title="Agent fleet" description="Runtime health, responsibility, and current assignment for each OpenAB instance." action={<Button variant="subtle" size="compact-sm" rightSection={<IconChevronRight size={14} />} onClick={() => navigate('/agents')}>Manage fleet</Button>} />
-        <AgentTable agents={agents} profiles={profiles} tasks={tasks} openAgent={openAgent} openLogs={openLogs} />
+        <AgentTable
+          agents={agents}
+          profiles={profiles}
+          tasks={tasks}
+          openAgent={openAgent}
+          openLogs={openLogs}
+          profilesLoading={profilesQuery.isLoading}
+          profilesError={profilesQuery.isError}
+        />
         {data.instances.docker && !data.instances.docker.available && (
           <Alert mt="md" color="orange" variant="light" icon={<IconAlertTriangle size={17} />} title="Docker inspection unavailable">
             {data.instances.docker.error || 'Runtime metadata is degraded, but configured agents are still listed.'}
@@ -276,25 +285,44 @@ function DashboardPage({ openAgent, openLogs }: {
   );
 }
 
-function AgentTable({ agents, profiles, tasks, openAgent, openLogs }: {
-  agents: AgentInstance[]; profiles: PublicAgentProfile[]; tasks: OpsTask[]; openAgent: (agent: AgentInstance) => void; openLogs: (agent: AgentInstance) => void;
+function AgentTable({ agents, profiles, tasks, openAgent, openLogs, profilesLoading, profilesError }: {
+  agents: AgentInstance[]; profiles: PublicAgentProfile[]; tasks: OpsTask[];
+  openAgent: (agent: AgentInstance) => void; openLogs: (agent: AgentInstance) => void;
+  profilesLoading?: boolean; profilesError?: boolean;
 }) {
   const navigate = useNavigate();
-  const profileMap = new Map(profiles.map((p) => [p.id, p]));
+  const joined = useMemo(() => joinProfileRuntime(profiles, agents), [profiles, agents]);
 
-  // Build combined view: join by agent ID. Start from agent definitions as the
-  // authoritative set, then include any profiles without a matching runtime.
-  const agentIds = new Set([
-    ...agents.map((a) => a.agent),
-    ...profiles.map((p) => p.id),
-  ]);
-  const joined = [...agentIds].map((id) => ({
-    id,
-    agent: agents.find((a) => a.agent === id) || null,
-    profile: profileMap.get(id) || null,
-  }));
+  if (joined.length === 0 && !profilesLoading) {
+    return <EmptyState icon={<IconRobot size={20} />} title="No agents configured" description="Add agents to the server registry before they can appear here." />;
+  }
 
-  if (joined.length === 0) return <EmptyState icon={<IconRobot size={20} />} title="No agents configured" description="Add agents to the server registry before they can appear here." />;
+  const showProfileColumn = profiles.length > 0 || profilesLoading || profilesError;
+
+  function ProfileCell({ profile, id }: { profile: PublicAgentProfile | null; id: string }) {
+    if (profilesLoading) return <Skeleton height={22} width={90} radius="sm" />;
+    if (profilesError) {
+      // Only flag missing profiles when runtime exists and we know the API
+      // succeeded but didn't include this agent. Otherwise show error state.
+      return <Badge color="red" variant="light" size="sm">Profile API error</Badge>;
+    }
+    if (profile) {
+      return (
+        <Stack gap={4}>
+          <Badge color={profile.enabled ? 'teal' : 'red'} variant="light" size="sm">{profile.enabled ? 'Enabled' : 'Disabled'}</Badge>
+          <Text size="xs" c="dimmed">{profile.profile_version}</Text>
+        </Stack>
+      );
+    }
+    return <Badge color="orange" variant="light" size="sm">Profile unavailable</Badge>;
+  }
+
+  function ProfileDataCell({ profile }: { profile: PublicAgentProfile | null }) {
+    if (profilesLoading) return <Skeleton height={16} width={60} />;
+    if (profilesError) return <Text size="xs" c="dimmed">—</Text>;
+    if (profile) return null; // caller renders profile data
+    return <Text size="xs" c="dimmed">—</Text>;
+  }
 
   return (
     <Table.ScrollContainer minWidth={1200}>
@@ -315,7 +343,7 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs }: {
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {joined.map(({ id, agent, profile }) => {
+          {joined.map(({ id, profile, runtime: agent }) => {
             const current = agent ? tasks.find((task) => task.agent?.toLowerCase() === agent.agent.toLowerCase() && ACTIVE_STATES.has(normalizeState(task))) : undefined;
             const displayName = profile?.display_name || agent?.display_name || id;
             const role = agent?.role || profile?.runtime?.backend || '—';
@@ -335,16 +363,7 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs }: {
                     </Group>
                   </UnstyledButton>
                 </Table.Td>
-                <Table.Td>
-                  {profile ? (
-                    <Stack gap={4}>
-                      <Badge color={profile.enabled ? 'teal' : 'red'} variant="light" size="sm">{profile.enabled ? 'Enabled' : 'Disabled'}</Badge>
-                      <Text size="xs" c="dimmed">{profile.profile_version}</Text>
-                    </Stack>
-                  ) : (
-                    <Badge color="orange" variant="light" size="sm">Profile unavailable</Badge>
-                  )}
-                </Table.Td>
+                <Table.Td><ProfileCell profile={profile} id={id} /></Table.Td>
                 <Table.Td>
                   {agent ? (
                     <Stack gap={4}>
@@ -363,20 +382,32 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs }: {
                   {profile ? (
                     <Text size="xs" lineClamp={2} maw={160}>{profile.mission}</Text>
                   ) : (
-                    <Text size="xs" c="dimmed">—</Text>
+                    <ProfileDataCell profile={profile} />
                   )}
                 </Table.Td>
                 <Table.Td>
-                  <Badge variant="light" color="violet">{profile?.skills.length ?? 0}</Badge>
+                  {profile ? (
+                    <Badge variant="light" color="violet">{profile.skills.length}</Badge>
+                  ) : (
+                    <ProfileDataCell profile={profile} />
+                  )}
                 </Table.Td>
                 <Table.Td>
-                  <Group gap={4}>
-                    <Badge variant="light" color="blue" size="sm">{profile ? profile.memory.read.length : 0}r</Badge>
-                    <Badge variant="light" color="orange" size="sm">{profile ? profile.memory.write.length : 0}w</Badge>
-                  </Group>
+                  {profile ? (
+                    <Group gap={4}>
+                      <Badge variant="light" color="blue" size="sm">{profile.memory.read.length}r</Badge>
+                      <Badge variant="light" color="orange" size="sm">{profile.memory.write.length}w</Badge>
+                    </Group>
+                  ) : (
+                    <ProfileDataCell profile={profile} />
+                  )}
                 </Table.Td>
                 <Table.Td>
-                  <Badge variant="light" color="gray">{profile?.repositories.length ?? 0}</Badge>
+                  {profile ? (
+                    <Badge variant="light" color="gray">{profile.repositories.length}</Badge>
+                  ) : (
+                    <ProfileDataCell profile={profile} />
+                  )}
                 </Table.Td>
                 <Table.Td>
                   {current ? (
@@ -457,6 +488,8 @@ function AgentsPage({ openAgent, openLogs }: { openAgent: (agent: AgentInstance)
             tasks={query.data?.tasks.tasks || []}
             openAgent={openAgent}
             openLogs={openLogs}
+            profilesLoading={profilesQuery.isLoading}
+            profilesError={profilesQuery.isError}
           />
         )}
       </Paper>
