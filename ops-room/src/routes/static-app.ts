@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { handleReadOnlyAgentProfileApi } from './agent-profiles.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const DIST_DIR = resolve(__dirname, '..', '..', 'dist', 'dashboard');
@@ -55,8 +56,26 @@ function sendFile(res, filePath, cacheControl) {
   res.end(content);
 }
 
+function sendJson(res, status, body) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(JSON.stringify(body));
+}
+
 export function handleStaticApp(req, res, pathname) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+
+  if (req.method === 'GET') {
+    const apiResult = handleReadOnlyAgentProfileApi(pathname);
+    if (apiResult) {
+      sendJson(res, apiResult.status, apiResult.body);
+      return true;
+    }
+  }
+
   if (pathname.startsWith('/api/') || pathname === '/api' || pathname === '/health') return false;
 
   try {
