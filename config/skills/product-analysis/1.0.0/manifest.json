@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "product-analysis",
+  "version": "1.0.0",
+  "description": "Analyze product requirements, value, and trade-offs using available evidence.",
+  "supportedRuntimes": ["gemini"],
+  "requiredCommands": [],
+  "requiredCredentials": [],
+  "permissions": ["research.read"]
+}

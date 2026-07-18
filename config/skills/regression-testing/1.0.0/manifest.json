@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "regression-testing",
+  "version": "1.0.0",
+  "description": "Exercise existing behavior and regression coverage against proposed changes.",
+  "supportedRuntimes": ["opencode"],
+  "requiredCommands": ["git"],
+  "requiredCredentials": [],
+  "permissions": ["repository.read", "test.execute"]
+}

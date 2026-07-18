@@ -7,9 +7,9 @@ export function buildSkillCatalog(profiles: AgentProfile[]): SkillCatalogItem[] 
   const agentsBySkill = new Map<string, Set<string>>();
   for (const profile of profiles) {
     for (const skill of profile.skills) {
-      const agents = agentsBySkill.get(skill) || new Set<string>();
+      const agents = agentsBySkill.get(skill.key) || new Set<string>();
       agents.add(profile.id);
-      agentsBySkill.set(skill, agents);
+      agentsBySkill.set(skill.key, agents);
     }
   }
   return [...agentsBySkill.entries()]

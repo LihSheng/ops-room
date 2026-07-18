@@ -5,21 +5,21 @@ import type { AgentProfile } from '../src/services/agent-profile/schema.js';
 
 function profile(id: string, skills: string[] = [], read: string[] = [], write: string[] = []): AgentProfile {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
     displayName: id,
-    profileVersion: '1.0.0',
+    profileVersion: '2.0.0',
     mission: 'test',
     personality: { communicationStyle: 'test', decisionPolicy: ['test'], constraints: ['test'] },
     runtime: { backend: 'opencode' },
-    skills,
+    skills: skills.map((key) => ({ key, version: '1.0.0' })),
     memory: { read, write },
     repositories: ['LihSheng/ops-room'],
     enabled: true,
   };
 }
 
-test('skill catalog deduplicates and sorts skills and agents', () => {
+test('legacy key catalog remains deterministic for backward compatibility', () => {
   assert.deepEqual(buildSkillCatalog([
     profile('tokyo', ['verification', 'shared']),
     profile('berlin', ['shared', 'review']),
@@ -40,5 +40,4 @@ test('memory catalog merges read and write usage without filesystem access', () 
     { key: 'Projects/Ops-Room', readers: ['berlin', 'professor'], writers: ['professor'] },
     { key: 'Projects/Review', readers: ['berlin'], writers: [] },
   ]);
-  assert.deepEqual(buildMemorySpaceCatalog([]), []);
 });

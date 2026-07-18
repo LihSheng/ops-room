@@ -18,16 +18,42 @@ async function fixture() {
   return { root, dir };
 }
 
-test('loads the four canonical agent profiles and initializes the registry', async () => {
+function minimalProfile(overrides = {}) {
+  return {
+    schemaVersion: 2,
+    id: 'professor',
+    displayName: 'Professor',
+    profileVersion: '2.0.0',
+    mission: 'Build software.',
+    personality: {
+      communicationStyle: 'Structured.',
+      decisionPolicy: ['Inspect code.'],
+      constraints: ['Do not merge.'],
+    },
+    runtime: { backend: 'opencode' },
+    skills: [{ key: 'implementation', version: '1.0.0' }],
+    memory: { read: [], write: [] },
+    repositories: ['LihSheng/ops-room'],
+    enabled: true,
+    ...overrides,
+  };
+}
+
+test('loads canonical schema-v2 profiles with exact skill versions', async () => {
   const { root, dir } = await fixture();
   try {
     const loaded = await loadAgentProfiles(dir);
     assert.deepEqual(loaded.profiles.map((profile) => profile.id), ['berlin', 'gemini', 'professor', 'tokyo']);
+    for (const profile of loaded.profiles) {
+      assert.equal(profile.schemaVersion, 2);
+      assert.equal(profile.profileVersion, '2.0.0');
+      assert.ok(profile.skills.every((skill) => skill.key && skill.version === '1.0.0'));
+    }
 
     resetAgentProfileRegistryForTests();
     const status = await initializeAgentProfileRegistry(dir);
     assert.equal(status.status, 'ok');
-    assert.equal(status.count, 4);
+    assert.equal(status.schema_version, 2);
     assert.equal(listAgentProfiles().length, 4);
   } finally {
     resetAgentProfileRegistryForTests();
@@ -39,41 +65,29 @@ test('rejects malformed JSON', async () => {
   const { root, dir } = await fixture();
   try {
     await writeFile(join(dir, 'professor.json'), '{ invalid json');
-    await assert.rejects(() => loadAgentProfiles(dir), (error) => {
-      assert.ok(error instanceof AgentProfileValidationError);
-      assert.match(error.message, /professor\.json: malformed JSON/);
-      return true;
-    });
+    await assert.rejects(() => loadAgentProfiles(dir), /professor\.json: malformed JSON/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('rejects unsupported schema versions and duplicate skills', async () => {
+test('rejects old schema, unversioned skills, duplicate keys, and invalid semantic versions', async () => {
   const { root, dir } = await fixture();
   try {
-    const invalid = {
-      schemaVersion: 2,
-      id: 'professor',
-      displayName: 'Professor',
-      profileVersion: '1.0.0',
-      mission: 'Build software.',
-      personality: {
-        communicationStyle: 'Structured.',
-        decisionPolicy: ['Inspect code.'],
-        constraints: ['Do not merge.'],
-      },
-      runtime: { backend: 'opencode' },
-      skills: ['implementation', 'implementation'],
-      memory: { read: [], write: [] },
-      repositories: ['LihSheng/ops-room'],
-      enabled: true,
-    };
-    await writeFile(join(dir, 'professor.json'), JSON.stringify(invalid));
+    await writeFile(join(dir, 'professor.json'), JSON.stringify(minimalProfile({
+      schemaVersion: 1,
+      profileVersion: '2',
+      skills: [
+        { key: 'implementation', version: '1.0.0' },
+        { key: 'implementation', version: 'latest' },
+      ],
+    })));
     await assert.rejects(() => loadAgentProfiles(dir), (error) => {
       assert.ok(error instanceof AgentProfileValidationError);
-      assert.match(error.message, /schemaVersion must be 1/);
-      assert.match(error.message, /duplicate skills/);
+      assert.match(error.message, /schemaVersion must be 2/);
+      assert.match(error.message, /profileVersion must be semantic version format/);
+      assert.match(error.message, /duplicate skill assignments/);
+      assert.match(error.message, /version must be a valid semantic version/);
       return true;
     });
   } finally {
@@ -86,24 +100,7 @@ test('rejects missing profiles and backend mismatches', async () => {
   const dir = join(root, 'agent-profiles');
   await mkdir(dir, { recursive: true });
   try {
-    const profile = {
-      schemaVersion: 1,
-      id: 'professor',
-      displayName: 'Professor',
-      profileVersion: '1.0.0',
-      mission: 'Build software.',
-      personality: {
-        communicationStyle: 'Structured.',
-        decisionPolicy: ['Inspect code.'],
-        constraints: ['Do not merge.'],
-      },
-      runtime: { backend: 'gemini' },
-      skills: ['implementation'],
-      memory: { read: [], write: [] },
-      repositories: ['LihSheng/ops-room'],
-      enabled: true,
-    };
-    await writeFile(join(dir, 'professor.json'), JSON.stringify(profile));
+    await writeFile(join(dir, 'professor.json'), JSON.stringify(minimalProfile({ runtime: { backend: 'gemini' } })));
     await assert.rejects(() => loadAgentProfiles(dir), (error) => {
       assert.ok(error instanceof AgentProfileValidationError);
       assert.match(error.message, /runtime backend must match agent definition/);

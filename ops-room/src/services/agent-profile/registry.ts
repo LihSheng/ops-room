@@ -26,7 +26,7 @@ export function getAgentProfileRegistryStatus() {
     required: true,
     count: profiles.size,
     initialized_at: initializedAt,
-    schema_version: 1,
+    schema_version: 2,
   };
 }
 

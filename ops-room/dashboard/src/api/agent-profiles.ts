@@ -1,3 +1,13 @@
+import type { PublicCompatibility, SkillRequirements } from './skills';
+
+export interface ProfileSkillAssignment {
+  key: string;
+  version: string;
+  resolution_status: 'resolved' | 'unresolved';
+  compatibility: PublicCompatibility;
+  requirements: SkillRequirements;
+}
+
 export interface PublicAgentProfile {
   id: string;
   display_name: string;
@@ -13,6 +23,7 @@ export interface PublicAgentProfile {
     backend: string;
   };
   skills: string[];
+  skill_assignments: ProfileSkillAssignment[];
   memory: {
     read: string[];
     write: string[];

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "verification",
+  "version": "1.0.0",
+  "description": "Verify that a change satisfies its declared acceptance criteria with reproducible evidence.",
+  "supportedRuntimes": ["opencode"],
+  "requiredCommands": ["git"],
+  "requiredCredentials": [],
+  "permissions": ["repository.read", "test.execute"]
+}

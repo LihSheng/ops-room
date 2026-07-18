@@ -1,9 +1,16 @@
-export const AGENT_PROFILE_SCHEMA_VERSION = 1;
+export const AGENT_PROFILE_SCHEMA_VERSION = 2;
 
 export const SUPPORTED_PROFILE_BACKENDS = new Set(['opencode', 'gemini']);
+const SEMANTIC_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+const SKILL_KEY_PATTERN = /^[a-z][a-z0-9-]*$/;
+
+export type AgentSkillAssignment = {
+  key: string;
+  version: string;
+};
 
 export type AgentProfile = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   displayName: string;
   profileVersion: string;
@@ -16,7 +23,7 @@ export type AgentProfile = {
   runtime: {
     backend: string;
   };
-  skills: string[];
+  skills: AgentSkillAssignment[];
   memory: {
     read: string[];
     write: string[];
@@ -36,7 +43,7 @@ export class AgentProfileValidationError extends Error {
 }
 
 function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string' && item.trim().length > 0);
+  return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'string' && item.trim().length > 0);
 }
 
 function duplicateValues(values: string[]) {
@@ -47,6 +54,34 @@ function duplicateValues(values: string[]) {
     seen.add(value);
   }
   return [...duplicates];
+}
+
+function validateSkillAssignments(value: unknown, source: string, issues: string[]): value is AgentSkillAssignment[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    issues.push(`${source}: skills must be a non-empty versioned assignment array`);
+    return false;
+  }
+  const keys: string[] = [];
+  for (const [index, item] of value.entries()) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      issues.push(`${source}: skills[${index}] must be an object with key and version`);
+      continue;
+    }
+    const assignment = item as Partial<AgentSkillAssignment>;
+    const unknownFields = Object.keys(item).filter((field) => !['key', 'version'].includes(field));
+    if (unknownFields.length) issues.push(`${source}: skills[${index}] contains unknown fields: ${unknownFields.join(', ')}`);
+    if (typeof assignment.key !== 'string' || !SKILL_KEY_PATTERN.test(assignment.key)) {
+      issues.push(`${source}: skills[${index}].key must use lowercase letters, numbers, and hyphens`);
+    } else {
+      keys.push(assignment.key);
+    }
+    if (typeof assignment.version !== 'string' || !SEMANTIC_VERSION_PATTERN.test(assignment.version)) {
+      issues.push(`${source}: skills[${index}].version must be a valid semantic version`);
+    }
+  }
+  const duplicates = duplicateValues(keys);
+  if (duplicates.length) issues.push(`${source}: duplicate skill assignments: ${duplicates.join(', ')}`);
+  return issues.length === 0;
 }
 
 export function validateAgentProfile(value: unknown, source: string): AgentProfile {
@@ -66,7 +101,7 @@ export function validateAgentProfile(value: unknown, source: string): AgentProfi
   if (typeof profile.displayName !== 'string' || !profile.displayName.trim()) {
     issues.push(`${source}: displayName is required`);
   }
-  if (typeof profile.profileVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(profile.profileVersion)) {
+  if (typeof profile.profileVersion !== 'string' || !SEMANTIC_VERSION_PATTERN.test(profile.profileVersion)) {
     issues.push(`${source}: profileVersion must be semantic version format`);
   }
   if (typeof profile.mission !== 'string' || !profile.mission.trim()) {
@@ -88,12 +123,7 @@ export function validateAgentProfile(value: unknown, source: string): AgentProfi
   if (!profile.runtime || typeof profile.runtime !== 'object' || !SUPPORTED_PROFILE_BACKENDS.has(profile.runtime.backend)) {
     issues.push(`${source}: runtime.backend is unsupported`);
   }
-  if (!isStringArray(profile.skills)) {
-    issues.push(`${source}: skills must be a non-empty string array`);
-  } else {
-    const duplicates = duplicateValues(profile.skills);
-    if (duplicates.length) issues.push(`${source}: duplicate skills: ${duplicates.join(', ')}`);
-  }
+  validateSkillAssignments(profile.skills, source, issues);
   if (!profile.memory || typeof profile.memory !== 'object') {
     issues.push(`${source}: memory policy is required`);
   } else {

@@ -8,11 +8,29 @@ import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { createGzip } from 'node:zlib';
 
+import { loadSkillManifests } from '../../src/services/skill-registry/loader.js';
+
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
+const SKILL_KEY_PATTERN = /^[a-z][a-z0-9-]*$/;
+const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const FORBIDDEN_SEGMENTS = new Set([
   '.env', 'data', 'secrets', 'node_modules', 'workspaces', 'logs', 'test', 'tests', 'dashboard',
 ]);
+export const REQUIRED_SKILL_MANIFESTS = [
+  'architecture-analysis',
+  'documentation',
+  'failure-analysis',
+  'implementation',
+  'product-analysis',
+  'pull-request-review',
+  'regression-testing',
+  'risk-analysis',
+  'security-review',
+  'technical-research',
+  'test-authoring',
+  'verification',
+].map((key) => `config/skills/${key}/1.0.0/manifest.json`);
 
 export function validateReleaseSha(value) {
   const sha = String(value || '').toLowerCase();
@@ -28,11 +46,21 @@ export function normalizeArchivePath(value) {
   return normalized.replace(/\/$/, '');
 }
 
+function isAllowedSkillPath(path) {
+  const segments = path.split('/');
+  if (path === 'config/skills') return true;
+  if (segments[0] !== 'config' || segments[1] !== 'skills') return false;
+  if (segments.length === 3) return SKILL_KEY_PATTERN.test(segments[2]);
+  if (segments.length === 4) return SKILL_KEY_PATTERN.test(segments[2]) && SEMVER_PATTERN.test(segments[3]);
+  return segments.length === 5 && SKILL_KEY_PATTERN.test(segments[2]) && SEMVER_PATTERN.test(segments[3]) && segments[4] === 'manifest.json';
+}
+
 export function assertAllowedReleasePath(value) {
   const path = normalizeArchivePath(value);
   if (
     path === 'RELEASE.json' || path === 'ops-room' || path === 'ops-room/src' || path === 'ops-room/dist' ||
-    path === 'ops-room/dist/dashboard' || path === 'config' || path === 'config/agent-profiles'
+    path === 'ops-room/dist/dashboard' || path === 'config' || path === 'config/agent-profiles' ||
+    isAllowedSkillPath(path)
   ) {
     return path;
   }
@@ -41,7 +69,7 @@ export function assertAllowedReleasePath(value) {
     path.startsWith('config/agent-profiles/')
   ) {
     const segments = path.split('/');
-    if (segments.some((segment) => FORBIDDEN_SEGMENTS.has(segment) && !['dashboard'].includes(segment))) {
+    if (segments.some((segment) => FORBIDDEN_SEGMENTS.has(segment) && segment !== 'dashboard')) {
       throw new Error(`Forbidden release content: ${path}`);
     }
     if (path.startsWith('config/agent-profiles/') && !path.endsWith('.json')) {
@@ -85,8 +113,14 @@ export async function verifyReleaseArtifact({ archivePath, checksumPath, expecte
     'RELEASE.json', 'ops-room/package.json', 'ops-room/src/server/webhook.js', 'ops-room/dist/dashboard/index.html',
     'config/agent-profiles/professor.json', 'config/agent-profiles/berlin.json',
     'config/agent-profiles/tokyo.json', 'config/agent-profiles/gemini.json',
+    ...REQUIRED_SKILL_MANIFESTS,
   ]) {
     if (!entries.includes(required)) throw new Error(`Release is missing required file: ${required}`);
+  }
+
+  const actualSkillManifests = entries.filter((entry) => entry.startsWith('config/skills/') && entry.endsWith('/manifest.json')).sort();
+  if (JSON.stringify(actualSkillManifests) !== JSON.stringify([...REQUIRED_SKILL_MANIFESTS].sort())) {
+    throw new Error('Release skill manifest set does not match the approved manifest set');
   }
 
   const extractDir = await mkdtemp(join(tmpdir(), 'ops-room-release-verify-'));
@@ -132,6 +166,20 @@ async function writeChecksumOnce(checksumPath, checksum, archivePath) {
   }
 }
 
+async function copyApprovedSkillManifests(sourceRoot, releaseRoot) {
+  const sourceSkills = join(sourceRoot, '..', 'config', 'skills');
+  const loaded = await loadSkillManifests(sourceSkills);
+  const discovered = loaded.manifests.map((manifest) => `config/skills/${manifest.key}/${manifest.version}/manifest.json`).sort();
+  if (JSON.stringify(discovered) !== JSON.stringify([...REQUIRED_SKILL_MANIFESTS].sort())) {
+    throw new Error('Source skill manifest set does not match the approved release set');
+  }
+  for (const manifest of loaded.manifests) {
+    const destination = join(releaseRoot, 'config', 'skills', manifest.key, manifest.version);
+    await mkdir(destination, { recursive: true });
+    await cp(join(sourceSkills, manifest.key, manifest.version, 'manifest.json'), join(destination, 'manifest.json'));
+  }
+}
+
 export async function buildReleaseArtifact({ sourceRoot, outputDir, commitSha }) {
   const sha = validateReleaseSha(commitSha);
   const root = resolve(sourceRoot);
@@ -148,6 +196,7 @@ export async function buildReleaseArtifact({ sourceRoot, outputDir, commitSha })
     await cp(join(root, 'dist', 'dashboard'), join(releaseOpsRoom, 'dist', 'dashboard'), { recursive: true });
     await cp(join(root, 'package.json'), join(releaseOpsRoom, 'package.json'));
     await cp(join(root, '..', 'config', 'agent-profiles'), join(releaseRoot, 'config', 'agent-profiles'), { recursive: true });
+    await copyApprovedSkillManifests(root, releaseRoot);
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf-8'));
     await writeFile(join(releaseRoot, 'RELEASE.json'), `${JSON.stringify({
       schema: 'ops-room.release.v1',

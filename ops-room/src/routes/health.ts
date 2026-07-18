@@ -8,6 +8,7 @@ import {
 import { processLifecycle } from '../services/process-lifecycle.js';
 import { readReleaseInfo } from '../services/release-info.js';
 import { getAgentProfileRegistryStatus } from '../services/agent-profile/registry.js';
+import { getSkillRegistryStatus } from '../services/skill-registry/registry.js';
 
 let cachedCommandStatus = null;
 let cachedAt = 0;
@@ -42,12 +43,17 @@ async function checkDirectory(path) {
   }
 }
 
+function dependencyReady(dependency) {
+  return dependency.status === 'ok' || dependency.status === 'ready';
+}
+
 export async function handleHealth({
   commandExistsFn = commandExists,
   directoryCheckFn = checkDirectory,
   lifecycle = processLifecycle,
   releaseInfoFn = readReleaseInfo,
   profileStatusFn = getAgentProfileRegistryStatus,
+  skillStatusFn = getSkillRegistryStatus,
   requiredCommands = REQUIRED_COMMANDS,
 } = {}) {
   let releaseInfo;
@@ -61,6 +67,7 @@ export async function handleHealth({
   }
 
   const profileRegistry = profileStatusFn();
+  const skillRegistry = skillStatusFn();
   const commands = await getCommandStatus(commandExistsFn, requiredCommands);
   const dependencyEntries = await Promise.all([
     ['task_store', directoryCheckFn(TASKS_DIR)],
@@ -71,6 +78,7 @@ export async function handleHealth({
     ['idempotency_store', directoryCheckFn(IDEMPOTENCY_DIR)],
     ['workspace_store', directoryCheckFn(WORKSPACE_BASE)],
     ['agent_profiles', profileRegistry],
+    ['skill_registry', skillRegistry],
     ['release_identity', releaseIdentity],
     ...requiredCommands.map((command) => [
       `command_${command}`,
@@ -78,7 +86,7 @@ export async function handleHealth({
     ]),
   ].map(async ([name, result]) => [name, await result]));
   const dependencies = Object.fromEntries(dependencyEntries);
-  const criticalReady = Object.values(dependencies).every((dependency) => dependency.status === 'ok');
+  const criticalReady = Object.values(dependencies).every(dependencyReady);
   const lifecycleStatus = lifecycle.getStatus();
   const ready = criticalReady && lifecycleStatus.state === 'running';
 
@@ -91,6 +99,7 @@ export async function handleHealth({
     release: releaseInfo,
     lifecycle: lifecycleStatus,
     profiles: profileRegistry,
+    skill_registry: skillRegistry,
     dependencies,
     paths: {
       tasks_dir: TASKS_DIR,

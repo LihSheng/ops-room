@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "test-authoring",
+  "version": "1.0.0",
+  "description": "Add focused automated tests for repository behavior and regressions.",
+  "supportedRuntimes": ["opencode"],
+  "requiredCommands": ["git"],
+  "requiredCredentials": [],
+  "permissions": ["repository.read", "repository.write", "test.execute"]
+}

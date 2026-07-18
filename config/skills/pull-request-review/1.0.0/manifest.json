@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "pull-request-review",
+  "version": "1.0.0",
+  "description": "Review pull requests for correctness, security, and maintainability risks.",
+  "supportedRuntimes": ["opencode"],
+  "requiredCommands": ["git", "gh"],
+  "requiredCredentials": ["github"],
+  "permissions": ["repository.read", "pull-request.read", "pull-request.comment"]
+}

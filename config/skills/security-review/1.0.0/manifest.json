@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "security-review",
+  "version": "1.0.0",
+  "description": "Inspect proposed changes for security boundary and data-exposure risks.",
+  "supportedRuntimes": ["opencode"],
+  "requiredCommands": ["git"],
+  "requiredCredentials": [],
+  "permissions": ["repository.read", "pull-request.read"]
+}

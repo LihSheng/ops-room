@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "documentation",
+  "version": "1.0.0",
+  "description": "Prepare repository documentation from validated architecture and implementation evidence.",
+  "supportedRuntimes": ["gemini"],
+  "requiredCommands": [],
+  "requiredCredentials": [],
+  "permissions": ["repository.read", "documentation.write"]
+}
