@@ -97,13 +97,43 @@ Ops Room includes a read-only operational dashboard for the OpenAB fleet.
 
 - Local URL: `http://127.0.0.1:7381/` when the host systemd service is running.
 - Public URL: `https://ops-room.lihsheng.space/` after Cloudflare Access and the tunnel public hostname are configured.
-- SPA routes: `/`, `/agents`, `/tasks`, `/workflows`, `/activity`, and `/settings`.
-- APIs: the current dashboard reads `/api/health`, `/api/openab/instances`, `/api/tasks`, and `/api/logs`.
-- UI: system capacity, active work, operator intervention, agent fleet, task filters, agent details, and log tails.
+- SPA routes: `/`, `/agents`, `/agents/:id`, `/tasks`, `/workflows`, `/activity`, `/skills`, `/memory`, and `/settings`.
+- APIs: the current dashboard reads `/api/health`, `/api/openab/instances`, `/api/tasks`, `/api/logs`, `/api/agents/profiles`, `/api/skills`, and `/api/memory-spaces`.
+- UI: system capacity, active work, operator intervention, agent fleet with profile policy integration, task filters, agent detail views, skills catalog, memory policy catalog, and log tails.
 - Safety: the dashboard remains read-only. It does not expose restart, reload, config-edit, secret, or shell-execution controls.
 - Network boundary: host deployment binds `127.0.0.1` by default. Public traffic must pass through the configured Cloudflare Tunnel and Access policy.
 - Operator APIs: mutations are disabled unless `OPS_ROOM_OPERATOR_API_ENABLED=true` and a separate `OPS_ROOM_OPERATOR_TOKEN` is configured.
 - Knowledge: agents receive only the curated `OPENAB_AGENT_KNOWLEDGE_DIR` mount, read-only. Never point it at the whole Obsidian vault.
+
+### Agent Detail Page (`/agents/:id`)
+
+A dedicated read-only agent detail view joining Git-backed profile policy with runtime state.
+
+- **Profile Policy** — display name, agent ID, enabled status, profile version, schema version, mission, personality (communication style, decision policies, constraints), declared skills, memory policy (read and write scopes), and allowed repositories.
+- **Runtime State** — observed runtime status, health, role, backend, service, container, restart count, and GitHub polling status from OpenAB. Visually separated from profile policy data.
+- **Mismatch handling** — valid profiles without a runtime instance show "Runtime unavailable". Runtime instances without a matching profile show "Profile unavailable". Unknown agent IDs produce a clear not-found state.
+
+All profile data is served through read-only APIs. The page does not expose secrets, environment variables, tokens, data directories, Docker socket details, or unrestricted host paths.
+
+### Skills Catalog (`/skills`)
+
+A read-only catalog of skills declared by validated agent profiles.
+
+- Lists skill keys in deterministic order with the agents that declare them.
+- Agent names link to the corresponding agent detail page.
+- Skills are profile declarations only — Ops Room does not execute, install, materialize, or write provider skill folders through this page.
+
+### Memory Spaces (`/memory`)
+
+A read-only catalog of memory scopes declared by validated agent profiles.
+
+- Lists scope keys with sorted readers and writers, reader count, and writer count.
+- Agent names link to the corresponding agent detail page.
+- These scopes are declarations from validated agent profiles. Ops Room does not inspect or verify the Obsidian vault through this page. It does not browse the vault, read note contents, check path existence, perform memory search, add write controls, or expose absolute host paths.
+
+### Profile / Runtime Join
+
+The agent fleet table and agent detail page join profile policy with runtime state using the agent ID as the join key. Profiles persist when runtime data is missing, and runtime instances persist when profile data is missing. The UI does not combine records using display names, service names, or container names.
 
 On the VPS, prefer running Ops Room directly on the host through systemd instead of running this service inside Docker:
 
