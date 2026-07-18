@@ -37,10 +37,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   IconActivity,
   IconAlertTriangle,
+  IconBook2,
   IconBrandGithub,
   IconCheck,
   IconChevronRight,
+  IconCode,
   IconDashboard,
+  IconDatabase,
   IconFileText,
   IconGitPullRequest,
   IconListCheck,
@@ -57,8 +60,13 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { opsApi } from './api';
+import { useAgentProfiles } from './hooks/use-agent-profiles';
 import { ActivityPage, SettingsPage, WorkflowsPage } from './operational-pages';
-import type { AgentInstance, LogEntry, OpsTask } from './types';
+import { AgentDetailPage } from './pages/AgentDetailPage';
+import { SkillsPage } from './pages/SkillsPage';
+import { MemorySpacesPage } from './pages/MemorySpacesPage';
+import type { AgentInstance, OpsTask } from './types';
+import type { PublicAgentProfile } from './api/agent-profiles';
 
 const ACTIVE_STATES = new Set([
   'PENDING', 'QUEUED', 'CLAIMED', 'RUNNING', 'IN_PROGRESS', 'REVIEWING', 'FIX_QUEUED', 'FIXING', 'CANCELLING',
@@ -170,7 +178,7 @@ interface DashboardData {
   tasks: Awaited<ReturnType<typeof opsApi.tasks>>;
 }
 
-function useDashboardData() {
+export function useDashboardData() {
   return useQuery({
     queryKey: ['ops-dashboard'],
     queryFn: async (): Promise<DashboardData> => {
@@ -188,9 +196,11 @@ function DashboardPage({ openAgent, openLogs }: {
   openLogs: (agent: AgentInstance) => void;
 }) {
   const query = useDashboardData();
+  const profilesQuery = useAgentProfiles();
   const navigate = useNavigate();
   const data = query.data;
   const agents = data?.instances.instances || [];
+  const profiles = profilesQuery.data?.profiles || [];
   const tasks = data?.tasks.tasks || [];
   const activeTasks = tasks.filter((task) => ACTIVE_STATES.has(normalizeState(task)));
   const attentionTasks = tasks.filter((task) => ATTENTION_STATES.has(normalizeState(task)));
@@ -255,7 +265,7 @@ function DashboardPage({ openAgent, openLogs }: {
 
       <Paper withBorder p="lg">
         <SectionHeading title="Agent fleet" description="Runtime health, responsibility, and current assignment for each OpenAB instance." action={<Button variant="subtle" size="compact-sm" rightSection={<IconChevronRight size={14} />} onClick={() => navigate('/agents')}>Manage fleet</Button>} />
-        <AgentTable agents={agents} tasks={tasks} openAgent={openAgent} openLogs={openLogs} />
+        <AgentTable agents={agents} profiles={profiles} tasks={tasks} openAgent={openAgent} openLogs={openLogs} />
         {data.instances.docker && !data.instances.docker.available && (
           <Alert mt="md" color="orange" variant="light" icon={<IconAlertTriangle size={17} />} title="Docker inspection unavailable">
             {data.instances.docker.error || 'Runtime metadata is degraded, but configured agents are still listed.'}
@@ -266,38 +276,94 @@ function DashboardPage({ openAgent, openLogs }: {
   );
 }
 
-function AgentTable({ agents, tasks, openAgent, openLogs }: {
-  agents: AgentInstance[]; tasks: OpsTask[]; openAgent: (agent: AgentInstance) => void; openLogs: (agent: AgentInstance) => void;
+function AgentTable({ agents, profiles, tasks, openAgent, openLogs }: {
+  agents: AgentInstance[]; profiles: PublicAgentProfile[]; tasks: OpsTask[]; openAgent: (agent: AgentInstance) => void; openLogs: (agent: AgentInstance) => void;
 }) {
-  if (!agents.length) return <EmptyState icon={<IconRobot size={20} />} title="No agents configured" description="Add agents to the server registry before they can appear here." />;
+  const navigate = useNavigate();
+  const profileMap = new Map(profiles.map((p) => [p.id, p]));
+
+  // Build combined view: join by agent ID
+  const agentIds = new Set([
+    ...agents.map((a) => a.agent),
+    ...profiles.map((p) => p.id),
+  ]);
+  const joined = [...agentIds].map((id) => ({
+    id,
+    agent: agents.find((a) => a.agent === id) || null,
+    profile: profileMap.get(id) || null,
+  }));
+
+  if (joined.length === 0) return <EmptyState icon={<IconRobot size={20} />} title="No agents configured" description="Add agents to the server registry before they can appear here." />;
+
   return (
-    <Table.ScrollContainer minWidth={760}>
+    <Table.ScrollContainer minWidth={900}>
       <Table verticalSpacing="md" highlightOnHover>
-        <Table.Thead><Table.Tr><Table.Th>Agent</Table.Th><Table.Th>Runtime</Table.Th><Table.Th>Role</Table.Th><Table.Th>Current work</Table.Th><Table.Th>Polling</Table.Th><Table.Th /></Table.Tr></Table.Thead>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Agent</Table.Th>
+            <Table.Th>Profile</Table.Th>
+            <Table.Th>Runtime</Table.Th>
+            <Table.Th>Mission</Table.Th>
+            <Table.Th>Skills</Table.Th>
+            <Table.Th>Memory</Table.Th>
+            <Table.Th>Repos</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
         <Table.Tbody>
-          {agents.map((agent) => {
-            const current = tasks.find((task) => task.agent?.toLowerCase() === agent.agent.toLowerCase() && ACTIVE_STATES.has(normalizeState(task)));
-            const role = agent.role || agent.backend || 'Agent';
-            const description = agent.description || 'OpenAB runtime agent.';
+          {joined.map(({ id, agent, profile }) => {
+            const current = agent ? tasks.find((task) => task.agent?.toLowerCase() === agent.agent.toLowerCase() && ACTIVE_STATES.has(normalizeState(task))) : undefined;
+            const displayName = profile?.display_name || agent?.display_name || id;
             return (
-              <Table.Tr key={agent.agent}>
+              <Table.Tr key={id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/agents/${id}`)}>
                 <Table.Td>
                   <Group gap="sm" wrap="nowrap">
-                    <Indicator color={statusColor(agent.runtime?.status)} size={9} offset={4} position="bottom-end" withBorder>
-                      <Avatar radius="md" color="violet" variant="light">{(agent.display_name || agent.agent).slice(0, 2).toUpperCase()}</Avatar>
+                    <Indicator color={agent ? statusColor(agent.runtime?.status) : 'gray'} size={9} offset={4} position="bottom-end" withBorder>
+                      <Avatar radius="md" color="violet" variant="light">{displayName.slice(0, 2).toUpperCase()}</Avatar>
                     </Indicator>
-                    <Box><Text fw={600} size="sm">{agent.display_name || agent.agent}</Text><Text size="xs" c="dimmed">{agent.container_name || agent.service || 'No container'}</Text></Box>
+                    <Box>
+                      <Text fw={600} size="sm">{displayName}</Text>
+                      <Text size="xs" c="dimmed" ff="monospace">{id}</Text>
+                    </Box>
                   </Group>
                 </Table.Td>
-                <Table.Td><Stack gap={4}><StatusBadge status={agent.runtime?.status} /><Text size="xs" c="dimmed">{agent.runtime?.restart_count || 0} restarts</Text></Stack></Table.Td>
-                <Table.Td><Text size="sm" fw={500}>{role}</Text><Text size="xs" c="dimmed" lineClamp={1}>{description}</Text></Table.Td>
-                <Table.Td>{current ? <><Text size="sm" fw={500} lineClamp={1}>{taskTitle(current)}</Text><Text size="xs" c="dimmed">{relativeTime(taskTimestamp(current))}</Text></> : <Text size="sm" c="dimmed">Idle</Text>}</Table.Td>
-                <Table.Td><Badge variant="dot" color={agent.github_polling_enabled ? 'teal' : 'gray'}>{agent.github_polling_enabled ? 'enabled' : 'disabled'}</Badge></Table.Td>
                 <Table.Td>
-                  <Group gap={4} justify="flex-end" wrap="nowrap">
-                    <Tooltip label="View logs"><ActionIcon variant="subtle" color="gray" onClick={() => openLogs(agent)}><IconTerminal2 size={17} /></ActionIcon></Tooltip>
-                    <Tooltip label="Agent details"><ActionIcon variant="subtle" color="gray" onClick={() => openAgent(agent)}><IconChevronRight size={17} /></ActionIcon></Tooltip>
+                  {profile ? (
+                    <Stack gap={4}>
+                      <Badge color={profile.enabled ? 'teal' : 'red'} variant="light" size="sm">{profile.enabled ? 'Enabled' : 'Disabled'}</Badge>
+                      <Text size="xs" c="dimmed">{profile.profile_version}</Text>
+                    </Stack>
+                  ) : (
+                    <Badge color="orange" variant="light" size="sm">Profile unavailable</Badge>
+                  )}
+                </Table.Td>
+                <Table.Td>
+                  {agent ? (
+                    <Stack gap={4}>
+                      <StatusBadge status={agent.runtime?.status} />
+                      <Text size="xs" c="dimmed">{agent.backend || '-'}</Text>
+                    </Stack>
+                  ) : (
+                    <Badge color="gray" variant="light" size="sm">Runtime unavailable</Badge>
+                  )}
+                </Table.Td>
+                <Table.Td>
+                  {profile ? (
+                    <Text size="xs" lineClamp={2} maw={180}>{profile.mission}</Text>
+                  ) : (
+                    <Text size="xs" c="dimmed">—</Text>
+                  )}
+                </Table.Td>
+                <Table.Td>
+                  <Badge variant="light" color="violet">{profile?.skills.length ?? 0}</Badge>
+                </Table.Td>
+                <Table.Td>
+                  <Group gap={4}>
+                    <Badge variant="light" color="blue" size="sm">{profile ? profile.memory.read.length : 0}r</Badge>
+                    <Badge variant="light" color="orange" size="sm">{profile ? profile.memory.write.length : 0}w</Badge>
                   </Group>
+                </Table.Td>
+                <Table.Td>
+                  <Badge variant="light" color="gray">{profile?.repositories.length ?? 0}</Badge>
                 </Table.Td>
               </Table.Tr>
             );
@@ -330,7 +396,26 @@ function TaskTable({ tasks, compact = false }: { tasks: OpsTask[]; compact?: boo
 
 function AgentsPage({ openAgent, openLogs }: { openAgent: (agent: AgentInstance) => void; openLogs: (agent: AgentInstance) => void }) {
   const query = useDashboardData();
-  return <Stack gap="lg"><Box><Title order={1} className="page-title">Agents</Title><Text c="dimmed" mt={6}>The runtime fleet and each agent’s operational responsibility.</Text></Box><Paper withBorder p="lg">{query.isLoading ? <Skeleton height={360} /> : <AgentTable agents={query.data?.instances.instances || []} tasks={query.data?.tasks.tasks || []} openAgent={openAgent} openLogs={openLogs} />}</Paper></Stack>;
+  const profilesQuery = useAgentProfiles();
+  return (
+    <Stack gap="lg">
+      <Box>
+        <Title order={1} className="page-title">Agents</Title>
+        <Text c="dimmed" mt={6}>The runtime fleet and each agent's operational responsibility, joined with Git-backed profile policy.</Text>
+      </Box>
+      <Paper withBorder p="lg">
+        {query.isLoading ? <Skeleton height={360} /> : (
+          <AgentTable
+            agents={query.data?.instances.instances || []}
+            profiles={profilesQuery.data?.profiles || []}
+            tasks={query.data?.tasks.tasks || []}
+            openAgent={openAgent}
+            openLogs={openLogs}
+          />
+        )}
+      </Paper>
+    </Stack>
+  );
 }
 
 function TasksPage() {
@@ -368,7 +453,7 @@ function AgentDrawer({ agent, opened, close, openLogs }: { agent: AgentInstance 
 
 function LogsModal({ agent, opened, close }: { agent: AgentInstance | null; opened: boolean; close: () => void }) {
   const query = useQuery({ queryKey: ['agent-logs', agent?.agent], queryFn: () => opsApi.logs(agent?.agent || '', agent?.links?.logs), enabled: opened && Boolean(agent) });
-  const logs: LogEntry[] = query.data?.logs || [];
+  const logs = query.data?.logs || [];
   return (
     <Modal opened={opened} onClose={close} title={`${agent?.display_name || agent?.agent || 'Agent'} logs`} size="xl" centered>
       {query.isLoading && <Center py={40}><Loader /></Center>}
@@ -385,6 +470,8 @@ const navigation = [
   { label: 'Tasks', path: '/tasks', icon: IconListCheck },
   { label: 'Workflows', path: '/workflows', icon: IconRoute },
   { label: 'Activity', path: '/activity', icon: IconActivity },
+  { label: 'Skills', path: '/skills', icon: IconCode },
+  { label: 'Memory', path: '/memory', icon: IconDatabase },
   { label: 'Settings', path: '/settings', icon: IconSettings },
 ];
 
@@ -426,9 +513,12 @@ export default function App() {
       <AppShell.Main><Box maw={1480} mx="auto" className="main-content"><Text size="xs" c="dimmed" mb="md">Ops Room / {pageName}</Text><Routes>
         <Route path="/" element={<DashboardPage openAgent={openAgent} openLogs={openLogs} />} />
         <Route path="/agents" element={<AgentsPage openAgent={openAgent} openLogs={openLogs} />} />
+        <Route path="/agents/:id" element={<AgentDetailPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/workflows" element={<WorkflowsPage />} />
         <Route path="/activity" element={<ActivityPage />} />
+        <Route path="/skills" element={<SkillsPage />} />
+        <Route path="/memory" element={<MemorySpacesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes></Box></AppShell.Main>

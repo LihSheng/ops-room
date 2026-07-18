@@ -1,0 +1,44 @@
+export interface PublicAgentProfile {
+  id: string;
+  display_name: string;
+  schema_version: number;
+  profile_version: string;
+  mission: string;
+  personality: {
+    communication_style: string;
+    decision_policy: string[];
+    constraints: string[];
+  };
+  runtime: {
+    backend: string;
+  };
+  skills: string[];
+  memory: {
+    read: string[];
+    write: string[];
+  };
+  repositories: string[];
+  enabled: boolean;
+}
+
+export interface ProfilesResponse {
+  profiles: PublicAgentProfile[];
+  count: number;
+}
+
+export interface ProfileDetailResponse {
+  profile: PublicAgentProfile;
+}
+
+async function getJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+export const agentProfileApi = {
+  list: () => getJson<ProfilesResponse>('/api/agents/profiles'),
+  detail: (id: string) => getJson<ProfileDetailResponse>(`/api/agents/profiles/${encodeURIComponent(id)}`),
+};
