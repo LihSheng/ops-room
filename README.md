@@ -6,9 +6,9 @@ Canonical product and runtime decisions: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Architecture
 
-```
+```text
 openab-multi-agent/
-├── config/           → Safe config templates (*.example.toml)
+├── config/           → Safe config templates, profiles, and skill manifests
 ├── data/             → Runtime data (agents, workspaces, shared memory, ops-room state)
 ├── ops-room/         → Harness/control surface and React dashboard
 ├── secrets/          → Private keys (ignored by Git)
@@ -18,6 +18,8 @@ openab-multi-agent/
 
 - **ops-room** — the control plane: receives GitHub webhooks, polls for tasks, routes to agents, and serves the dashboard
 - **OpenAB** — the runtime backbone: runs agent containers (gemini, opencode-1, opencode-2, opencode-professor)
+- **config/agent-profiles/** — versioned policy profiles with exact skill assignments
+- **config/skills/** — validated immutable skill metadata and declared requirements
 - **config/agents/** — per-agent configuration (Discord tokens, API keys, runtime env)
 - **data/agents/** — agent home directories (generated runtime state)
 - **data/workspaces/** — agent-generated project workspaces
@@ -56,9 +58,7 @@ Node.js 20.19 or newer is required by the Vite build toolchain.
 
 ## Dashboard Development
 
-The dashboard is a React + TypeScript + Vite single-page application using Mantine and TanStack Query.
-
-Run the backend and frontend in separate terminals:
+The dashboard source lives in `ops-room/dashboard/`. Production output is generated in `ops-room/dist/dashboard/`.
 
 ```bash
 # Terminal 1 — Ops Room APIs on port 7381
@@ -66,30 +66,116 @@ npm run dev
 
 # Terminal 2 — Vite SPA with /api proxying
 npm run dev:dashboard
-```
 
-Useful commands:
-
-```bash
-npm run build:dashboard
-npm run preview:dashboard
+# Verification
+npm run typecheck
 npm test
+npm run build
+npm run smoke:instances
 ```
-
-Dashboard source lives in `ops-room/dashboard/`. Production output is generated in `ops-room/dist/dashboard/` and is served by the existing Node.js server with SPA route fallback and immutable caching for hashed assets.
 
 ## Read-only Agent Profile APIs
 
 The following endpoints expose validated Git-backed profile policy from the in-memory registry initialized at startup:
 
 - `GET /api/agents/profiles` — list normalized public profiles in agent-ID order.
-- `GET /api/agents/profiles/:id` — return one public profile; unknown IDs return `404` with `agent_profile_not_found`, while malformed IDs return `400`.
-- `GET /api/skills` — list deduplicated skill keys and the sorted agents that declare them.
+- `GET /api/agents/profiles/:id` — return one public profile; unknown IDs return `404`, while malformed IDs return `400`.
+- `GET /api/skills` — list validated skill versions while retaining the legacy `key` and `agents` fields.
+- `GET /api/skills/:key/:version` — return one immutable public manifest and per-agent compatibility results.
 - `GET /api/memory-spaces` — list declared memory scope strings with sorted readers and writers.
 
-These APIs are read-only and remain available when the operator mutation API is disabled. Responses expose only profile identity, version, mission, personality, runtime backend reference, skills, declared memory scopes, allowed repositories, and enabled status. They do not expose container or service bindings, images, data directories, source JSON paths, environment variables, credentials, process details, or mutable desired state.
+Profiles use schema version 2. Assignments are exact and immutable:
 
-Skill and memory-space catalogs are derived only from validated in-memory profiles. The server does not inspect, enumerate, verify, read, or write the Obsidian vault when serving these endpoints.
+```json
+{
+  "skills": [
+    { "key": "pull-request-review", "version": "1.0.0" }
+  ]
+}
+```
+
+Public profile responses intentionally preserve the existing key-only list and add explicit versioned results:
+
+```json
+{
+  "skills": ["pull-request-review"],
+  "skill_assignments": [
+    {
+      "key": "pull-request-review",
+      "version": "1.0.0",
+      "resolution_status": "resolved",
+      "compatibility": { "status": "compatible", "reasons": [] }
+    }
+  ]
+}
+```
+
+The APIs do not expose container bindings, images, data directories, source JSON paths, environment values, credential values, process details, mutable desired state, or complete skill instructions.
+
+## Read-only Skill Registry
+
+### Manifest root and schema
+
+Only files at this shape are discovered:
+
+```text
+config/skills/<lowercase-key>/<semantic-version>/manifest.json
+```
+
+A manifest contains immutable metadata and requirements:
+
+```json
+{
+  "schemaVersion": 1,
+  "key": "pull-request-review",
+  "version": "1.0.0",
+  "description": "Review pull requests for correctness, security, and maintainability risks.",
+  "supportedRuntimes": ["opencode"],
+  "requiredCommands": ["git", "gh"],
+  "requiredCredentials": ["github"],
+  "permissions": [
+    "repository.read",
+    "pull-request.read",
+    "pull-request.comment"
+  ]
+}
+```
+
+Validation rejects unsupported schemas, invalid keys or semantic versions, empty descriptions/runtime lists, unknown runtimes or permissions, duplicate values, wildcards, command arguments, absolute paths, traversal, symlinks, secret-looking fields, unexpected files, and key/version directory mismatches. Structural failures prevent the HTTP server from starting with a misleading registry.
+
+### Compatibility semantics
+
+Compatibility statuses are:
+
+- `compatible` — all declared requirements are known and present.
+- `incompatible` — a declared runtime, command, or credential-reference requirement is not satisfied.
+- `unknown` — a manifest is unresolved or required inspection data is unavailable.
+
+Stable reason codes include `unsupported_runtime`, `missing_command`, `missing_credential_reference`, `runtime_data_unavailable`, `credential_state_unknown`, and `manifest_unresolved`.
+
+Compatibility indicates declared requirements only. It does not prove that a skill is installed, materialized, activated, or executable. Manifests never supply command arguments and Ops Room never executes commands from them.
+
+### Credential-reference safety
+
+`requiredCredentials` contains logical names only. Configure safe presence checks with a JSON object that maps a logical name to an existing protected environment-variable name:
+
+```text
+OPS_ROOM_CREDENTIAL_REFERENCE_MAP={"github":"GITHUB_APP_KEY_PATH"}
+```
+
+The resolver reports only `present`, `missing`, or `unknown`. It never returns the target value, hash, length, prefix, or environment content. A missing or malformed mapping produces `unknown`; it does not expose configuration details or create credentials.
+
+### API contracts
+
+`GET /api/skills` retains `key` and `agents` and adds version, description, supported runtimes, declared requirements, permissions, and compatibility counts.
+
+`GET /api/skills/:key/:version` returns the public manifest plus deterministic assignment results. Unknown valid identifiers return `404`; malformed or traversal-like identifiers return `400` without filesystem access.
+
+The registry loads once during startup. Requests use only the in-memory registry and never read manifests from disk.
+
+### Immutable release behavior
+
+Release artifacts include the exact approved set of `config/skills/<key>/<version>/manifest.json` files. The builder validates the source tree before copying. Non-manifest files, extra manifests, traversal, symlinks, `.env`, secrets, runtime data, tests, provider homes, and dependencies are rejected or excluded.
 
 ## Ops Room Dashboard
 
@@ -98,74 +184,46 @@ Ops Room includes a read-only operational dashboard for the OpenAB fleet.
 - Local URL: `http://127.0.0.1:7381/` when the host systemd service is running.
 - Public URL: `https://ops-room.lihsheng.space/` after Cloudflare Access and the tunnel public hostname are configured.
 - SPA routes: `/`, `/agents`, `/agents/:id`, `/tasks`, `/workflows`, `/activity`, `/skills`, `/memory`, and `/settings`.
-- APIs: the current dashboard reads `/api/health`, `/api/openab/instances`, `/api/tasks`, `/api/logs`, `/api/agents/profiles`, `/api/skills`, and `/api/memory-spaces`.
-- UI: system capacity, active work, operator intervention, agent fleet with profile policy integration, task filters, agent detail views, skills catalog, memory policy catalog, and log tails.
-- Safety: the dashboard remains read-only. It does not expose restart, reload, config-edit, secret, or shell-execution controls.
+- APIs: `/api/health`, `/api/openab/instances`, `/api/tasks`, `/api/logs`, `/api/agents/profiles`, `/api/skills`, and `/api/memory-spaces`.
+- Safety: the dashboard remains read-only. It does not expose restart, reload, config-edit, secret, install, execute, activate, or materialize controls.
 - Network boundary: host deployment binds `127.0.0.1` by default. Public traffic must pass through the configured Cloudflare Tunnel and Access policy.
 - Operator APIs: mutations are disabled unless `OPS_ROOM_OPERATOR_API_ENABLED=true` and a separate `OPS_ROOM_OPERATOR_TOKEN` is configured.
 - Knowledge: agents receive only the curated `OPENAB_AGENT_KNOWLEDGE_DIR` mount, read-only. Never point it at the whole Obsidian vault.
 
 ### Agent Detail Page (`/agents/:id`)
 
-A dedicated read-only agent detail view joining Git-backed profile policy with runtime state.
-
-- **Profile Policy** — display name, agent ID, enabled status, profile version, schema version, mission, personality (communication style, decision policies, constraints), declared skills, memory policy (read and write scopes), and allowed repositories.
-- **Runtime State** — observed runtime status, health, role, backend, service, container, restart count, and GitHub polling status from OpenAB. Visually separated from profile policy data.
-- **Mismatch handling** — valid profiles without a runtime instance show "Runtime unavailable". Runtime instances without a matching profile show "Profile unavailable". Unknown agent IDs produce a clear not-found state.
-
-All profile data is served through read-only APIs. The page does not expose secrets, environment variables, tokens, data directories, Docker socket details, or unrestricted host paths.
+The read-only view joins profile policy with runtime state by stable agent ID. It shows exact skill versions, resolution, compatibility, safe reason codes, command presence, and credential-reference presence. Profile data remains visible when runtime inspection fails; runtime data remains visible when profile loading fails.
 
 ### Skills Catalog (`/skills`)
 
-A read-only catalog of skills declared by validated agent profiles.
-
-- Lists skill keys in deterministic order with the agents that declare them.
-- Agent names link to the corresponding agent detail page.
-- Skills are profile declarations only — Ops Room does not execute, install, materialize, or write provider skill folders through this page.
+The catalog shows each immutable version, description, declaring agents, supported runtimes, requirement counts, and compatibility summary. Its read-only detail modal shows public permissions and per-agent assignment results without source paths, secret values, or complete skill content.
 
 ### Memory Spaces (`/memory`)
 
-A read-only catalog of memory scopes declared by validated agent profiles.
+Memory scopes remain declarations from validated profiles. Ops Room does not inspect the Obsidian vault, browse notes, verify paths, perform memory search, or add write controls through this page.
 
-- Lists scope keys with sorted readers and writers, reader count, and writer count.
-- Agent names link to the corresponding agent detail page.
-- These scopes are declarations from validated agent profiles. Ops Room does not inspect or verify the Obsidian vault through this page. It does not browse the vault, read note contents, check path existence, perform memory search, add write controls, or expose absolute host paths.
+## Immutable Host Deployment
 
-### Profile / Runtime Join
-
-The agent fleet table and agent detail page join profile policy with runtime state using the agent ID as the join key. Profiles persist when runtime data is missing, and runtime instances persist when profile data is missing. The UI does not combine records using display names, service names, or container names.
-
-On the VPS, prefer running Ops Room directly on the host through systemd instead of running this service inside Docker:
-
-```bash
-sudo systemctl status openab-ops-room.service --no-pager
-sudo systemctl restart openab-ops-room.service
-sudo journalctl -u openab-ops-room.service -f
-```
-
-Production releases should not pull or rebuild a mutable checkout. Build a commit-addressed artifact:
+Production releases should not pull or rebuild a mutable checkout:
 
 ```bash
 cd ops-room
 npm ci --ignore-scripts
-npm run build:dashboard
+npm run build
 npm run release:build -- "$(git rev-parse HEAD)" /tmp/ops-room-releases
+npm run release:verify -- /tmp/ops-room-releases/ops-room-<sha>.tar.gz <sha>
 ```
 
-Install root-owned copies of `scripts/deploy/activate-release.sh`, `rollback-release.sh`, and the systemd template under `ops-room/deploy/`. Bind a Node.js 20+ executable at `/opt/ops-room/bin/node`, then activate manually only after persistent paths in `/etc/openab/ops-room.env` are verified. For the one-time mutable-checkout cutover, verify no legacy work is active and set `OPS_ROOM_ALLOW_LEGACY_MIGRATION=true`; later activations do not use this flag. Automatic deployment remains deferred.
-
-Cloudflare note: the existing `hermes-dashboard` tunnel can serve both `hermes.lihsheng.space` and `ops-room.lihsheng.space`, but `ops-room.lihsheng.space` must be added as a **Tunnel Public Hostname** that points to `http://localhost:7381`. Creating only a Cloudflare Access application is not enough; after login it will still return the tunnel fallback `404` if the public hostname route is missing.
+Install root-owned copies of `scripts/deploy/activate-release.sh`, `rollback-release.sh`, and the systemd template under `ops-room/deploy/`. Bind Node.js 20.19+ at `/opt/ops-room/bin/node`. Automatic deployment remains deferred.
 
 ## What's Committed vs Local
 
 | Committed to Git | Kept Local |
 |---|---|
-| `*.example.toml` config templates | `*.toml` real configs (with secrets/paths) |
+| Safe examples, agent profiles, and skill manifests | Real agent configs and protected environment values |
 | `ops-room/src/` and `ops-room/dashboard/` source | `.env` with real secrets |
-| `docker-compose.yml` | `secrets/*.pem` private keys |
-| `scripts/` entrypoints | `data/agents/` runtime homes |
-| Docs and `.gitignore` | `data/workspaces/` generated projects |
-| `.env.example` (no secrets) | `data/ops-room/logs/`, `state/`, `tasks/` |
+| `docker-compose.yml` and scripts | `secrets/*.pem` private keys |
+| Documentation | `data/agents/`, workspaces, logs, tasks, and mutable state |
 
 ## License
 
