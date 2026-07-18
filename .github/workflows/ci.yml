@@ -69,6 +69,7 @@ jobs:
       - name: Start Ops Room and smoke test instances
         env:
           OPENAB_WEBHOOK_SECRET: ci-smoke-secret
+          OPS_ROOM_DASHBOARD_TOKEN: ci-dashboard-secret
           OPENAB_WEBHOOK_PORT: '17380'
           OPS_ROOM_RELEASE_SHA: ${{ github.sha }}
         run: |
@@ -82,7 +83,9 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:17380/health > /dev/null
-          health_json=$(curl --fail --silent http://127.0.0.1:17380/api/health)
+          health_json=$(curl --fail --silent \
+            -H "Authorization: Bearer $OPS_ROOM_DASHBOARD_TOKEN" \
+            http://127.0.0.1:17380/api/health)
           HEALTH_JSON="$health_json" EXPECTED_SHA="${{ github.sha }}" node -e '
             const health = JSON.parse(process.env.HEALTH_JSON);
             if (health.ready !== true || health.revision !== process.env.EXPECTED_SHA) process.exit(1);
