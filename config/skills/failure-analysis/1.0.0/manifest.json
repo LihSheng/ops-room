@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "failure-analysis",
+  "version": "1.0.0",
+  "description": "Analyze reproducible failures and identify evidence-backed causes.",
+  "supportedRuntimes": ["opencode"],
+  "requiredCommands": ["git"],
+  "requiredCredentials": [],
+  "permissions": ["repository.read", "test.execute"]
+}

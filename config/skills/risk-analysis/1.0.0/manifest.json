@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "risk-analysis",
+  "version": "1.0.0",
+  "description": "Identify correctness, operational, and maintainability risks in proposed changes.",
+  "supportedRuntimes": ["opencode"],
+  "requiredCommands": ["git"],
+  "requiredCredentials": [],
+  "permissions": ["repository.read", "pull-request.read"]
+}

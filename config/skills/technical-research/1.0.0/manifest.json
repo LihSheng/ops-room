@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "technical-research",
+  "version": "1.0.0",
+  "description": "Research technical questions and produce grounded findings relevant to the repository.",
+  "supportedRuntimes": ["gemini"],
+  "requiredCommands": [],
+  "requiredCredentials": [],
+  "permissions": ["repository.read", "research.read"]
+}

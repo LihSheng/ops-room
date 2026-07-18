@@ -15,6 +15,7 @@ export type PublicAgentProfile = {
     backend: string;
   };
   skills: string[];
+  skill_assignments: { key: string; version: string }[];
   memory: {
     read: string[];
     write: string[];
@@ -36,7 +37,8 @@ export function toPublicAgentProfile(profile: AgentProfile): PublicAgentProfile 
       constraints: [...profile.personality.constraints],
     },
     runtime: { backend: profile.runtime.backend },
-    skills: [...profile.skills],
+    skills: profile.skills.map((skill) => skill.key),
+    skill_assignments: profile.skills.map((skill) => ({ ...skill })),
     memory: {
       read: [...profile.memory.read],
       write: [...profile.memory.write],

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "implementation",
+  "version": "1.0.0",
+  "description": "Implement scoped repository changes while preserving documented architecture and tests.",
+  "supportedRuntimes": ["opencode"],
+  "requiredCommands": ["git"],
+  "requiredCredentials": [],
+  "permissions": ["repository.read", "repository.write"]
+}

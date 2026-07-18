@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "key": "architecture-analysis",
+  "version": "1.0.0",
+  "description": "Analyze repository architecture, boundaries, and implementation trade-offs.",
+  "supportedRuntimes": ["opencode"],
+  "requiredCommands": ["git"],
+  "requiredCredentials": [],
+  "permissions": ["repository.read"]
+}
