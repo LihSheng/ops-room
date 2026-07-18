@@ -1,32 +1,16 @@
+// Delegates to the shared server-side module at
+// src/services/agent-profile/profile-runtime-join.ts so the same production
+// function is exercised by both server-side tests and the frontend dashboard.
+import { joinProfileRuntime as joinGeneric } from '../../../src/services/agent-profile/profile-runtime-join';
 import type { PublicAgentProfile } from '../api/agent-profiles';
 import type { AgentInstance } from '../types';
+import type { JoinedRow } from '../../../src/services/agent-profile/profile-runtime-join';
 
-export interface JoinedAgentRow {
-  id: string;
-  profile: PublicAgentProfile | null;
-  runtime: AgentInstance | null;
-}
+export type JoinedAgentRow = JoinedRow<PublicAgentProfile, AgentInstance>;
 
-/**
- * Join profile policy and runtime data by agent ID.
- * Mirrors src/services/agent-profile/profile-runtime-join.ts so server-side
- * tests can exercise the same contract through that module.
- */
 export function joinProfileRuntime(
   profiles: PublicAgentProfile[],
   instances: AgentInstance[],
 ): JoinedAgentRow[] {
-  const profileMap = new Map(profiles.map((p) => [p.id, p]));
-  const instanceMap = new Map(instances.map((i) => [i.agent, i]));
-  const allIds = new Set([
-    ...instances.map((i) => i.agent),
-    ...profiles.map((p) => p.id),
-  ]);
-  return [...allIds]
-    .sort((a, b) => a.localeCompare(b))
-    .map((id) => ({
-      id,
-      profile: profileMap.get(id) ?? null,
-      runtime: instanceMap.get(id) ?? null,
-    }));
+  return joinGeneric(profiles, instances);
 }

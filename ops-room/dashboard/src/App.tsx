@@ -183,9 +183,17 @@ export function useDashboardData() {
   return useQuery({
     queryKey: ['ops-dashboard'],
     queryFn: async (): Promise<DashboardData> => {
-      const [health, instances, tasks] = await Promise.all([
-        opsApi.health(), opsApi.instances(), opsApi.tasks(),
+      const [health, tasks] = await Promise.all([
+        opsApi.health(), opsApi.tasks(),
       ]);
+      // Instances are fetched independently so health/tasks failures don't
+      // collapse the fleet table or the command center.
+      let instances: Awaited<ReturnType<typeof opsApi.instances>> = { instances: [] };
+      try {
+        instances = await opsApi.instances();
+      } catch {
+        // Silently degrade — fleet table uses its own standalone query.
+      }
       return { health, instances, tasks };
     },
     refetchInterval: 10_000,
@@ -279,6 +287,7 @@ function DashboardPage({ openAgent, openLogs }: {
           openLogs={openLogs}
           profilesLoading={profilesQuery.isLoading}
           profilesError={profilesQuery.isError}
+          runtimeError={fleetInstancesQuery.isError}
         />
         {fleetInstancesQuery.data?.docker && !fleetInstancesQuery.data.docker.available && (
           <Alert mt="md" color="orange" variant="light" icon={<IconAlertTriangle size={17} />} title="Docker inspection unavailable">
@@ -290,10 +299,10 @@ function DashboardPage({ openAgent, openLogs }: {
   );
 }
 
-function AgentTable({ agents, profiles, tasks, openAgent, openLogs, profilesLoading, profilesError }: {
+function AgentTable({ agents, profiles, tasks, openAgent, openLogs, profilesLoading, profilesError, runtimeError }: {
   agents: AgentInstance[]; profiles: PublicAgentProfile[]; tasks: OpsTask[];
   openAgent: (agent: AgentInstance) => void; openLogs: (agent: AgentInstance) => void;
-  profilesLoading?: boolean; profilesError?: boolean;
+  profilesLoading?: boolean; profilesError?: boolean; runtimeError?: boolean;
 }) {
   const navigate = useNavigate();
   const joined = useMemo(() => joinProfileRuntime(profiles, agents), [profiles, agents]);
@@ -370,7 +379,9 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs, profilesLoad
                 </Table.Td>
                 <Table.Td><ProfileCell profile={profile} id={id} /></Table.Td>
                 <Table.Td>
-                  {agent ? (
+                  {runtimeError ? (
+                    <Badge color="red" variant="light" size="sm">Runtime API error</Badge>
+                  ) : agent ? (
                     <Stack gap={4}>
                       <StatusBadge status={agent.runtime?.status} />
                       <Text size="xs" c="dimmed">{agent.runtime?.restart_count || 0} restarts</Text>
@@ -477,11 +488,15 @@ function TaskTable({ tasks, compact = false }: { tasks: OpsTask[]; compact?: boo
 }
 
 function AgentsPage({ openAgent, openLogs }: { openAgent: (agent: AgentInstance) => void; openLogs: (agent: AgentInstance) => void }) {
-  const query = useDashboardData();
   const profilesQuery = useAgentProfiles();
   const fleetInstancesQuery = useQuery({
     queryKey: ['openab-instances'],
     queryFn: () => opsApi.instances(),
+    refetchInterval: 10_000,
+  });
+  const tasksQuery = useQuery({
+    queryKey: ['ops-tasks'],
+    queryFn: () => opsApi.tasks(),
     refetchInterval: 10_000,
   });
   return (
@@ -491,15 +506,16 @@ function AgentsPage({ openAgent, openLogs }: { openAgent: (agent: AgentInstance)
         <Text c="dimmed" mt={6}>The runtime fleet and each agent's operational responsibility, joined with Git-backed profile policy.</Text>
       </Box>
       <Paper withBorder p="lg">
-        {query.isLoading && fleetInstancesQuery.isLoading ? <Skeleton height={360} /> : (
+        {fleetInstancesQuery.isLoading && profilesQuery.isLoading ? <Skeleton height={360} /> : (
           <AgentTable
             agents={fleetInstancesQuery.data?.instances || []}
             profiles={profilesQuery.data?.profiles || []}
-            tasks={query.data?.tasks.tasks || []}
+            tasks={tasksQuery.data?.tasks || []}
             openAgent={openAgent}
             openLogs={openLogs}
             profilesLoading={profilesQuery.isLoading}
             profilesError={profilesQuery.isError}
+            runtimeError={fleetInstancesQuery.isError}
           />
         )}
       </Paper>

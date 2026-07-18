@@ -247,6 +247,20 @@ export function AgentDetailPage() {
         </Stack>
       );
     }
+    // Runtime API error — don't conclude "Agent not found"
+    if (instancesQuery.isError) {
+      return (
+        <Stack gap="lg">
+          <Box>
+            <Title order={1} className="page-title">{id}</Title>
+            <Text c="dimmed" mt={6}>Profile not found — runtime check unavailable.</Text>
+          </Box>
+          <Alert color="orange" icon={<IconAlertTriangle size={18} />} title="Profile unavailable">
+            No matching profile was found, and the runtime API request failed. The agent may exist but could not be verified.
+          </Alert>
+        </Stack>
+      );
+    }
     return (
       <Stack gap="lg">
         <Box>
