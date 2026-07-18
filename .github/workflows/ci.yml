@@ -93,7 +93,7 @@ jobs:
           trap - EXIT
 
   release-artifact:
-    name: Immutable release artifact
+    name: Build and validate immutable release
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -117,6 +117,18 @@ jobs:
         run: |
           npm run release:build -- "${{ github.sha }}" "$RUNNER_TEMP/releases"
           npm run release:verify -- "$RUNNER_TEMP/releases/ops-room-${{ github.sha }}.tar.gz" "${{ github.sha }}"
+
+      - name: Upload verified release artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ops-room-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/releases/ops-room-${{ github.sha }}.tar.gz
+            ${{ runner.temp }}/releases/ops-room-${{ github.sha }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
   required:
     name: Required checks
