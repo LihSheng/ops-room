@@ -53,7 +53,7 @@ test('loads canonical schema-v2 profiles with exact skill versions', async () =>
     resetAgentProfileRegistryForTests();
     const status = await initializeAgentProfileRegistry(dir);
     assert.equal(status.status, 'ok');
-    assert.equal(status.schema_version, 1);
+    assert.equal(status.schema_version, 2);
     assert.equal(listAgentProfiles().length, 4);
   } finally {
     resetAgentProfileRegistryForTests();
