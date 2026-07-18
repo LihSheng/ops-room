@@ -2,6 +2,7 @@ import { request } from 'node:http';
 
 const PORT = process.env.OPENAB_WEBHOOK_PORT || '17380';
 const BASE = `http://localhost:${PORT}`;
+const DASHBOARD_TOKEN = process.env.OPS_ROOM_DASHBOARD_TOKEN || process.env.OPENAB_WEBHOOK_SECRET || '';
 const SECRET_WORDS = ['token', 'secret', 'password', 'api_key', 'private_key', 'ghp_', 'ghs_'];
 
 let exitCode = 0;
@@ -26,7 +27,10 @@ function hasSecretWord(str) {
 
 function fetchJSON(url) {
   return new Promise((resolve, reject) => {
-    request(url, { method: 'GET' }, (res) => {
+    request(url, {
+      method: 'GET',
+      headers: DASHBOARD_TOKEN ? { Authorization: `Bearer ${DASHBOARD_TOKEN}` } : {},
+    }, (res) => {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {
@@ -43,6 +47,11 @@ function fetchJSON(url) {
 
 async function main() {
   console.log(`Smoke testing ${BASE}/api/openab/instances ...`);
+
+  if (!DASHBOARD_TOKEN) {
+    fail('Missing OPS_ROOM_DASHBOARD_TOKEN or OPENAB_WEBHOOK_SECRET');
+    process.exit(exitCode);
+  }
 
   let data;
   try {
