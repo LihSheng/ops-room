@@ -24,6 +24,9 @@ export function prepareAgentLifecycleTarget(agentId: string, {
 } = {}) {
   const definition = definitions.find((entry) => entry.key === agentId);
   if (!definition) throw new Error(`Unknown agent: ${agentId}`);
+  if (definition.lifecycleControl !== 'guarded-stop-test') {
+    throw new Error(`Lifecycle control is not approved for agent ${agentId}`);
+  }
 
   const preparedRecords = runtimeAdapters
     ? prepareAgentRuntimes({ definitions: [definition], adapters: runtimeAdapters })
