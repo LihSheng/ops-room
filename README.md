@@ -1,8 +1,21 @@
-# OpenAB Multi-Agent System
+# Ops Room
 
 Ops Room is the control surface for configuring, launching, and monitoring OpenAB-backed agents. It stores safe config templates in Git, keeps runtime data under `data/`, and keeps private credentials under `secrets/`.
 
 Canonical product and runtime decisions: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+## Built with Codex and GPT-5.6
+
+Ops Room was designed and developed through a human-in-the-loop engineering workflow powered by **Codex and GPT-5.6**. They were used as development collaborators—not as an unrestricted production control plane—to help turn the product idea into reviewed, testable, and deployable software.
+
+- **Product and architecture planning** — refined Ops Room's positioning, agent lifecycle, read-only safety boundaries, skill model, memory scopes, and deployment architecture.
+- **Implementation with Codex** — translated milestones into code changes across the Node.js harness, React dashboard, APIs, validation rules, tests, release tooling, and documentation.
+- **Reasoning with GPT-5.6** — broke larger epics into smaller deliverables, evaluated design trade-offs, diagnosed CI and deployment failures, and proposed production-safe solutions.
+- **PR review and security hardening** — reviewed changes for correctness, secret exposure, unsafe GitHub Actions behavior, permission boundaries, path traversal, and credential-handling risks.
+- **Deployment and operations** — helped create immutable release, verification, activation, rollback, systemd, Cloudflare Access, and operator-API safeguards.
+- **Continuous documentation** — kept implementation reports, architecture decisions, security explanations, and next-step prompts aligned with the evolving codebase.
+
+The workflow remained **human-controlled**: milestones were selected by the project owner, generated changes were reviewed through pull requests and CI, and production deployment required explicit operator action. Ops Room can support different model providers at runtime; its core architecture is not locked to GPT-5.6 or Codex.
 
 ## Architecture
 
