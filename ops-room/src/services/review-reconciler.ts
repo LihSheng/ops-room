@@ -2,6 +2,7 @@ import { mkdir, open, rm, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
+import { withAgentLifecycleGate } from './agent-lifecycle-store.js';
 import {
   countActiveTasks,
   checkConcurrency,
@@ -100,55 +101,61 @@ async function dispatchAllowed(canDispatchAgent, agent) {
 
 /**
  * Scan QUEUED and FIX_QUEUED tasks, atomically claim them within
- * concurrency limits using a slot reservation lock, then dispatch by
- * task.kind. Tasks are left in CLAIMED state with the lease attached.
+ * concurrency limits using both the task slot locks and the per-agent
+ * lifecycle gate. Tasks are left in CLAIMED state with the lease attached.
  */
 export async function dispatchEligibleTasks({
   dir,
   instanceId,
   canDispatchAgent = async () => true,
+  withAgentDispatchGate = withAgentLifecycleGate,
 }) {
   const { tasks } = await scanReviewTasks({ dir });
   const dispatched = [];
   for (const task of tasks) {
     if (!DISPATCHABLE_STATES.has(task.state)) continue;
-    if (!(await dispatchAllowed(canDispatchAgent, task.agent))) continue;
 
-    const lock = await acquireSlotLock(dir, task.repository, task.pr);
-    if (!lock.acquired) continue;
+    const claimedTask = await withAgentDispatchGate(task.agent, async () => {
+      if (!(await dispatchAllowed(canDispatchAgent, task.agent))) return null;
 
-    try {
-      if (!(await dispatchAllowed(canDispatchAgent, task.agent))) continue;
-      const counts = await countActiveTasks({ dir, repository: task.repository, pr: task.pr });
-      const concurrency = checkConcurrency({ counts, limits: task.policy?.concurrency || {} });
-      if (!concurrency.allowed) continue;
+      const lock = await acquireSlotLock(dir, task.repository, task.pr);
+      if (!lock.acquired) return null;
 
-      const leaseEpoch = (task.lease?.lease_epoch || 0) + 1;
-      const claimed = await claimTask({
-        dir,
-        id: task.id,
-        instanceId,
-        leaseId: randomUUID(),
-        leaseEpoch,
-      });
-      if (!claimed.claimed) continue;
+      try {
+        if (!(await dispatchAllowed(canDispatchAgent, task.agent))) return null;
+        const counts = await countActiveTasks({ dir, repository: task.repository, pr: task.pr });
+        const concurrency = checkConcurrency({ counts, limits: task.policy?.concurrency || {} });
+        if (!concurrency.allowed) return null;
 
-      const claimedTask = await transitionTask({
-        dir,
-        id: task.id,
-        to: 'CLAIMED',
-        reason: 'reconciler_claimed',
-        patch: {
-          lease: claimed.claim,
-          attempt: (task.attempt || 0) + 1,
-          started_at: new Date().toISOString(),
-          heartbeat_at: new Date().toISOString(),
-        },
-      });
-      dispatched.push({ ...claimedTask, lease: claimed.claim });
-    } finally {
-      await releaseSlotLock(lock);
-    }
+        const leaseEpoch = (task.lease?.lease_epoch || 0) + 1;
+        const claimed = await claimTask({
+          dir,
+          id: task.id,
+          instanceId,
+          leaseId: randomUUID(),
+          leaseEpoch,
+        });
+        if (!claimed.claimed) return null;
+
+        const transitioned = await transitionTask({
+          dir,
+          id: task.id,
+          to: 'CLAIMED',
+          reason: 'reconciler_claimed',
+          patch: {
+            lease: claimed.claim,
+            attempt: (task.attempt || 0) + 1,
+            started_at: new Date().toISOString(),
+            heartbeat_at: new Date().toISOString(),
+          },
+        });
+        return { ...transitioned, lease: claimed.claim };
+      } finally {
+        await releaseSlotLock(lock);
+      }
+    });
+
+    if (claimedTask) dispatched.push(claimedTask);
   }
   return { dispatched: dispatched.length, tasks: dispatched };
 }
