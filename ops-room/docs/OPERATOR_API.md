@@ -17,9 +17,9 @@ OPS_ROOM_IDEMPOTENCY_DIR=/absolute/path/to/data/ops-room/idempotency
 OPS_ROOM_AGENT_LIFECYCLE_ENABLED=false
 OPS_ROOM_AGENT_LIFECYCLE_ALLOWED_AGENTS=
 OPS_ROOM_LIFECYCLE_DIR=/absolute/path/to/data/ops-room/lifecycle
-OPS_ROOM_AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS=30000
+OPS_ROOM_AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS=20000
 OPS_ROOM_AGENT_LIFECYCLE_DRAIN_POLL_MS=500
-OPS_ROOM_AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS=30
+OPS_ROOM_AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS=20
 ```
 
 Requirements:
@@ -122,7 +122,7 @@ unmanaged
 
 On drain timeout, corrupt task state, an unavailable lifecycle target, or Docker stop failure, the operation is rejected or failed, the previous desired state is restored, and a bounded audit event is written. Startup recovery converts an interrupted `draining` or `stopping` record to `failed` rather than silently replaying the external command.
 
-All lifecycle mutations are serialized globally in the running process. The Docker controller uses an argument array rather than a shell, validates the container name, suppresses command output, and exposes only bounded errors.
+All lifecycle mutations are serialized globally in the running process. The Docker controller uses a fixed executable and argument array rather than a shell, validates the container name, ignores command output, runs asynchronously, and has a hard timeout. The default drain and stop bounds fit inside the standard Ops Room shutdown window.
 
 The current endpoint does **not** provide:
 
@@ -157,6 +157,8 @@ A stopped Gemini instance must be recovered using the separately approved manual
 
 If observation already reports `exited`, `dead`, `missing`, or `stopped`, the request may complete as an audited no-op with `command_executed: false`.
 
+After a successful stop, a later request using a different valid idempotency key also completes as an audited no-op from durable `stopped` state. This prevents stale read-only runtime-cache data from causing a second Docker command.
+
 ## Task action accepted response
 
 A valid task request returns `202`:
@@ -177,7 +179,7 @@ A valid task request returns `202`:
 
 Repeating the same actor, operation, key, target, and payload returns the original response with `idempotent_replay: true`. Reusing the key for a different target, reason, or confirmation returns `409` and creates a rejected audit event.
 
-Concurrent task requests using different keys are serialized per task. Lifecycle requests are serialized globally. A conflicting request is rejected and audited rather than creating a duplicate state transition, dispatch, or runtime command.
+Concurrent task requests using different keys are serialized per task. Lifecycle requests are serialized globally. Once durable lifecycle state is already `stopped`, a later valid request is accepted without a second external command.
 
 ## Audit operations
 
@@ -190,6 +192,8 @@ Accepted and rejected attempts use these stable operation names:
 - `agent.stop`
 
 Accepted events include the actor, target, human reason, previous and resulting states, idempotency key, and bounded safe metadata. Agent-stop metadata may include adapter/controller identifiers, observed state before the action, drain duration, active task count, and whether the runtime command was executed. Secret values, command output, environment values, and authorization material are never included.
+
+Read-only agent and instance APIs expose only desired state, lifecycle phase, bounded lifecycle error, and update time. Operator identity and human reason remain available only through authenticated audit records.
 
 ## Read audit events
 
@@ -222,13 +226,13 @@ Authorization: Bearer <operator-token>
 | `202` | Action accepted or an identical completed request replayed |
 | `400` | Invalid target, reason, confirmation, or idempotency key |
 | `401` | Operator credential missing or invalid |
-| `403` | Agent is not in the lifecycle allowlist or is not approved for this slice |
+| `403` | Agent is not present in the lifecycle environment allowlist |
 | `404` | Operator/lifecycle API disabled, target missing, or audit event missing |
-| `409` | Invalid transition, retry budget exhausted, drain not proven, unavailable lifecycle target, idempotency conflict, or identical request still in progress |
+| `409` | Invalid transition, retry budget exhausted, canonical target not approved, lifecycle state unavailable, drain not proven, unavailable runtime target, idempotency conflict, or identical request still in progress |
 | `502` | Bounded runtime stop command failed |
 | `503` | Authenticated credential is valid but operator identity is not configured |
 
-Rejected requests include a stable `error_code` and `audit_event_id`. Lifecycle codes include `invalid_agent_id`, `agent_not_found`, `agent_not_allowed`, `invalid_request`, `lifecycle_target_unavailable`, `agent_not_drained`, `task_store_corrupt`, and `runtime_stop_failed`.
+Rejected requests include a stable `error_code` and `audit_event_id`. Lifecycle codes include `invalid_agent_id`, `agent_not_found`, `agent_not_allowed`, `invalid_request`, `lifecycle_state_unavailable`, `lifecycle_target_unavailable`, `agent_not_drained`, `task_store_corrupt`, and `runtime_stop_failed`.
 
 ## Rollback
 
