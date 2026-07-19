@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "key": "ops-room-archive",
+  "version": "1.0.0",
+  "displayName": "Ops Room Archive",
+  "description": "Read-only historical Ops Room material retained outside active project context.",
+  "kind": "archive",
+  "publicationPath": "99_Archive/Ops-Room",
+  "writePolicy": "read-only",
+  "provenance": {
+    "requiredFields": [],
+    "reviewRequired": false
+  }
+}
