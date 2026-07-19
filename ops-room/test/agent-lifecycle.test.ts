@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -112,6 +112,39 @@ test('guarded stop is audited, durable, confirmed, and idempotent', async () => 
   assert.equal(events[0].metadata.command_executed, true);
 });
 
+test('different idempotency keys serialize without a second runtime stop', async () => {
+  const dirs = await fixture();
+  let stopCalls = 0;
+  const prepareTarget = () => fakeTarget(() => {
+    stopCalls += 1;
+    return { controller_id: 'fake-lifecycle', action: 'stop' };
+  });
+
+  const [first, second] = await Promise.all([
+    handleOperatorAgentStop(stopRequest(dirs, { prepareTarget })),
+    handleOperatorAgentStop(stopRequest(dirs, {
+      prepareTarget,
+      body: {
+        reason: 'Second confirmed stop request',
+        idempotency_key: 'agent-stop-gemini-0002',
+        confirm_agent_id: 'gemini',
+      },
+    })),
+  ]);
+
+  assert.deepEqual([first.status, second.status], [202, 202]);
+  assert.equal(stopCalls, 1);
+  assert.deepEqual(
+    [first.body.command_executed, second.body.command_executed].sort(),
+    [false, true],
+  );
+
+  const events = await listAuditEvents({ dir: dirs.auditDir, operation: 'agent.stop' });
+  assert.equal(events.length, 2);
+  assert.equal(events.filter((event) => event.metadata.command_executed).length, 1);
+  assert.equal(events.filter((event) => event.metadata.already_desired_state).length, 1);
+});
+
 test('active tasks prevent stop and restore dispatchable desired state', async () => {
   const dirs = await fixture();
   const task = (await createOrClaimTask({
@@ -144,6 +177,24 @@ test('active tasks prevent stop and restore dispatchable desired state', async (
   assert.equal(events.length, 1);
   assert.equal(events[0].outcome, 'rejected');
   assert.equal(events[0].metadata.remaining_task_count, 1);
+});
+
+test('corrupt lifecycle state fails closed without executing the runtime command', async () => {
+  const dirs = await fixture();
+  await mkdir(dirs.lifecycleDir, { recursive: true });
+  await writeFile(join(dirs.lifecycleDir, 'agent-gemini.json'), '{not-json', 'utf-8');
+  let stopCalls = 0;
+
+  const result = await handleOperatorAgentStop(stopRequest(dirs, {
+    prepareTarget: () => fakeTarget(() => { stopCalls += 1; }),
+  }));
+
+  assert.equal(result.status, 409);
+  assert.equal(result.body.error_code, 'lifecycle_state_unavailable');
+  assert.equal(stopCalls, 0);
+  const state = await readAgentLifecycleState({ dir: dirs.lifecycleDir, agentId: 'gemini' });
+  assert.equal(state.phase, 'failed');
+  assert.equal(state.last_error, 'lifecycle_state_unavailable');
 });
 
 test('dispatch path fails closed when lifecycle policy blocks an agent', async () => {
