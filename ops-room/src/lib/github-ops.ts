@@ -1,4 +1,5 @@
 import { execSync, execFileSync } from 'node:child_process';
+import { redactSecrets } from '../services/security-redaction.js';
 
 export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env, logger = console }) {
   function withAgentFallback(agentKey, work, actionLabel) {
@@ -94,7 +95,7 @@ export function createGitHubOps({ repo, tokenForAgent, processEnv = process.env,
           '-X',
           'POST',
           '-f',
-          `body=${body}`,
+          `body=${redactSecrets(body)}`,
           '-f',
           `event=${event}`,
         ],

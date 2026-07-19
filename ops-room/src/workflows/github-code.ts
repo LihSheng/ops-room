@@ -1,6 +1,8 @@
 import { execSync, execFileSync, spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, appendFile, rm } from 'node:fs/promises';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { tmpdir, platform } from 'node:os';
 import { AGENT_NAMES, BOT_USERS, LABEL_COLORS } from '../lib/config.js';
 import { extractTask, isCodingTask, parseFlags } from '../lib/task-routing.js';
 import {
@@ -12,6 +14,7 @@ import {
 import { runChatWorkflow } from './chat-response.js';
 import { runPrReviewWorkflow } from './pr-review.js';
 import { writeTaskLog } from '../services/logs.js';
+import { redactSecrets } from '../services/security-redaction.js';
 import {
   loadProcessedTasks, markTaskProcessed, acquireLock, releaseLock, ensureDir, fileExists
 } from '../services/task-store.js';
@@ -19,17 +22,78 @@ import { notify } from '../lib/notify.js';
 
 const activeProcesses = new Map();
 
-// ── Authenticated remote URL ────────────────────────────────────────────────
+// ── Git credential helper ───────────────────────────────────────────────────
 
-function authedGitUrlForAgent(agent) {
-  const token = githubToken(agent);
-  return `https://x-access-token:${token}@github.com/${REPO}.git`;
+const ASKPASS_SCRIPT_NAME = platform() === 'win32' ? 'askpass.bat' : 'askpass.sh';
+
+function buildAskpassScriptPath(ctx) {
+  const dir = join(tmpdir(), 'openab-askpass', `issue-${ctx.issueNumber}-${ctx.agent}`);
+  mkdirSync(dir, { recursive: true });
+  return join(dir, ASKPASS_SCRIPT_NAME);
+}
+
+function renderAskpassScript() {
+  if (platform() === 'win32') {
+    return (
+      `@echo off\r\n` +
+      `setlocal enabledelayedexpansion\r\n` +
+      `echo %* | "%SystemRoot%\\System32\\findstr.exe" /i "Username" >nul && (\r\n` +
+      `  echo x-access-token\r\n` +
+      `  exit /b 0\r\n` +
+      `)\r\n` +
+      `echo %* | "%SystemRoot%\\System32\\findstr.exe" /i "Password" >nul && (\r\n` +
+      `  echo %GIT_ASKPASS_TOKEN%\r\n` +
+      `  exit /b 0\r\n` +
+      `)\r\n` +
+      `exit /b 1\r\n`
+    );
+  }
+  return (
+    `#!/bin/sh\n` +
+    `case "$1" in\n` +
+    `  *Username*)\n` +
+    `    printf '%s\\n' 'x-access-token'\n` +
+    `    ;;\n` +
+    `  *Password*)\n` +
+    `    printf '%s\\n' "$GIT_ASKPASS_TOKEN"\n` +
+    `    ;;\n` +
+    `  *)\n` +
+    `    exit 1\n` +
+    `    ;;\n` +
+    `esac\n`
+  );
+}
+
+function createAskpassHelper(ctx) {
+  const token = githubToken(ctx.agent);
+  const scriptPath = buildAskpassScriptPath(ctx);
+  const scriptContent = renderAskpassScript();
+  const writeOpts = platform() !== 'win32' ? { mode: 0o500 } : {};
+
+  writeFileSync(scriptPath, scriptContent, writeOpts);
+
+  return {
+    scriptPath,
+    env: {
+      GIT_ASKPASS: scriptPath,
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_ASKPASS_TOKEN: token,
+    },
+  };
 }
 
 function registerAgentProcess(ctx, child) {
   const lp = join('/tmp/openab-locks', `issue-${ctx.issueNumber}-${ctx.agent}.lock`);
   activeProcesses.set(lp, child);
   child.on('exit', () => activeProcesses.delete(lp));
+}
+
+function cleanupAskpassHelper(ctx) {
+  if (!ctx._askpassScriptPath) return;
+  try {
+    rmSync(dirname(ctx._askpassScriptPath), { recursive: true, force: true });
+  } catch {}
+  ctx._askpassScriptPath = null;
 }
 
 async function cancelTask(issueNumber, agentKey) {
@@ -99,27 +163,30 @@ async function prepareWorkspace(ctx) {
   }
 
   const token = githubToken(ctx.agent);
-  const env = { ...process.env, GH_TOKEN: token };
+  const ghEnv = { ...process.env, GH_TOKEN: token };
 
   execFileSync('gh', ['repo', 'clone', REPO, workspaceDir], {
     encoding: 'utf-8',
     stdio: 'pipe',
-    env,
+    env: ghEnv,
   });
 
-  execFileSync('git', ['remote', 'set-url', 'origin', `https://x-access-token:${token}@github.com/${REPO}.git`], {
-    encoding: 'utf-8',
-    stdio: 'pipe',
-    cwd: workspaceDir,
-  });
+  const askpass = createAskpassHelper(ctx);
+  const gitEnv = { ...process.env, ...askpass.env };
+  ctx._askpassScriptPath = askpass.scriptPath;
 
-  execFileSync('git', ['fetch', 'origin', '--prune'], {
-    encoding: 'utf-8',
-    stdio: 'pipe',
-    cwd: workspaceDir,
-  });
+  try {
+    execFileSync('git', ['fetch', 'origin', '--prune'], {
+      encoding: 'utf-8',
+      stdio: 'pipe',
+      cwd: workspaceDir,
+      env: gitEnv,
+    });
+  } finally {
+    cleanupAskpassHelper(ctx);
+  }
 
-  const defaultBranch = getDefaultBranch(env);
+  const defaultBranch = getDefaultBranch(ghEnv);
   ctx.defaultBranch = defaultBranch;
 
   execFileSync('git', ['checkout', defaultBranch], {
@@ -242,23 +309,55 @@ function maskToken(text) {
 }
 
 async function execLogged(command, ctx, opts = {}) {
-  const { allowFailure } = opts;
-  const safeCommand = maskToken(command);
+  const { allowFailure, env } = opts;
+  const maskedCommand = maskToken(command);
+  const safeCommand = redactSecrets(maskedCommand);
   const label = safeCommand.slice(0, 200);
+  const execOpts = { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024, stdio: 'pipe' };
+  if (env) execOpts.env = env;
   try {
-    const out = execSync(command, { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024, stdio: 'pipe' });
-    await writeTaskLog(ctx, [`RUN: ${label}`, `EXIT: 0`, `OUT: ${maskToken(out).slice(0, 2000)}`]);
+    const out = execSync(command, execOpts);
+    const maskedOut = maskToken(out);
+    const safeOut = redactSecrets(maskedOut);
+    await writeTaskLog(ctx, [`RUN: ${label}`, `EXIT: 0`, `OUT: ${safeOut.slice(0, 2000)}`]);
     return { ok: true, stdout: out };
   } catch (e) {
-    const msg = maskToken(e.stderr?.toString()?.slice(0, 2000) || e.message);
+    const rawMsg = e.stderr?.toString()?.slice(0, 2000) || e.message;
+    const maskedMsg = maskToken(rawMsg);
+    const safeMsg = redactSecrets(maskedMsg);
     const code = e.status ?? -1;
-    await writeTaskLog(ctx, [`RUN: ${label}`, `EXIT: ${code}`, `ERR: ${msg}`]);
-    if (allowFailure) return { ok: false, stdout: '', error: msg };
-    throw new Error(`Command failed (exit ${code}): ${msg}`);
+    await writeTaskLog(ctx, [`RUN: ${label}`, `EXIT: ${code}`, `ERR: ${safeMsg}`]);
+    if (allowFailure) return { ok: false, stdout: '', error: safeMsg };
+    throw new Error(`Command failed (exit ${code}): ${safeMsg}`);
   }
 }
 
 // ── Safe subprocess runner ────────────────────────────────────────────────────
+
+// Allowlisted vars for coding agent subprocesses.
+// ponytail: explicit allowlist prevents credential leaks to agent CLIs.
+// Deferred: per-provider scoping, per-agent profiles.
+const AGENT_ENV_ALLOWLIST = new Set([
+  'PATH', 'HOME', 'USER', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP',
+  'SHELL', 'LANG', 'LC_ALL', 'NODE_PATH', 'NODE_ENV', 'NODE_OPTIONS',
+  'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_ORGANIZATION',
+  'OPENCODE_API_KEY', 'OPENCODE_MODEL', 'OPENCODE_MAX_TOKENS', 'OPENCODE_MAX_TOKEN',
+  'NVIDIA_API_KEY', 'NVIDIA_MODEL',
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL',
+  'GEMINI_API_KEY', 'GOOGLE_API_KEY',
+  'OPS_ROOM_KEEP_WORKSPACE',
+  'OPENAB_REPO',
+]);
+
+function buildAgentEnv() {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (AGENT_ENV_ALLOWLIST.has(key) || AGENT_ENV_ALLOWLIST.has(key.toUpperCase())) {
+      env[key.toUpperCase()] = value;
+    }
+  }
+  return env;
+}
 
 function runCommandWithStdin({ command, args, cwd, stdin, env = process.env, timeoutMs, ctx }) {
   return new Promise((resolve, reject) => {
@@ -315,7 +414,7 @@ async function runOpencodeWithPrompt(ctx, promptContent) {
     args: ['run', '-'],
     cwd: ctx.workspaceDir,
     stdin: promptContent,
-    env: process.env,
+    env: buildAgentEnv(),
     timeoutMs: 30 * 60 * 1000,
     ctx,
   });
@@ -328,7 +427,7 @@ async function runCodexWithPrompt(ctx, promptContent) {
     args: ['exec', '-'],
     cwd: ctx.workspaceDir,
     stdin: promptContent,
-    env: process.env,
+    env: buildAgentEnv(),
     timeoutMs: 30 * 60 * 1000,
     ctx,
   });
@@ -364,7 +463,7 @@ async function runCodingAgent(ctx) {
       args: ['-p', '-'],
       cwd: ctx.workspaceDir,
       stdin: promptContent,
-      env: process.env,
+      env: buildAgentEnv(),
       timeoutMs: codingTimeout,
     });
   }
@@ -393,15 +492,16 @@ async function runCodingAgent(ctx) {
   }
 
   if (result.code !== 0) {
+    const stderrSafe = redactSecrets(stderrTail);
+    const stdoutSafe = redactSecrets(stdoutTail);
     const lines = [
       `Coding command failed.`,
       `Backend: ${backend}`,
       `Exit code: ${result.code}`,
-      `Workspace: ${ctx.workspaceDir}`,
       `stderr:`,
-      stderrTail || '(empty)',
+      stderrSafe || '(empty)',
       `stdout:`,
-      stdoutTail || '(empty)',
+      stdoutSafe || '(empty)',
     ];
     throw new Error(lines.join('\n'));
   }
@@ -648,31 +748,37 @@ async function commitIfChanges(ctx) {
 // ── Push ────────────────────────────────────────────────────────────────────
 
 async function pushBranch(ctx) {
-  const result = await execLogged(
-    `cd "${ctx.workspaceDir}" && git push origin HEAD:refs/heads/"${ctx.branchName}"`,
-    ctx,
-    { allowFailure: true }
-  );
+  const askpass = createAskpassHelper(ctx);
+  const gitEnv = { ...process.env, ...askpass.env };
+  try {
+    const result = await execLogged(
+      `cd "${ctx.workspaceDir}" && git push origin HEAD:refs/heads/"${ctx.branchName}"`,
+      ctx,
+      { allowFailure: true, env: gitEnv }
+    );
 
-  if (!result.ok) {
-    const error = result.error || '';
+    if (!result.ok) {
+      const error = result.error || '';
 
-    if (
-      error.includes('non-fast-forward') ||
-      error.includes('fetch first') ||
-      error.includes('Updates were rejected')
-    ) {
-      throw new Error(
-        `Push rejected because remote branch already exists or local branch is stale. ` +
-        `Harness must use a fresh unique branch. Branch: ${ctx.branchName}. ` +
-        `Do not force push automatically.`
-      );
+      if (
+        error.includes('non-fast-forward') ||
+        error.includes('fetch first') ||
+        error.includes('Updates were rejected')
+      ) {
+        throw new Error(
+          `Push rejected because remote branch already exists or local branch is stale. ` +
+          `Harness must use a fresh unique branch. Branch: ${ctx.branchName}. ` +
+          `Do not force push automatically.`
+        );
+      }
+
+      throw new Error(`Push failed`);
     }
 
-    throw new Error(`Push failed`);
+    await writeTaskLog(ctx, [`Branch pushed: ${ctx.branchName}`]);
+  } finally {
+    cleanupAskpassHelper(ctx);
   }
-
-  await writeTaskLog(ctx, [`Branch pushed: ${ctx.branchName}`]);
 }
 
 // ── PR ──────────────────────────────────────────────────────────────────────
@@ -755,7 +861,6 @@ async function handleCodingFailure(ctx, error) {
   else if (isNoChangeFailure) failureType = 'no source changes detected';
 
   const branchLine = ctx.branchName ? `- Branch: \`${ctx.branchName}\`\n` : '';
-  const workspaceLine = ctx.workspaceDir ? `- Workspace: \`${ctx.workspaceDir}\`\n` : '';
 
   let extraHelp = '';
   if (isCommandFailure) {
@@ -772,7 +877,7 @@ Issue #${ctx.issueNumber}: ${ctx.issueTitle}
 
 ${extraHelp}
 
-${workspaceLine}${branchLine}
+${branchLine}
 Reason:
 
 \`\`\`txt
@@ -780,12 +885,6 @@ ${safeMessage}
 \`\`\`
 
 Labels updated to \`openab/${ctx.agent}/failed\`.
-
-Please check server logs:
-
-\`\`\`bash
-tail -f data/ops-room/logs/server.log
-\`\`\`
 
 Suggested next action:
 - Fix the underlying issue.
@@ -1026,4 +1125,10 @@ export {
   getGitDiffStat,
   configureGitAuthor,
   execLogged,
+  createAskpassHelper,
+  cleanupAskpassHelper,
+  buildAskpassScriptPath,
+  buildAgentEnv,
+  maskToken,
+  renderAskpassScript,
 };

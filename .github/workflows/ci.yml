@@ -37,7 +37,43 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Test
-        run: npm test
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set +e
+          npm test > test-output.txt 2>&1
+          test_status=$?
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            echo "Test failure summary:"
+            tail -n 220 test-output.txt
+            exit "$test_status"
+          fi
+          cat test-output.txt
+          rm -f test-output.txt
+
+      - name: Test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm test *> test-output.txt
+          $testStatus = $LASTEXITCODE
+          if ($testStatus -ne 0) {
+            Write-Output "Test failure summary:"
+            Get-Content test-output.txt -Tail 220
+            exit $testStatus
+          }
+          Get-Content test-output.txt
+          Remove-Item test-output.txt -Force
+
+      - name: Upload test failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-failure-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ops-room/test-output.txt
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Build dashboard
         run: npm run build:dashboard
@@ -69,6 +105,7 @@ jobs:
       - name: Start Ops Room and smoke test instances
         env:
           OPENAB_WEBHOOK_SECRET: ci-smoke-secret
+          OPS_ROOM_DASHBOARD_TOKEN: ci-dashboard-secret
           OPENAB_WEBHOOK_PORT: '17380'
           OPS_ROOM_RELEASE_SHA: ${{ github.sha }}
         run: |
@@ -82,7 +119,9 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:17380/health > /dev/null
-          health_json=$(curl --fail --silent http://127.0.0.1:17380/api/health)
+          health_json=$(curl --fail --silent \
+            -H "Authorization: Bearer $OPS_ROOM_DASHBOARD_TOKEN" \
+            http://127.0.0.1:17380/api/health)
           HEALTH_JSON="$health_json" EXPECTED_SHA="${{ github.sha }}" node -e '
             const health = JSON.parse(process.env.HEALTH_JSON);
             if (health.ready !== true || health.revision !== process.env.EXPECTED_SHA) process.exit(1);

@@ -15,6 +15,7 @@ const packageJson = createRequire(import.meta.url)('../../package.json');
 export const PORT = parseInt(process.env.OPENAB_WEBHOOK_PORT || '7381', 10);
 export const HOST = process.env.OPENAB_WEBHOOK_HOST || '127.0.0.1';
 export const WEBHOOK_SECRET = process.env.OPENAB_WEBHOOK_SECRET;
+export const DASHBOARD_TOKEN = process.env.OPS_ROOM_DASHBOARD_TOKEN || WEBHOOK_SECRET || '';
 export const OPERATOR_API_ENABLED = process.env.OPS_ROOM_OPERATOR_API_ENABLED === 'true';
 export const OPERATOR_TOKEN = process.env.OPS_ROOM_OPERATOR_TOKEN || '';
 export const OPERATOR_ID = process.env.OPS_ROOM_OPERATOR_ID || '';

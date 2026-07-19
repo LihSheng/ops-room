@@ -16,10 +16,12 @@ async function availablePort() {
   return port;
 }
 
-async function waitForHealth(url) {
+async function waitForHealth(url, dashboardToken) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${dashboardToken}` },
+      });
       if (response.ok) return response.json();
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -31,11 +33,13 @@ test('SIGTERM drains an idle server and exits cleanly', { skip: windows && 'POSI
   const root = await mkdtemp(join(tmpdir(), 'ops-room-shutdown-'));
   const port = await availablePort();
   const revision = 'b'.repeat(40);
+  const dashboardToken = 'shutdown-dashboard-test';
   const child = spawn(process.execPath, ['src/server/webhook.js'], {
     cwd: new URL('../', import.meta.url),
     env: {
       ...process.env,
       OPENAB_WEBHOOK_SECRET: 'shutdown-test',
+      OPS_ROOM_DASHBOARD_TOKEN: dashboardToken,
       OPENAB_WEBHOOK_HOST: '127.0.0.1',
       OPENAB_WEBHOOK_PORT: String(port),
       OPS_ROOM_RELEASE_SHA: revision,
@@ -52,7 +56,7 @@ test('SIGTERM drains an idle server and exits cleanly', { skip: windows && 'POSI
   child.stderr.on('data', (chunk) => { stderr += chunk; });
 
   try {
-    const health = await waitForHealth(`http://127.0.0.1:${port}/api/health`);
+    const health = await waitForHealth(`http://127.0.0.1:${port}/api/health`, dashboardToken);
     assert.equal(health.ready, true);
     assert.equal(health.revision, revision);
     child.kill('SIGTERM');

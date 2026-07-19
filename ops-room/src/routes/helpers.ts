@@ -1,8 +1,19 @@
 import { appendFile } from 'node:fs/promises';
 import { timingSafeEqual } from 'node:crypto';
 import {
-  OPERATOR_API_ENABLED, OPERATOR_TOKEN, SHARED_MEMORY, WEBHOOK_SECRET,
+  DASHBOARD_TOKEN, OPERATOR_API_ENABLED, OPERATOR_TOKEN, SHARED_MEMORY, WEBHOOK_SECRET,
 } from '../services/runtime-paths.js';
+
+const DASHBOARD_READ_ROUTES = [
+  /^\/api\/health$/,
+  /^\/api\/tasks(?:\/|$)/,
+  /^\/api\/logs$/,
+  /^\/api\/agents$/,
+  /^\/api\/openab\/instances$/,
+  /^\/api\/agents\/profiles(?:\/|$)/,
+  /^\/api\/skills(?:\/|$)/,
+  /^\/api\/memory-spaces(?:\/|$)/,
+];
 
 export async function appendToMemory(entry) {
   try {
@@ -11,7 +22,26 @@ export async function appendToMemory(entry) {
   } catch { }
 }
 
+function requestPath(req) {
+  try {
+    return new URL(req?.url || '/', 'http://localhost').pathname;
+  } catch {
+    return '/';
+  }
+}
+
+function requiresDashboardAuth(req) {
+  if (req?.method !== 'GET') return false;
+  const pathname = requestPath(req);
+  return DASHBOARD_READ_ROUTES.some((pattern) => pattern.test(pathname));
+}
+
 export function sendJSON(res, status, data) {
+  if (requiresDashboardAuth(res.req) && !verifyDashboardAuth(res.req?.headers?.authorization)) {
+    status = 401;
+    data = { error: 'Unauthorized' };
+  }
+
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',
@@ -21,8 +51,9 @@ export function sendJSON(res, status, data) {
 }
 
 function verifyBearer(authHeader, expectedToken) {
-  if (!authHeader) return false;
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  const normalizedHeader = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+  if (!normalizedHeader) return false;
+  const match = normalizedHeader.match(/^Bearer\s+(.+)$/i);
   if (!match || !expectedToken) return false;
   const provided = Buffer.from(match[1]);
   const expected = Buffer.from(expectedToken);
@@ -31,6 +62,10 @@ function verifyBearer(authHeader, expectedToken) {
 
 export function verifyAuth(authHeader) {
   return verifyBearer(authHeader, WEBHOOK_SECRET);
+}
+
+export function verifyDashboardAuth(authHeader) {
+  return verifyBearer(authHeader, DASHBOARD_TOKEN);
 }
 
 export function verifyOperatorAuth(authHeader) {

@@ -34,6 +34,7 @@ import { handleOpenABInstances } from '../routes/openab-instances.js';
 import { handleStaticApp } from '../routes/static-app.js';
 import { handleOperatorTaskCancellation } from '../routes/operator-tasks.js';
 import { handleAuditEventDetail, handleAuditEventsList } from '../routes/audit-events.js';
+import { handleReadOnlyAgentProfileApi } from '../routes/agent-profiles.js';
 import { resolveOperatorIdentity } from '../services/operator-identity.js';
 import { sendJSON, verifyAuth, verifyOperatorAuth, parseBody } from '../routes/helpers.js';
 import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.js';
@@ -596,6 +597,15 @@ const server = createServer(async (req, res) => {
       sendJSON(res, 200, { ok: true, ...result });
     } catch (err) { sendJSON(res, 400, { error: err.message }); }
     return;
+  }
+
+  // Agent Profiles / Skills / Memory Spaces (read-only, dashboard-auth)
+  if (req.method === 'GET') {
+    const apiResult = handleReadOnlyAgentProfileApi(pathname);
+    if (apiResult) {
+      sendJSON(res, apiResult.status, apiResult.body);
+      return;
+    }
   }
 
   // Static App (Dashboard)

@@ -1,13 +1,16 @@
 import { appendFile, open, readdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { LOG_DIR, utcTimestamp } from './runtime-paths.js';
+import { redactSecrets } from './security-redaction.js';
+
+export { redactSecrets } from './security-redaction.js';
 
 const _origLog = console.log;
 const _origError = console.error;
 const _origWarn = console.warn;
-console.log = (...args) => _origLog(`[${utcTimestamp()}]`, ...args);
-console.error = (...args) => _origError(`[${utcTimestamp()}]`, ...args);
-console.warn = (...args) => _origWarn(`[${utcTimestamp()}]`, ...args);
+console.log = (...args) => _origLog(`[${utcTimestamp()}]`, ...args.map(a => typeof a === 'string' ? redactSecrets(a) : a));
+console.error = (...args) => _origError(`[${utcTimestamp()}]`, ...args.map(a => typeof a === 'string' ? redactSecrets(a) : a));
+console.warn = (...args) => _origWarn(`[${utcTimestamp()}]`, ...args.map(a => typeof a === 'string' ? redactSecrets(a) : a));
 
 export function taskLogFile(ctx) {
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -18,21 +21,11 @@ export async function writeTaskLog(ctx, lines) {
   try {
     const path = taskLogFile(ctx);
     const content = lines
-      .flatMap((line) => String(line ?? '').split(/\r?\n/))
+      .flatMap((line) => redactSecrets(String(line ?? '')).split(/\r?\n/))
       .map((line) => `[${new Date().toISOString()}] ${line}`)
       .join('\n') + '\n';
     await appendFile(path, content);
   } catch { }
-}
-
-export function redactSecrets(text) {
-  return String(text || '')
-    .replaceAll('\u0000', '')
-    .replace(/(x-access-token:)[^@\s]+/gi, '$1REDACTED')
-    .replace(/(authorization:\s*bearer\s+)[^\s"']+/gi, '$1REDACTED')
-    .replace(/((?:token|secret|password|credential|private[_-]?key)\s*[=:]\s*)[^\s"']+/gi, '$1REDACTED')
-    .replace(/ghp_[A-Za-z0-9_]+/g, 'REDACTED')
-    .replace(/github_pat_[A-Za-z0-9_]+/g, 'REDACTED');
 }
 
 function clampLimit(rawLimit) {
