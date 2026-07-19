@@ -35,7 +35,7 @@ export const AGENT_LIFECYCLE_ALLOWED_AGENTS = Object.freeze(
 );
 export const AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS = boundedInteger(
   process.env.OPS_ROOM_AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS,
-  30_000,
+  20_000,
   0,
   300_000,
 );
@@ -47,7 +47,7 @@ export const AGENT_LIFECYCLE_DRAIN_POLL_MS = boundedInteger(
 );
 export const AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS = boundedInteger(
   process.env.OPS_ROOM_AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS,
-  30,
+  20,
   1,
   120,
 );
