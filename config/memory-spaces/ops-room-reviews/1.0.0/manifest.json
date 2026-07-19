@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "key": "ops-room-reviews",
+  "version": "1.0.0",
+  "displayName": "Ops Room Reviews",
+  "description": "Reviewed independent code-review findings and risk assessments for Ops Room.",
+  "kind": "project",
+  "publicationPath": "20_Projects/Ops-Room/Reviews",
+  "parentKey": "ops-room-project",
+  "writePolicy": "review-required",
+  "provenance": {
+    "requiredFields": ["agent_id", "task_id", "source_refs", "created_at"],
+    "reviewRequired": true
+  }
+}
