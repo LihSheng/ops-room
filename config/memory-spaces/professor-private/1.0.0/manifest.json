@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "key": "professor-private",
+  "version": "1.0.0",
+  "displayName": "Professor Private Memory",
+  "description": "Curated private working memory reserved for the Professor agent identity.",
+  "kind": "private-agent",
+  "publicationPath": "90_Agents/professor",
+  "ownerAgent": "professor",
+  "writePolicy": "review-required",
+  "provenance": {
+    "requiredFields": ["agent_id", "task_id", "source_refs", "created_at"],
+    "reviewRequired": true
+  }
+}
