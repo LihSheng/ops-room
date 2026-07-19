@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "key": "ops-room-verification",
+  "version": "1.0.0",
+  "displayName": "Ops Room Verification",
+  "description": "Reviewed verification results, regression evidence, and reproducible test findings for Ops Room.",
+  "kind": "project",
+  "publicationPath": "20_Projects/Ops-Room/Verification",
+  "parentKey": "ops-room-project",
+  "writePolicy": "review-required",
+  "provenance": {
+    "requiredFields": ["agent_id", "task_id", "source_refs", "created_at"],
+    "reviewRequired": true
+  }
+}
