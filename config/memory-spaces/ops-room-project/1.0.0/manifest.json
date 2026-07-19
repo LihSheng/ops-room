@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "key": "ops-room-project",
+  "version": "1.0.0",
+  "displayName": "Ops Room Project",
+  "description": "Curated project knowledge published for Ops Room planning, architecture, operations, and status context.",
+  "kind": "project",
+  "publicationPath": "20_Projects/Ops-Room",
+  "writePolicy": "read-only",
+  "provenance": {
+    "requiredFields": [],
+    "reviewRequired": false
+  }
+}
