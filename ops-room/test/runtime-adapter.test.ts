@@ -4,6 +4,7 @@ import test from 'node:test';
 import { getAgentList } from '../src/services/agent-registry.js';
 import { getOpenABInstances } from '../src/services/openab-instances.js';
 import { createDockerReadInspector } from '../src/services/runtime-adapter/docker-read-inspector.js';
+import { createOpenABDockerRuntimeAdapter } from '../src/services/runtime-adapter/openab-docker-adapter.js';
 import { inspectAgentRuntimes, prepareAgentRuntimes } from '../src/services/runtime-adapter/registry.js';
 
 function definition(key, backend = 'fake') {
@@ -71,6 +72,35 @@ test('runtime adapter contract prepares and inspects provider-neutral records', 
   assert.deepEqual(snapshot.adapters, [{
     adapter_id: 'fake-adapter', available: true, error: null, fetched_at: 1234,
   }]);
+});
+
+test('shared OpenAB adapter supports OpenCode and Gemini without lifecycle methods', () => {
+  const inspectedTargets = [];
+  const adapter = createOpenABDockerRuntimeAdapter({
+    inspector: {
+      inspect: (containerNames) => {
+        inspectedTargets.push(...containerNames);
+        return {
+          available: true,
+          error: null,
+          fetched_at: 55,
+          status_by_container: Object.fromEntries(containerNames.map((name) => [name, {
+            status: 'running', state: 'running', health: 'none',
+          }])),
+        };
+      },
+    },
+  });
+  const definitions = [definition('professor', 'opencode'), definition('gemini', 'gemini')];
+  const snapshot = inspectAgentRuntimes({ definitions, adapters: [adapter] });
+
+  assert.equal(adapter.supports(definition('other', 'unsupported')), false);
+  assert.equal(snapshot.instances.every((instance) => instance.adapter_id === 'openab-docker'), true);
+  assert.deepEqual(inspectedTargets.sort(), ['gemini-container', 'professor-container']);
+  assert.equal(snapshot.instances.every((instance) => instance.runtime.status === 'running'), true);
+  assert.equal('start' in adapter, false);
+  assert.equal('stop' in adapter, false);
+  assert.equal('restart' in adapter, false);
 });
 
 test('runtime adapter registry rejects unsupported and ambiguous definitions', () => {
