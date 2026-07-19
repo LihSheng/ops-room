@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { handleReadOnlyAgentProfileApi } from '../src/routes/agent-profiles.js';
 import { initializeAgentProfileRegistry, resetAgentProfileRegistryForTests } from '../src/services/agent-profile/registry.js';
 import { initializeSkillRegistry, resetSkillRegistryForTests } from '../src/services/skill-registry/registry.js';
+import { initializeMemorySpaceRegistry, resetMemorySpaceRegistryForTests } from '../src/services/memory-space-registry/registry.js';
 
 const env = {
   ...process.env,
@@ -13,30 +14,36 @@ const env = {
 test.before(async () => {
   resetAgentProfileRegistryForTests();
   resetSkillRegistryForTests();
+  resetMemorySpaceRegistryForTests();
   await initializeAgentProfileRegistry();
   await initializeSkillRegistry({ commandExistsFn: async () => true, env });
+  await initializeMemorySpaceRegistry();
 });
 
 test.after(() => {
+  resetMemorySpaceRegistryForTests();
   resetSkillRegistryForTests();
   resetAgentProfileRegistryForTests();
 });
 
-test('lists canonical profiles with backward-compatible skill keys and versioned assignments', () => {
+test('lists canonical profiles with versioned skill and governed memory assignments', () => {
   const result = handleReadOnlyAgentProfileApi('/api/agents/profiles');
   assert.equal(result?.status, 200);
   const body = result?.body as { profiles: Record<string, unknown>[]; count: number };
   assert.equal(body.count, 4);
   assert.deepEqual(body.profiles.map((item) => item.id), ['berlin', 'gemini', 'professor', 'tokyo']);
   assert.deepEqual(Object.keys(body.profiles[0]).sort(), [
-    'display_name', 'enabled', 'id', 'memory', 'mission', 'personality', 'profile_version',
+    'display_name', 'enabled', 'id', 'memory', 'memory_assignments', 'mission', 'personality', 'profile_version',
     'repositories', 'runtime', 'schema_version', 'skill_assignments', 'skills',
   ]);
   assert.deepEqual(body.profiles[0].skills, ['pull-request-review', 'risk-analysis', 'security-review']);
-  const assignments = body.profiles[0].skill_assignments as Record<string, unknown>[];
-  assert.equal(assignments[0].version, '1.0.0');
-  assert.equal(assignments[0].resolution_status, 'resolved');
-  assert.equal((assignments[0].compatibility as Record<string, unknown>).status, 'compatible');
+  const skillAssignments = body.profiles[0].skill_assignments as Record<string, unknown>[];
+  assert.equal(skillAssignments[0].version, '1.0.0');
+  assert.equal(skillAssignments[0].resolution_status, 'resolved');
+  assert.equal((skillAssignments[0].compatibility as Record<string, unknown>).status, 'compatible');
+  const memoryAssignments = body.profiles[0].memory_assignments as { read: Record<string, unknown>[]; write: Record<string, unknown>[] };
+  assert.equal(memoryAssignments.write.length, 2);
+  assert.ok(memoryAssignments.write.every((assignment) => assignment.write_policy === 'review-required'));
   assert.equal(JSON.stringify(body).includes('test-value-never-returned'), false);
 });
 
@@ -87,5 +94,32 @@ test('skill detail returns safe assignments and rejects unknown, malformed, and 
   assert.deepEqual(handleReadOnlyAgentProfileApi('/api/skills/review/latest'), {
     status: 400,
     body: { error: 'invalid_skill_identifier' },
+  });
+});
+
+test('memory catalog and detail expose only governed relative metadata', () => {
+  const result = handleReadOnlyAgentProfileApi('/api/memory-spaces');
+  assert.equal(result?.status, 200);
+  const body = result?.body as { memory_spaces: Record<string, unknown>[]; count: number };
+  assert.equal(body.count, 12);
+  assert.deepEqual(body.memory_spaces.map((item) => item.key), [...body.memory_spaces.map((item) => item.key)].sort());
+  const reviews = body.memory_spaces.find((item) => item.key === 'ops-room-reviews')!;
+  assert.equal(reviews.kind, 'project');
+  assert.equal(reviews.publication_path, '20_Projects/Ops-Room/Reviews');
+  assert.deepEqual(reviews.readers, ['berlin']);
+  assert.deepEqual(reviews.writers, ['berlin']);
+  assert.equal(JSON.stringify(body).includes('/opt/'), false);
+  assert.equal(JSON.stringify(body).includes('config/memory-spaces'), false);
+
+  const detail = handleReadOnlyAgentProfileApi('/api/memory-spaces/berlin-private');
+  assert.equal(detail?.status, 200);
+  assert.equal((detail?.body as { memory_space: { owner_agent: string } }).memory_space.owner_agent, 'berlin');
+  assert.deepEqual(handleReadOnlyAgentProfileApi('/api/memory-spaces/unknown'), {
+    status: 404,
+    body: { error: 'memory_space_not_found', key: 'unknown' },
+  });
+  assert.deepEqual(handleReadOnlyAgentProfileApi('/api/memory-spaces/..%2Fsecret'), {
+    status: 400,
+    body: { error: 'invalid_memory_space_key' },
   });
 });
