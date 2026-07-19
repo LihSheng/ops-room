@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import test from 'node:test';
 
-import { createOrClaimTask } from '../src/services/review-task-store.js';
+import { createOrClaimTask, readTask, transitionTask } from '../src/services/review-task-store.js';
 
 async function availablePort() {
   const server = createServer();
@@ -47,6 +47,7 @@ function startServer({ root, port, operatorEnabled }) {
       OPENAB_DATA_DIR: join(root, 'data'),
       OPENAB_WORKSPACES_DIR: join(root, 'workspaces'),
       OPENAB_AGENTS_CONFIG_DIR: join(root, 'config'),
+      OPENAB_REVIEW_MAX_GLOBAL: '0',
     },
     stdio: 'pipe',
   });
@@ -61,6 +62,33 @@ async function stopServer(child) {
   if (child.exitCode === null) child.kill('SIGKILL');
 }
 
+function operatorPost(base, path, payload, token = 'operator-test-token') {
+  return fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function createTask(reviewTasksDir, sha, policy = {}) {
+  return (await createOrClaimTask({
+    dir: reviewTasksDir,
+    input: {
+      repository: 'LihSheng/ops-room', pr: 42, headSha: sha, agent: 'professor', mode: 'review',
+    },
+    policy,
+  })).task;
+}
+
+async function moveToError(reviewTasksDir, task) {
+  await transitionTask({ dir: reviewTasksDir, id: task.id, to: 'CLAIMED', reason: 'test' });
+  await transitionTask({ dir: reviewTasksDir, id: task.id, to: 'RUNNING', reason: 'test' });
+  await transitionTask({ dir: reviewTasksDir, id: task.id, to: 'ERROR', reason: 'test' });
+}
+
 test('operator cancellation requires authentication and replays an identical request', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ops-room-operator-http-'));
   const reviewTasksDir = join(root, 'ops-room', 'review-tasks');
@@ -72,31 +100,19 @@ test('operator cancellation requires authentication and replays an identical req
   try {
     const base = `http://127.0.0.1:${port}`;
     await waitForHealth(`${base}/health`);
-    const task = (await createOrClaimTask({
-      dir: reviewTasksDir,
-      input: {
-        repository: 'LihSheng/LinkUp', pr: 42, headSha: 'f'.repeat(40), agent: 'professor', mode: 'review',
-      },
-    })).task;
+    const task = await createTask(reviewTasksDir, 'f'.repeat(40));
     const taskPath = `/api/operator/tasks/${task.id}/cancel`;
-    const payload = JSON.stringify({ reason: 'Duplicate task', idempotency_key: 'http-cancel-0001' });
+    const payload = { reason: 'Duplicate task', idempotency_key: 'http-cancel-0001' };
 
-    const unauthorized = await fetch(`${base}${taskPath}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload,
-    });
+    const unauthorized = await operatorPost(base, taskPath, payload, '');
     assert.equal(unauthorized.status, 401);
 
-    const request = () => fetch(`${base}${taskPath}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer operator-test-token' },
-      body: payload,
-    });
-    const first = await request();
+    const first = await operatorPost(base, taskPath, payload);
     assert.equal(first.status, 202, stderr);
     const firstBody = await first.json();
     assert.equal(firstBody.idempotent_replay, false);
 
-    const second = await request();
+    const second = await operatorPost(base, taskPath, payload);
     assert.equal(second.status, 202);
     const secondBody = await second.json();
     assert.equal(secondBody.idempotent_replay, true);
@@ -115,6 +131,83 @@ test('operator cancellation requires authentication and replays an identical req
   }
 });
 
+test('canonical retry pause resume endpoints use the audited idempotent contract', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ops-room-operator-http-actions-'));
+  const reviewTasksDir = join(root, 'ops-room', 'review-tasks');
+  const port = await availablePort();
+  const child = startServer({ root, port, operatorEnabled: true });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    await waitForHealth(`${base}/health`);
+    const task = await createTask(reviewTasksDir, '1'.repeat(40));
+
+    const pause = await operatorPost(base, `/api/operator/tasks/${task.id}/pause`, {
+      reason: 'Wait for approval', idempotency_key: 'http-pause-00001',
+    });
+    assert.equal(pause.status, 202, stderr);
+    assert.equal((await pause.json()).task.state, 'PAUSED');
+
+    const resumePayload = { reason: 'Approval received', idempotency_key: 'http-resume-0001' };
+    const resume = await operatorPost(base, `/api/operator/tasks/${task.id}/resume`, resumePayload);
+    assert.equal(resume.status, 202, stderr);
+    const resumeBody = await resume.json();
+    assert.equal(resumeBody.task.state, 'QUEUED');
+    assert.equal(resumeBody.idempotent_replay, false);
+    const replay = await operatorPost(base, `/api/operator/tasks/${task.id}/resume`, resumePayload);
+    assert.equal(replay.status, 202);
+    assert.equal((await replay.json()).idempotent_replay, true);
+
+    await moveToError(reviewTasksDir, task);
+    const retry = await operatorPost(base, `/api/operator/tasks/${task.id}/retry`, {
+      reason: 'Dependency recovered', idempotency_key: 'http-retry-00001',
+    });
+    assert.equal(retry.status, 202, stderr);
+    const retryBody = await retry.json();
+    assert.equal(retryBody.task.state, 'QUEUED');
+    assert.equal(retryBody.task.attempt, 1);
+
+    const auditResponse = await fetch(`${base}/api/audit-events?target_id=${encodeURIComponent(task.id)}`, {
+      headers: { Authorization: 'Bearer operator-test-token' },
+    });
+    assert.equal(auditResponse.status, 200);
+    const operations = (await auditResponse.json()).events.map((event) => event.operation).sort();
+    assert.deepEqual(operations, ['task.pause', 'task.resume', 'task.retry']);
+  } finally {
+    await stopServer(child);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('legacy review-task mutation aliases enforce reason and idempotency', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ops-room-operator-http-alias-'));
+  const reviewTasksDir = join(root, 'ops-room', 'review-tasks');
+  const port = await availablePort();
+  const child = startServer({ root, port, operatorEnabled: true });
+
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    await waitForHealth(`${base}/health`);
+    const task = await createTask(reviewTasksDir, '2'.repeat(40));
+
+    const invalid = await operatorPost(base, `/api/review-tasks/${task.id}/pause`, { reason: 'Missing key' });
+    assert.equal(invalid.status, 400);
+    assert.equal((await invalid.json()).error_code, 'invalid_request');
+
+    const valid = await operatorPost(base, `/api/review-tasks/${task.id}/pause`, {
+      reason: 'Compatibility alias', idempotency_key: 'legacy-pause-001',
+    });
+    assert.equal(valid.status, 202);
+    assert.equal((await valid.json()).operation, 'task.pause');
+    assert.equal((await readTask({ dir: reviewTasksDir, id: task.id })).state, 'PAUSED');
+  } finally {
+    await stopServer(child);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('operator endpoints remain hidden when mutation API is disabled', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ops-room-operator-disabled-'));
   const port = await availablePort();
@@ -122,10 +215,15 @@ test('operator endpoints remain hidden when mutation API is disabled', async () 
   try {
     const base = `http://127.0.0.1:${port}`;
     await waitForHealth(`${base}/health`);
-    const response = await fetch(`${base}/api/audit-events`, {
+    const auditResponse = await fetch(`${base}/api/audit-events`, {
       headers: { Authorization: 'Bearer operator-test-token' },
     });
-    assert.equal(response.status, 404);
+    assert.equal(auditResponse.status, 404);
+
+    const actionResponse = await operatorPost(base, '/api/operator/tasks/missing/retry', {
+      reason: 'Hidden mutation', idempotency_key: 'hidden-retry-001',
+    });
+    assert.equal(actionResponse.status, 404);
   } finally {
     await stopServer(child);
     await rm(root, { recursive: true, force: true });

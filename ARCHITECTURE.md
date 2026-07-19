@@ -18,7 +18,7 @@ Existing GitHub review, fix, lease-fencing, effect-ledger, and reconciliation be
 
 ## Current Goal
 
-Deliver a secure, reliable production control plane with deterministic deployment, audited mutations, and Git-backed read-only agent, skill, and memory policy before adding lifecycle or configuration editing.
+Deliver a secure, reliable production control plane with deterministic deployment, audited task operations, and Git-backed read-only agent, skill, and memory policy before adding lifecycle or configuration editing.
 
 Completion requires:
 
@@ -27,6 +27,7 @@ Completion requires:
 - One versioned agent profile source exposing mission, behavior, exact skill assignments, logical memory assignments, and repository scope.
 - One validated versioned skill-manifest source exposing immutable metadata and declared requirements without execution authority.
 - One validated memory-space source exposing curated publication paths, ownership, write-review policy, and provenance requirements without vault I/O authority.
+- One authenticated, audited, and idempotent contract for cancel, retry, pause, and resume task actions.
 - No whole-vault agent mounts; only curated read-only knowledge mounts.
 - Loopback-by-default API binding or an equivalently verified network/auth boundary.
 - Health output containing deployed commit SHA, lifecycle state, profile, skill-registry, memory-registry, and critical local dependency status.
@@ -54,12 +55,13 @@ PostgreSQL is not currently authoritative. Introducing it requires a separate mi
 
 - Host deployment binds `127.0.0.1` by default. Public access must pass through the verified Cloudflare Tunnel and Access boundary or equivalent authenticated ingress.
 - Container deployment may bind `0.0.0.0` internally only when the published host port remains loopback-bound.
-- Operator mutation APIs are disabled by default and use a credential separate from webhook ingress when enabled.
-- Authentication, operator identity, RBAC, audit records, confirmation, idempotency, and secret references must precede new control-plane mutations.
+- Operator mutation APIs are disabled by default and use a credential separate from webhook ingress and dashboard access when enabled.
+- Authentication, operator identity, audit records, idempotency, confirmation, and authorization must precede control-plane mutations.
 - Agent knowledge is mounted from `OPENAB_AGENT_KNOWLEDGE_DIR` read-only. This directory must be a curated publication target, never the whole Obsidian vault.
 - Agent profiles, skill manifests, and memory-space manifests contain policy metadata only. They must not contain tokens, private keys, provider credentials, prompts, secret values, unrestricted filesystem paths, or note contents.
 - Skill compatibility is an inspection result, not proof that a skill is installed, materialized, or executable.
 - A memory write assignment is future policy intent only. OPS-005 does not grant filesystem write access, browse notes, perform search, sync Obsidian, or publish content.
+- Browser mutation controls remain deferred until stable browser identity, RBAC, session revocation, and confirmation rules are approved.
 
 ## Agent Model
 
@@ -127,6 +129,24 @@ Public APIs expose only logical keys, versions, display metadata, relative publi
 
 `review-required` describes the contract a future governed publisher must satisfy. No automated write, publication, sync, note creation, memory search, vector retrieval, or vault inspection is introduced by this registry.
 
+## Controlled Task Operations
+
+Review and fix task mutations use one operator contract for `cancel`, `retry`, `pause`, and `resume`.
+
+- Canonical routes are `POST /api/operator/tasks/:taskId/<action>`.
+- The mutation API remains disabled by default and requires a separate operator bearer credential and resolvable stable actor identity.
+- Every request requires a bounded human reason and client-generated idempotency key.
+- Accepted and rejected attempts append audit events containing actor, operation, target, previous/resulting state, outcome, and safe metadata.
+- Idempotency records persist the original completed response and prevent duplicate state transitions under retries.
+- Different-key requests for the same task are serialized in the running process; only one valid competing transition may succeed.
+- `pause` applies only to queued work. Running work uses cancellation rather than pretending execution has paused.
+- `retry` applies only to terminal recoverable states and respects a finite task retry budget when configured.
+- Review tasks return to `QUEUED`; fix tasks return to `FIX_QUEUED`.
+- Retry and resume request dispatch only after task state and audit evidence are durable. Reconciliation, lease fencing, and the effect ledger remain authoritative for preventing duplicate external side effects.
+- Compatibility aliases under `/api/review-tasks/:taskId/<action>` use the same contract; they do not bypass audit or idempotency.
+
+These task actions do not provide agent process start/stop/restart, unrestricted workflow execution, browser controls, or Docker mutation.
+
 ## Runtime and Shutdown
 
 Production topology is host systemd for Ops Room plus Docker-hosted OpenAB agents.
@@ -186,8 +206,9 @@ Automatic deployment remains deferred until manual activation, active-work drain
 4. Add Git-backed agent profiles and read-only policy visibility.
 5. Add the Git-backed read-only skill registry and compatibility inspection.
 6. Add Git-backed curated memory governance without vault I/O.
-7. Introduce a runtime adapter read model.
-8. Consider guarded lifecycle control and database-backed operational indexing only after demonstrated need.
+7. Expand the proven mutation contract to audited retry, pause, and resume task actions.
+8. Introduce a runtime adapter read model.
+9. Consider guarded lifecycle control and database-backed operational indexing only after demonstrated need.
 
 ## Explicit Non-Goals Now
 
@@ -196,8 +217,9 @@ Automatic deployment remains deferred until manual activation, active-work drain
 - skill execution, installation, activation, or provider materialization
 - credential creation, storage, rotation, or value display
 - Obsidian note browsing, search, synchronization, publication, or writes
+- browser mutation controls before authentication and RBAC
+- agent process start, stop, restart, or unrestricted Docker control
 - general workflow engine
 - full memory service or vector database
-- dynamic unrestricted Docker control
 - multi-tenancy
 - automatic production deployment
