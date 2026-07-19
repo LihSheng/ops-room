@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { buildReleaseArtifact, REQUIRED_SKILL_MANIFESTS } from '../scripts/deploy/release-artifact.js';
+import { buildReleaseArtifact, REQUIRED_MEMORY_SPACE_MANIFESTS, REQUIRED_SKILL_MANIFESTS } from '../scripts/deploy/release-artifact.js';
 
 const windows = process.platform === 'win32';
 const scriptRoot = resolve(fileURLToPath(new URL('../scripts/deploy/', import.meta.url)));
@@ -23,7 +23,7 @@ function run(command, args, env) {
   });
 }
 
-function manifestFor(key) {
+function skillManifestFor(key) {
   return {
     schemaVersion: 1,
     key,
@@ -33,6 +33,20 @@ function manifestFor(key) {
     requiredCommands: [],
     requiredCredentials: [],
     permissions: ['repository.read'],
+  };
+}
+
+function memoryManifestFor(key) {
+  return {
+    schemaVersion: 1,
+    key,
+    version: '1.0.0',
+    displayName: key,
+    description: `Safe memory deployment fixture for ${key}.`,
+    kind: 'project',
+    publicationPath: `20_Projects/${key}`,
+    writePolicy: 'read-only',
+    provenance: { requiredFields: [], reviewRequired: false },
   };
 }
 
@@ -50,7 +64,13 @@ async function makeSource(root) {
     const [, , key, version] = path.split('/');
     const directory = join(root, '..', 'config', 'skills', key, version);
     await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifestFor(key)));
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify(skillManifestFor(key)));
+  }
+  for (const path of REQUIRED_MEMORY_SPACE_MANIFESTS) {
+    const [, , key, version] = path.split('/');
+    const directory = join(root, '..', 'config', 'memory-spaces', key, version);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify(memoryManifestFor(key)));
   }
 }
 
