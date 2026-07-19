@@ -36,7 +36,7 @@ Desired and observed state remain separate. A stored desired state does not prov
 
 ## Durable state
 
-Per-agent records are stored outside immutable releases under the configured lifecycle directory.
+Per-agent records are stored outside immutable releases under the configured lifecycle directory. The loader accepts only the documented schema, agent identity, state enums, bounded error code, and bounded operation fields. Unexpected fields are discarded; malformed or unsupported records fail closed.
 
 ```json
 {
@@ -78,11 +78,11 @@ A later slice may introduce explicit `starting` and `running` phases when a revi
 6. Block new durable review/fix dispatch for the target agent.
 7. Scan durable review/fix tasks until no active task remains or the drain deadline expires.
 8. Persist `phase=stopping`.
-9. Execute one fixed-form `docker stop --time <bounded> <validated-name>` command without a shell.
+9. Execute one fixed-form `docker stop --time <bounded> <validated-name>` command asynchronously without a shell and with ignored output.
 10. Persist `phase=stopped` and append the accepted audit event.
 11. Persist the completed response in the idempotency store.
 
-If read-only observation already reports `exited`, `dead`, `missing`, or `stopped`, step 9 becomes an audited no-op.
+If read-only observation already reports `exited`, `dead`, `missing`, or `stopped`, step 9 becomes an audited no-op. Durable `stopped` state also short-circuits later different-key requests as audited no-ops, preventing stale observation-cache data from triggering a second Docker command.
 
 ## Failure handling
 
@@ -96,7 +96,7 @@ If the durable task scan contains corrupt records, Ops Room cannot prove a safe 
 
 ### Runtime command failure
 
-The controller suppresses stdout and stderr, restores the previous desired state, records `runtime_stop_failed`, and returns a bounded `502` response.
+The controller ignores stdout and stderr, restores the previous desired state, records `runtime_stop_failed`, and returns a bounded `502` response. The spawned command is killed after the configured stop timeout plus a five-second control-plane margin.
 
 ### Process restart during an operation
 
@@ -104,7 +104,7 @@ Startup recovery does not replay Docker commands. Records left in `draining` or 
 
 ### Corrupt lifecycle state
 
-Lifecycle dispatch checks fail closed for the affected agent. APIs expose a bounded unavailable state rather than raw file contents.
+Lifecycle dispatch checks and lifecycle mutations fail closed for the affected agent. Read APIs expose only a bounded unavailable state, never raw file contents, operator reason, or unexpected fields.
 
 ## Concurrency and dispatch
 
@@ -123,10 +123,12 @@ OPS_ROOM_OPERATOR_API_ENABLED=true
 OPS_ROOM_AGENT_LIFECYCLE_ENABLED=false
 OPS_ROOM_AGENT_LIFECYCLE_ALLOWED_AGENTS=gemini
 OPS_ROOM_LIFECYCLE_DIR=/absolute/path/to/data/ops-room/lifecycle
-OPS_ROOM_AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS=30000
+OPS_ROOM_AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS=20000
 OPS_ROOM_AGENT_LIFECYCLE_DRAIN_POLL_MS=500
-OPS_ROOM_AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS=30
+OPS_ROOM_AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS=20
 ```
+
+The default drain plus stop bounds fit inside the standard 55-second Ops Room shutdown window. Larger overrides are permitted only when the service manager timeout and restart-recovery plan have been reviewed together.
 
 For the approved test, enable the lifecycle flag and restart Ops Room through the immutable deployment process. Do not add Professor, Berlin, or Tokyo to the allowlist.
 
@@ -148,7 +150,9 @@ After the request:
 - verify read-only observation converges to an exited/stopped state;
 - verify one accepted audit event exists;
 - repeat the identical request and verify `idempotent_replay=true` with no second Docker command;
+- submit a different-key stop request and verify it is an audited no-op with no second Docker command;
 - verify queued work for Gemini is not dispatched while stopped;
+- verify public agent/instance APIs do not expose operator identity or human reason;
 - verify Professor, Berlin, and Tokyo remain unaffected.
 
 ## Rollback and recovery
