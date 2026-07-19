@@ -9,7 +9,7 @@ const DESIRED_STATES = new Set(['unmanaged', 'stopped', 'running']);
 const LIFECYCLE_PHASES = new Set(['unmanaged', 'draining', 'stopping', 'stopped', 'starting', 'running', 'failed']);
 const OPERATION_OUTCOMES = new Set(['in_progress', 'accepted', 'rejected', 'failed', 'interrupted']);
 const INTERRUPTED_PHASES = new Set(['draining', 'stopping', 'starting']);
-const BLOCKED_DISPATCH_PHASES = new Set(['draining', 'stopping', 'stopped', 'starting']);
+const BLOCKED_DISPATCH_PHASES = new Set(['draining', 'stopping', 'stopped', 'starting', 'failed']);
 const AGENT_LIFECYCLE_GATES = new Map();
 
 function validateAgentId(agentId: string) {
@@ -205,7 +205,9 @@ export async function recoverInterruptedAgentLifecycleStates({
       agentId,
       now,
       patch: {
-        desired_state: state.previous_desired_state || 'unmanaged',
+        desired_state: (state.last_operation?.operation === 'agent.start')
+          ? 'running'
+          : (state.previous_desired_state || 'unmanaged'),
         phase: 'failed',
         previous_desired_state: null,
         last_error: 'interrupted_lifecycle_operation',

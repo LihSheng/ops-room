@@ -20,6 +20,7 @@ import { prepareAgentLifecycleTarget } from '../services/runtime-lifecycle/regis
 const SAFE_AGENT_ID = /^[A-Za-z0-9._-]+$/;
 const ACTIVE_TASK_STATES = new Set(['CLAIMED', 'RUNNING', 'FIXING', 'CANCEL_REQUESTED']);
 const STOPPED_RUNTIME_STATES = new Set(['exited', 'dead', 'missing', 'stopped']);
+const STARTABLE_RUNTIME_STATES = new Set(['exited', 'dead', 'stopped']);
 let lifecycleActionQueue = Promise.resolve();
 
 function reasonFrom(body) {
@@ -129,10 +130,11 @@ async function rejected({
   previousState = null,
   resultingState = previousState,
   metadata = {},
+  operation = 'agent.stop',
 }) {
   const event = await appendAuditEvent({
     dir: auditDir,
-    operation: 'agent.stop',
+    operation,
     actor,
     target: { type: 'agent', id: String(agentId || '').slice(0, 100) },
     reason,
@@ -635,26 +637,93 @@ export async function handleOperatorAgentStart({
           target.runtime_adapter_id || null,
         );
 
-        // If already desired=running and phase=running, adopt without command
+        // === Adoption: durable desired=running + phase=running requires observed running ===
         if (current.desired_state === 'running' && current.phase === 'running') {
-          const convergence = classifyConvergence(current.desired_state, current.phase, observed.status);
-          return acceptedAlreadyRunning({
+          if (observed.status === 'running') {
+            // Already running and healthy — audited no-op adoption
+            const convergence = classifyConvergence(current.desired_state, current.phase, observed.status);
+            return acceptedAlreadyRunning({
+              auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+              current, observed, target, convergence,
+            });
+          }
+          // Durable running but observed not running — mismatch, not adoption
+          return rejected({
             auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
-            current, observed, target, convergence,
+            errorCode: 'lifecycle_mismatch', status: 409,
+            message: 'Durable lifecycle state is running but observed runtime is ' + observed.status + '; cannot adopt without convergence',
+            previousState: current.phase, operation: 'agent.start',
           });
         }
 
-        // Reject if currently in a transitioning phase (draining, stopping, starting)
-        if (current.phase === 'draining' || current.phase === 'stopping' || current.phase === 'starting') {
+        // === OPS-008A mismatch resolution: desired=stopped, observed=running ===
+        // This handles the mismatch left by OPS-008A manual recovery
+        if (current.desired_state === 'stopped' && current.phase === 'stopped' && observed.status === 'running') {
+          const requestedAt = nowIso();
+          const lifecycle = await updateAgentLifecycleState({
+            dir: lifecycleDir, agentId: rawAgentId, now: nowIso,
+            patch: {
+              desired_state: 'running', phase: 'running',
+              previous_desired_state: current.desired_state,
+              last_error: null,
+              last_operation: {
+                operation: 'agent.start',
+                actor_id: actor.actor_id, reason,
+                requested_at: requestedAt,
+                completed_at: nowIso(), outcome: 'accepted',
+              },
+            },
+          });
+          const event = await appendAuditEvent({
+            dir: auditDir, operation: 'agent.start', actor,
+            target: { type: 'agent', id: rawAgentId },
+            reason, idempotencyKey,
+            previousState: current.phase, resultingState: lifecycle.phase,
+            outcome: 'accepted',
+            metadata: {
+              runtime_adapter: observed.adapter_id || target.runtime_adapter_id,
+              lifecycle_controller: target.controller.id,
+              observed_state_before: observed.status,
+              command_executed: false,
+              mismatch_resolution: true,
+            },
+          });
+          return {
+            status: 202,
+            body: {
+              operation: 'agent.start',
+              agent: {
+                id: rawAgentId,
+                desired_state: lifecycle.desired_state,
+                lifecycle_state: lifecycle.phase,
+                observed_state_before: observed.status,
+              },
+              command_executed: false,
+              audit_event_id: event.event_id,
+            },
+          };
+        }
+
+        // === Fail closed for unsafe observation ===
+        if (observed.status === 'unknown' || observed.status === 'unavailable' || observed.status === 'missing') {
           return rejected({
             auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
-            errorCode: 'lifecycle_operation_active', status: 409,
-            message: `Agent is currently ${current.phase}; cannot start until operation completes or fails`,
-            previousState: current.phase,
+            errorCode: 'runtime_observation_' + observed.status, status: 409,
+            message: 'Cannot start agent because runtime observation is ' + observed.status, previousState: current.phase,
             operation: 'agent.start',
           });
         }
 
+        // === Reject if currently in a transitioning phase ===
+        if (current.phase === 'draining' || current.phase === 'stopping' || current.phase === 'starting') {
+          return rejected({
+            auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+            errorCode: 'lifecycle_operation_active', status: 409,
+            message: 'Agent is currently ' + current.phase + '; cannot start until operation completes or fails',
+            previousState: current.phase,
+            operation: 'agent.start',
+          });
+        }
         const requestedAt = nowIso();
         const desiredRunning = 'running';
         await updateAgentLifecycleState({
@@ -677,11 +746,11 @@ export async function handleOperatorAgentStart({
         });
 
         // Determine if we need to actually start or adopt
-        const alreadyRunning = observed.status === 'running';
+        const commandStartable = STARTABLE_RUNTIME_STATES.has(observed.status);
         let commandExecuted = false;
         let controllerResult = { controller_id: target.controller.id, action: 'start' };
 
-        if (!alreadyRunning) {
+        if (commandStartable) {
           commandExecuted = true;
           try {
             controllerResult = await target.controller.start(target.prepared, {
@@ -736,42 +805,53 @@ export async function handleOperatorAgentStart({
         }
 
         if (!converged) {
+          // Persist durable failed state with audit evidence
+          const timeoutCompletedAt = nowIso();
           await updateAgentLifecycleState({
-            dir: lifecycleDir,
-            agentId: rawAgentId,
-            now: nowIso,
+            dir: lifecycleDir, agentId: rawAgentId, now: nowIso,
             patch: {
               desired_state: desiredRunning,
-              phase: 'starting',
+              phase: 'failed',
               previous_desired_state: null,
               last_error: 'runtime_start_convergence_timeout',
               last_operation: {
                 operation: 'agent.start',
-                actor_id: actor.actor_id,
-                reason,
+                actor_id: actor.actor_id, reason,
                 requested_at: requestedAt,
-                completed_at: nowIso(),
-                outcome: commandExecuted ? 'accepted' : 'in_progress',
+                completed_at: timeoutCompletedAt,
+                outcome: 'failed',
               },
             },
           });
+          const timeoutEvent = await appendAuditEvent({
+            dir: auditDir, operation: 'agent.start', actor,
+            target: { type: 'agent', id: rawAgentId },
+            reason, idempotencyKey,
+            previousState: current.phase, resultingState: 'failed',
+            outcome: 'failed',
+            metadata: {
+              runtime_adapter: observed.adapter_id || target.runtime_adapter_id,
+              lifecycle_controller: target.controller.id,
+              observed_state_before: observed.status,
+              command_executed: commandExecuted,
+              convergence_timeout_ms: Math.max(1000, Number(startTimeoutSeconds) * 1000),
+            },
+          });
           return {
-            status: 202,
+            status: 504,
             body: {
-              operation: 'agent.start',
+              error: 'Agent runtime start timed out waiting for health convergence',
+              error_code: 'runtime_start_convergence_timeout',
+              audit_event_id: timeoutEvent.event_id,
               agent: {
                 id: rawAgentId,
                 desired_state: desiredRunning,
-                lifecycle_state: 'starting',
-                observed_state_before: observed.status,
+                lifecycle_state: 'failed',
               },
               command_executed: commandExecuted,
-              convergence: { status: 'transitioning', reason_code: 'runtime_start_convergence_timeout' },
-              audit_event_id: null,
             },
           };
         }
-
         const lifecycle = await updateAgentLifecycleState({
           dir: lifecycleDir,
           agentId: rawAgentId,
