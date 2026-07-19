@@ -1,9 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const TASK_SCHEMA = 'ops-room.review-task.v2';
 const SAFE_ID = /^[A-Za-z0-9._:-]+$/;
+const RETRYABLE_RENAME_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 
 const ACTIVE_STATES = new Set(['CLAIMED', 'RUNNING', 'FIXING']);
 const CONCURRENCY_STATES = new Set(['CLAIMED', 'RUNNING', 'FIXING']);
@@ -114,6 +116,24 @@ function operatorAction(operation, actor, reason) {
   };
 }
 
+async function replaceFileWithRetry(tempPath, path, {
+  renameFn = rename,
+  sleep = delay,
+  maxAttempts = 8,
+} = {}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await renameFn(tempPath, path);
+      return;
+    } catch (error) {
+      const retryable = RETRYABLE_RENAME_CODES.has(error?.code);
+      if (!retryable || attempt === maxAttempts) throw error;
+      const delayMs = Math.min(10 * (2 ** (attempt - 1)), 100);
+      await sleep(delayMs);
+    }
+  }
+}
+
 export function buildReviewTaskId({ repository, pr, headSha, agent, mode = 'review', taskType = 'review', commentId = null }) {
   const prefix = taskType === 'chat' ? 'pr-chat' : 'review';
   const parts = [
@@ -141,11 +161,16 @@ export function buildFixTaskId({ repository, pr, reviewedSha, parentTaskId, agen
   ].join(':');
 }
 
-export async function writeAtomic(path, value) {
+export async function writeAtomic(path, value, options = {}) {
   await mkdir(join(path, '..'), { recursive: true });
-  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
-  await rename(tempPath, path);
+  try {
+    await replaceFileWithRetry(tempPath, path, options);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 export async function readTask({ dir, id }) {

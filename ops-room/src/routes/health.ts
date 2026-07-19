@@ -3,7 +3,7 @@ import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import {
   TASKS_DIR, REVIEW_TASKS_DIR, STATE_DIR, LOG_DIR, WORKSPACE_BASE, AUDIT_DIR, IDEMPOTENCY_DIR,
-  AGENT_PROFILES_DIR, MEMORY_SPACE_MANIFESTS_DIR, OPENAB_SERVER_VERSION, REQUIRED_COMMANDS
+  LIFECYCLE_DIR, AGENT_PROFILES_DIR, MEMORY_SPACE_MANIFESTS_DIR, OPENAB_SERVER_VERSION, REQUIRED_COMMANDS,
 } from '../services/runtime-paths.js';
 import { processLifecycle } from '../services/process-lifecycle.js';
 import { readReleaseInfo } from '../services/release-info.js';
@@ -79,6 +79,7 @@ export async function handleHealth({
     ['log_store', directoryCheckFn(LOG_DIR)],
     ['audit_store', directoryCheckFn(AUDIT_DIR)],
     ['idempotency_store', directoryCheckFn(IDEMPOTENCY_DIR)],
+    ['lifecycle_store', directoryCheckFn(LIFECYCLE_DIR)],
     ['workspace_store', directoryCheckFn(WORKSPACE_BASE)],
     ['agent_profiles', profileRegistry],
     ['skill_registry', skillRegistry],
@@ -112,6 +113,7 @@ export async function handleHealth({
       logs_dir: LOG_DIR,
       audit_dir: AUDIT_DIR,
       idempotency_dir: IDEMPOTENCY_DIR,
+      lifecycle_dir: LIFECYCLE_DIR,
       agent_profiles_dir: AGENT_PROFILES_DIR,
       memory_space_manifests_dir: MEMORY_SPACE_MANIFESTS_DIR,
       workspaces_dir: WORKSPACE_BASE,

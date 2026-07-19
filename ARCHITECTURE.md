@@ -18,7 +18,7 @@ Existing GitHub review, fix, lease-fencing, effect-ledger, and reconciliation be
 
 ## Current Goal
 
-Deliver a secure, reliable production control plane with deterministic deployment, audited task operations, Git-backed read-only policy, and a runtime-neutral observation boundary before adding lifecycle or configuration editing.
+Deliver a secure, reliable production control plane with deterministic deployment, audited task operations, Git-backed read-only policy, a runtime-neutral observation boundary, and one tightly guarded lifecycle test action before broader orchestration.
 
 Completion requires:
 
@@ -29,9 +29,10 @@ Completion requires:
 - One validated versioned skill-manifest source exposing immutable metadata and declared requirements without execution authority.
 - One validated memory-space source exposing curated publication paths, ownership, write-review policy, and provenance requirements without vault I/O authority.
 - One authenticated, audited, and idempotent contract for cancel, retry, pause, and resume task actions.
+- One feature-flagged, allowlisted, confirmed, audited, idempotent graceful-stop action for one canonical non-critical test agent.
 - No whole-vault agent mounts; only curated read-only knowledge mounts.
 - Loopback-by-default API binding or an equivalently verified network/auth boundary.
-- Health output containing deployed commit SHA, lifecycle state, profile, skill-registry, memory-registry, and critical local dependency status.
+- Health output containing deployed commit SHA, process lifecycle state, profile, skill-registry, memory-registry, lifecycle-store, and critical local dependency status.
 - Immutable, commit-addressed host-systemd releases containing no secrets or runtime data.
 - Tested manual activation and rollback.
 - SIGTERM stops intake, drains tracked work within a bound, and leaves durable review/fix work recoverable.
@@ -40,8 +41,10 @@ Completion requires:
 
 | Concern | Authority now |
 |---|---|
-| Agent runtime definitions, roles, and bindings | `ops-room/src/services/agent-definitions.ts` |
+| Agent runtime definitions, roles, bindings, and guarded lifecycle eligibility | `ops-room/src/services/agent-definitions.ts` |
 | Runtime preparation and observed-state normalization | `ops-room/src/services/runtime-adapter/*` |
+| Guarded external lifecycle command boundary | `ops-room/src/services/runtime-lifecycle/*` |
+| Durable desired lifecycle state and operation evidence | Persistent lifecycle records under `data/ops-room/lifecycle/` |
 | Agent mission, personality, exact skill assignments, logical memory assignments, and repository scope | `config/agent-profiles/*.json` |
 | Immutable skill metadata and declared requirements | `config/skills/<key>/<version>/manifest.json` |
 | Curated memory-space metadata and governance | `config/memory-spaces/<key>/<version>/manifest.json` |
@@ -58,12 +61,14 @@ PostgreSQL is not currently authoritative. Introducing it requires a separate mi
 - Container deployment may bind `0.0.0.0` internally only when the published host port remains loopback-bound.
 - Operator mutation APIs are disabled by default and use a credential separate from webhook ingress and dashboard access when enabled.
 - Authentication, operator identity, audit records, idempotency, confirmation, and authorization must precede control-plane mutations.
+- Agent lifecycle mutations additionally require a separate disabled-by-default feature flag, an environment allowlist, and canonical per-agent eligibility.
 - Agent knowledge is mounted from `OPENAB_AGENT_KNOWLEDGE_DIR` read-only. This directory must be a curated publication target, never the whole Obsidian vault.
 - Agent profiles, skill manifests, and memory-space manifests contain policy metadata only. They must not contain tokens, private keys, provider credentials, prompts, secret values, unrestricted filesystem paths, or note contents.
 - Skill compatibility is an inspection result, not proof that a skill is installed, materialized, or executable.
 - A memory write assignment is future policy intent only. OPS-005 does not grant filesystem write access, browse notes, perform search, sync Obsidian, or publish content.
 - Browser mutation controls remain deferred until stable browser identity, RBAC, session revocation, and confirmation rules are approved.
-- Runtime adapters may perform bounded read-only inspection only. They must not expose raw command output, secrets, host environment values, or lifecycle mutation methods.
+- Runtime adapters perform bounded read-only inspection only. They must not expose raw command output, secrets, host environment values, or lifecycle mutation methods.
+- Runtime lifecycle controllers are separate from read adapters. The current controller exposes only one fixed-form bounded graceful stop operation for an approved test target; it does not expose a shell, raw Docker output, start, restart, kill, force stop, recreate, or general Docker authority.
 
 ## Agent Model
 
@@ -71,9 +76,10 @@ An agent is a logical identity independent from its current container.
 
 `agent-definitions.ts` owns operational bindings:
 
-- desired state: currently `unmanaged` until an audited lifecycle controller exists;
+- baseline desired state, which remains `unmanaged` until a successful guarded lifecycle operation creates durable desired-state evidence;
 - runtime backend, service, container target, config, data binding, and polling intent;
-- stable identity used by the runtime adapter registry.
+- stable identity used by the runtime adapter registry;
+- canonical lifecycle eligibility, which is disabled for production workflow agents and currently permits only Gemini as the guarded-stop test target.
 
 `config/agent-profiles/*.json` owns versioned policy metadata:
 
@@ -87,6 +93,8 @@ An agent is a logical identity independent from its current container.
 Profiles are validated before the HTTP server starts. A missing, malformed, unsupported, duplicate, or runtime-inconsistent profile blocks startup. Runtime bindings remain authoritative in `agent-definitions.ts`; profiles may reference but must not redefine container or service wiring.
 
 Observed state is produced by the read-only runtime adapter registry. It is evidence about the current runtime, not desired-state authority and not permission to mutate a provider process.
+
+Durable lifecycle records expose desired state and operation phase separately from observed state. A desired `stopped` value does not prove that a container stopped, and an observed `running` value does not itself authorize a stop.
 
 Hardcoded workflow names may assign current roles, but future routing should select by capability and policy rather than treating a personified name as a capability.
 
@@ -162,13 +170,81 @@ The contract separates:
 - registry selection — exactly one adapter must support each canonical agent definition;
 - API consumption — agent and instance services consume normalized snapshots rather than Docker/OpenAB command details.
 
-The current `openab-docker` adapter supports both OpenAB/OpenCode and OpenAB/Gemini because both are observed through the same named-container mechanism. Docker CLI access is isolated in `docker-read-inspector.ts`. Other API, registry, and dashboard services must not execute Docker or provider inspection commands directly.
+The current `openab-docker` adapter supports both OpenAB/OpenCode and OpenAB/Gemini because both are observed through the same named-container mechanism. Docker CLI reads are isolated in `docker-read-inspector.ts`. Other API, registry, dashboard, and lifecycle services must not duplicate provider-specific observation commands.
 
 Adapter failures degrade to bounded `unknown` runtime status and a safe adapter diagnostic. Raw stdout/stderr, environment values, credentials, absolute provider paths, and Docker socket details are not returned.
 
 Existing `/api/agents` and `/api/openab/instances` response fields remain compatible. Additive runtime-adapter identifiers make the observation source visible without granting lifecycle authority.
 
-OPS-007 introduces no start, stop, restart, kill, recreate, provider-session, desired-state reconciliation, or Docker mutation operation. Those controls remain reserved for OPS-008 and require authenticated, audited, idempotent, resource-bounded lifecycle design.
+The read adapter interface still exposes no start, stop, restart, kill, recreate, provider-session, desired-state reconciliation, or Docker mutation method. OPS-008 consumes the prepared target through a separate, narrower lifecycle-controller boundary.
+
+## Guarded Agent Lifecycle — First Slice
+
+OPS-008 begins with one reversible vertical slice rather than a general lifecycle engine.
+
+### Endpoint and eligibility
+
+```text
+POST /api/operator/agents/:agentId/stop
+```
+
+The endpoint is available only when the existing operator API and the separate lifecycle feature flag are both enabled. The target must be explicitly present in the environment allowlist and marked `guarded-stop-test` in the canonical agent definition. Gemini is the only current eligible target. Professor, Berlin, and Tokyo remain lifecycle-disabled.
+
+Every request requires:
+
+- authenticated stable operator identity;
+- bounded human reason;
+- client-generated idempotency key;
+- `confirm_agent_id` exactly matching the path target.
+
+Accepted and rejected requests use the stable audit operation `agent.stop`.
+
+### State model
+
+Durable per-agent records under the lifecycle store separate desired state and operation phase from read-only observed runtime state.
+
+Current phases are:
+
+```text
+unmanaged → draining → stopping → stopped
+                  ↘ failed ↗
+```
+
+`failed` records a bounded failure or interrupted operation. A later reviewed start slice may add `starting` and explicit `running` phases.
+
+### Drain and dispatch rules
+
+- Persist `desired_state=stopped` and `phase=draining` before checking active work.
+- Once draining or stopped, the durable review/fix dispatcher fails closed for the target agent.
+- Check dispatch permission before and after acquiring the task concurrency lock to prevent a late claim race.
+- Wait only for bounded durable active states: `CLAIMED`, `RUNNING`, `FIXING`, and `CANCEL_REQUESTED`.
+- Do not cancel, kill, or force active work.
+- On timeout or corrupt task evidence, reject the stop, restore the previous desired state, and record `failed`.
+- The first slice is restricted to Gemini because legacy polling work for the production workflow agents is not yet fully represented by this drain contract.
+
+### Runtime mutation boundary
+
+After drain succeeds, the selected lifecycle controller may execute only:
+
+```text
+docker stop --time <bounded-seconds> <validated-container-name>
+```
+
+The command uses a fixed executable and argument array without a shell. Container names and timeout values are bounded. Stdout and stderr are suppressed. Errors returned to APIs and audit records are normalized and do not expose provider or host details.
+
+If read-only observation already reports an exited, dead, missing, or stopped runtime, the action completes as an audited no-op without executing Docker.
+
+### Restart recovery and concurrency
+
+Lifecycle mutations are serialized globally in the current process, limiting the 2 CPU / 8 GB host to one heavy runtime action at a time.
+
+Startup does not replay an interrupted external command. Records left in `draining` or `stopping` are converted to `failed` with bounded interruption evidence. Operators must inspect desired and observed state before any manual recovery.
+
+### Explicit boundary retained
+
+This slice adds no start, restart, kill, force stop, recreate, automatic reconciliation, arbitrary Docker command execution, Docker socket exposure, browser lifecycle control, RBAC, automatic idle stop, provider session creation, or production-agent lifecycle authority.
+
+Disabling the lifecycle endpoint does not restart a stopped agent. Until a reviewed start slice exists, recovery uses a separately approved manual runtime procedure.
 
 ## Runtime and Shutdown
 
@@ -176,14 +252,15 @@ Production topology is host systemd for Ops Room plus Docker-hosted OpenAB agent
 
 On SIGTERM/SIGINT, Ops Room:
 
-1. marks lifecycle `draining` and rejects new mutation ingress;
+1. marks the Ops Room process lifecycle `draining` and rejects new mutation ingress;
 2. aborts issue-poller sleep/intake;
 3. stops reconciliation scheduling and closes the HTTP listener;
 4. waits for tracked review/fix/poller operations up to `OPS_ROOM_SHUTDOWN_TIMEOUT_MS`;
 5. exits non-zero on timeout so systemd and startup reconciliation can recover durable work;
-6. removes dead legacy issue locks during next startup.
+6. removes dead legacy issue locks during next startup;
+7. converts interrupted agent lifecycle `draining` or `stopping` records to `failed` on the next start rather than replaying runtime commands.
 
-Legacy issue coding/chat work does not yet have the full durable effect ledger used by review/fix tasks. Production deployment must not force restart while such work remains active.
+Legacy issue coding/chat work does not yet have the full durable effect ledger used by review/fix tasks. Production deployment must not force restart while such work remains active. This limitation is also why the first lifecycle target is restricted to non-polling Gemini.
 
 ## Deployment Contract
 
@@ -201,9 +278,9 @@ ops-room/src/**
 ops-room/dist/dashboard/**
 ```
 
-Forbidden: `.env`, secrets, `data/`, logs, workspaces, tests, source dashboard, non-JSON profile files, non-manifest registry files, provider homes, symlinks, and `node_modules`.
+Forbidden: `.env`, secrets, `data/`, logs, workspaces, lifecycle records, audit/idempotency records, tests, source dashboard, non-JSON profile files, non-manifest registry files, provider homes, symlinks, and `node_modules`.
 
-The release builder validates the exact approved skill and memory-space manifest sets before copying them. The archive checksum is external; `RELEASE.json` never self-hashes its containing archive. Manual activation verifies the allowlist, checksum, manifest SHA, fixed release path, systemd restart, profile/skill/memory registry validation, and SHA-aware readiness. Failure restores the previous symlink and verifies previous-release health.
+The release builder validates the exact approved skill and memory-space manifest sets before copying them. The archive checksum is external; `RELEASE.json` never self-hashes its containing archive. Manual activation verifies the allowlist, checksum, manifest SHA, fixed release path, systemd restart, profile/skill/memory registry validation, lifecycle-store readiness, and SHA-aware readiness. Failure restores the previous symlink and verifies previous-release health.
 
 Production layout:
 
@@ -231,7 +308,8 @@ Automatic deployment remains deferred until manual activation, active-work drain
 6. Add Git-backed curated memory governance without vault I/O.
 7. Expand the proven mutation contract to audited retry, pause, and resume task actions.
 8. Introduce a runtime adapter read model.
-9. Consider guarded lifecycle control and database-backed operational indexing only after demonstrated need.
+9. Add one guarded graceful-stop action for a non-critical test agent.
+10. Validate production evidence before considering start, broader lifecycle reconciliation, shared workspaces, or multi-agent orchestration.
 
 ## Explicit Non-Goals Now
 
@@ -241,7 +319,10 @@ Automatic deployment remains deferred until manual activation, active-work drain
 - credential creation, storage, rotation, or value display
 - Obsidian note browsing, search, synchronization, publication, or writes
 - browser mutation controls before authentication and RBAC
-- agent process start, stop, restart, or unrestricted Docker control
+- agent start or restart
+- force stop, kill, recreate, or unrestricted Docker control
+- lifecycle control for Professor, Berlin, or Tokyo
+- automatic desired-state reconciliation or idle shutdown
 - general workflow engine
 - full memory service or vector database
 - multi-tenancy

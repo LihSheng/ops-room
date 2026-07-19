@@ -51,7 +51,8 @@ test('health reports bounded skill and memory registry status without making com
   assert.equal('manifests' in health.memory_registry, false);
   assert.deepEqual(Object.keys(health.dependencies), [
     'task_store', 'review_task_store', 'state_store', 'log_store', 'audit_store', 'idempotency_store',
-    'workspace_store', 'agent_profiles', 'skill_registry', 'memory_registry', 'release_identity', 'command_git', 'command_gh',
+    'lifecycle_store', 'workspace_store', 'agent_profiles', 'skill_registry', 'memory_registry', 'release_identity',
+    'command_git', 'command_gh',
   ]);
 });
 

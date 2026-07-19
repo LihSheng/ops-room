@@ -5,7 +5,9 @@ import { POLL_AGENTS } from '../lib/config.js';
 import { pollAgentIssues, startIssuePoller } from '../lib/issue-poller.js';
 import {
   REPO, PORT, HOST, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR, AUDIT_DIR, IDEMPOTENCY_DIR,
-  OPENAB_SERVER_VERSION, OPERATOR_API_ENABLED, SHUTDOWN_TIMEOUT_MS, ISSUE_POLLING_ENABLED,
+  LIFECYCLE_DIR, OPENAB_SERVER_VERSION, OPERATOR_API_ENABLED, SHUTDOWN_TIMEOUT_MS, ISSUE_POLLING_ENABLED,
+  AGENT_LIFECYCLE_ENABLED, AGENT_LIFECYCLE_ALLOWED_AGENTS, AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS,
+  AGENT_LIFECYCLE_DRAIN_POLL_MS, AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS,
 } from '../services/runtime-paths.js';
 import { initDirs } from '../services/task-store.js';
 import '../services/logs.js';
@@ -33,8 +35,10 @@ import { handleAgentsList } from '../routes/agents.js';
 import { handleOpenABInstances } from '../routes/openab-instances.js';
 import { handleStaticApp } from '../routes/static-app.js';
 import { handleOperatorTaskAction, type OperatorTaskAction } from '../routes/operator-tasks.js';
+import { canDispatchAgentFromLifecycle, handleOperatorAgentStop } from '../routes/operator-agents.js';
 import { handleAuditEventDetail, handleAuditEventsList } from '../routes/audit-events.js';
 import { handleReadOnlyAgentProfileApi } from '../routes/agent-profiles.js';
+import { recoverInterruptedAgentLifecycleStates } from '../services/agent-lifecycle-store.js';
 import { resolveOperatorIdentity } from '../services/operator-identity.js';
 import { sendJSON, verifyAuth, verifyOperatorAuth, parseBody } from '../routes/helpers.js';
 import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.js';
@@ -66,6 +70,14 @@ function requireOperatorMutation(req, res) {
     sendJSON(res, 503, { error: 'Operator identity unavailable' });
     return null;
   }
+}
+
+function requireAgentLifecycleMutation(req, res) {
+  if (!AGENT_LIFECYCLE_ENABLED) {
+    sendJSON(res, 404, { error: 'Not found' });
+    return null;
+  }
+  return requireOperatorMutation(req, res);
 }
 
 function scheduleTracked(label, operation, errorPrefix) {
@@ -257,9 +269,17 @@ configurePrReviewController(createPrReviewController({
   ),
 }));
 
+function lifecycleDispatchAllowed(agentId) {
+  return canDispatchAgentFromLifecycle({ lifecycleDir: LIFECYCLE_DIR, agentId });
+}
+
 function scheduleOperatorDispatch() {
   setImmediate(() => {
-    dispatchEligibleTasks({ dir: REVIEW_TASKS_DIR, instanceId: `ops-room-${process.pid}` })
+    dispatchEligibleTasks({
+      dir: REVIEW_TASKS_DIR,
+      instanceId: `ops-room-${process.pid}`,
+      canDispatchAgent: lifecycleDispatchAllowed,
+    })
       .then((result) => {
         for (const task of result.tasks) {
           if (task.kind === 'fix') {
@@ -393,6 +413,34 @@ const server = createServer(async (req, res) => {
       sendJSON(res, result.status, result.body);
     } catch (error) {
       sendJSON(res, 500, { error: error?.message || 'Task action failed' });
+    }
+    return;
+  }
+
+  const operatorAgentStopMatch = pathname.match(
+    /^\/api\/operator\/agents\/([A-Za-z0-9._-]+)\/stop$/,
+  );
+  if (req.method === 'POST' && operatorAgentStopMatch) {
+    const actor = requireAgentLifecycleMutation(req, res);
+    if (!actor) return;
+    try {
+      const body = await parseBody(req);
+      const result = await handleOperatorAgentStop({
+        agentId: operatorAgentStopMatch[1],
+        body,
+        actor,
+        reviewTasksDir: REVIEW_TASKS_DIR,
+        lifecycleDir: LIFECYCLE_DIR,
+        auditDir: AUDIT_DIR,
+        idempotencyDir: IDEMPOTENCY_DIR,
+        allowedAgents: AGENT_LIFECYCLE_ALLOWED_AGENTS,
+        drainTimeoutMs: AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS,
+        drainPollMs: AGENT_LIFECYCLE_DRAIN_POLL_MS,
+        stopTimeoutSeconds: AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS,
+      });
+      sendJSON(res, result.status, result.body);
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Agent stop failed' });
     }
     return;
   }
@@ -546,7 +594,11 @@ async function runReviewReconciliationCycle() {
   if (result.recovered.length > 0) {
     console.warn(`[review-reconciler] recovered ${result.recovered.length} stale task(s): ${result.recovered.join(', ')}`);
   }
-  const dispatchResult = await dispatchEligibleTasks({ dir: REVIEW_TASKS_DIR, instanceId: `ops-room-${process.pid}` });
+  const dispatchResult = await dispatchEligibleTasks({
+    dir: REVIEW_TASKS_DIR,
+    instanceId: `ops-room-${process.pid}`,
+    canDispatchAgent: lifecycleDispatchAllowed,
+  });
   if (dispatchResult.dispatched > 0) {
     console.log(`[review-reconciler] dispatched ${dispatchResult.dispatched} eligible task(s)`);
     for (const task of dispatchResult.tasks) {
@@ -579,6 +631,10 @@ if (!WEBHOOK_SECRET) {
 }
 
 await initDirs();
+const recoveredLifecycleAgents = await recoverInterruptedAgentLifecycleStates({ dir: LIFECYCLE_DIR });
+if (recoveredLifecycleAgents.length > 0) {
+  console.warn(`[agent-lifecycle] marked interrupted operation failed for: ${recoveredLifecycleAgents.join(', ')}`);
+}
 const issuePollerAbort = new AbortController();
 const issuePollerPromise = ISSUE_POLLING_ENABLED ? processLifecycle.track(startIssuePoller({
   agentKeys: POLL_AGENTS,
@@ -617,6 +673,7 @@ server.listen(PORT, HOST, () => {
   console.log(`  GET  /api/logs    - List bounded redacted logs`);
   console.log(`  GET  /api/agents  - List agents`);
   console.log(`  GET  /api/openab/instances - OpenAB instance dashboard`);
+  if (AGENT_LIFECYCLE_ENABLED) console.log(`  POST /api/operator/agents/:agent/stop - Guarded graceful stop`);
   console.log(`  WORKSPACE_BASE   - ${WORKSPACE_BASE}`);
 });
 

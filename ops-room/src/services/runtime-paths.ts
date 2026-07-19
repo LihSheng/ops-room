@@ -12,6 +12,12 @@ const _requiredCommands = Object.hasOwn(process.env, 'OPS_ROOM_REQUIRED_COMMANDS
   : 'git,gh';
 const packageJson = createRequire(import.meta.url)('../../package.json');
 
+function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.trunc(parsed), minimum), maximum);
+}
+
 export const PORT = parseInt(process.env.OPENAB_WEBHOOK_PORT || '7381', 10);
 export const HOST = process.env.OPENAB_WEBHOOK_HOST || '127.0.0.1';
 export const WEBHOOK_SECRET = process.env.OPENAB_WEBHOOK_SECRET;
@@ -20,6 +26,31 @@ export const OPERATOR_API_ENABLED = process.env.OPS_ROOM_OPERATOR_API_ENABLED ==
 export const OPERATOR_TOKEN = process.env.OPS_ROOM_OPERATOR_TOKEN || '';
 export const OPERATOR_ID = process.env.OPS_ROOM_OPERATOR_ID || '';
 export const OPERATOR_DISPLAY_NAME = process.env.OPS_ROOM_OPERATOR_DISPLAY_NAME || '';
+export const AGENT_LIFECYCLE_ENABLED = process.env.OPS_ROOM_AGENT_LIFECYCLE_ENABLED === 'true';
+export const AGENT_LIFECYCLE_ALLOWED_AGENTS = Object.freeze(
+  String(process.env.OPS_ROOM_AGENT_LIFECYCLE_ALLOWED_AGENTS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+export const AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS = boundedInteger(
+  process.env.OPS_ROOM_AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS,
+  20_000,
+  0,
+  300_000,
+);
+export const AGENT_LIFECYCLE_DRAIN_POLL_MS = boundedInteger(
+  process.env.OPS_ROOM_AGENT_LIFECYCLE_DRAIN_POLL_MS,
+  500,
+  50,
+  5_000,
+);
+export const AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS = boundedInteger(
+  process.env.OPS_ROOM_AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS,
+  20,
+  1,
+  120,
+);
 export const ISSUE_POLLING_ENABLED = process.env.OPS_ROOM_ISSUE_POLLING_ENABLED !== 'false';
 export const REQUIRED_COMMANDS = _requiredCommands.split(',').map((value) => value.trim()).filter(Boolean);
 export const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.OPS_ROOM_SHUTDOWN_TIMEOUT_MS || '55000', 10);
@@ -35,6 +66,7 @@ export const LOG_DIR = process.env.OPS_ROOM_LOGS_DIR || join(_opsRoomDataDir, 'l
 export const STATE_DIR = process.env.OPS_ROOM_STATE_DIR || join(_opsRoomDataDir, 'state');
 export const AUDIT_DIR = process.env.OPS_ROOM_AUDIT_DIR || join(_opsRoomDataDir, 'audit');
 export const IDEMPOTENCY_DIR = process.env.OPS_ROOM_IDEMPOTENCY_DIR || join(_opsRoomDataDir, 'idempotency');
+export const LIFECYCLE_DIR = process.env.OPS_ROOM_LIFECYCLE_DIR || join(_opsRoomDataDir, 'lifecycle');
 export const WORKSPACE_BASE = process.env.OPENAB_WORKSPACES_DIR || process.env.OPENAB_WORKSPACE_BASE || join(_dataDir, 'workspaces');
 export const SHARED_MEMORY = process.env.OPENAB_SHARED_DIR ? join(process.env.OPENAB_SHARED_DIR, 'memory.md') : join(_dataDir, 'shared', 'memory.md');
 export const LOCK_DIR = '/tmp/openab-locks';

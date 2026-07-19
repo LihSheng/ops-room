@@ -2,6 +2,7 @@ import { mkdir, open, rm, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
+import { withAgentLifecycleGate } from './agent-lifecycle-store.js';
 import {
   countActiveTasks,
   checkConcurrency,
@@ -41,15 +42,13 @@ async function acquireSlotLock(dir, repository, pr) {
   const now = Date.now();
   const meta = JSON.stringify({ pid: process.pid, at: now });
 
-  // Try locks in hierarchy order. If any can't be acquired, release all and retry later.
   const levels = [
     { key: 'global', path: join(locksDir, 'global.lock') },
     { key: `repo:${repository.replace(/\//g, '_')}`, path: join(locksDir, `repo_${repository.replace(/\//g, '_')}.lock`) },
     { key: `pr:${repository.replace(/\//g, '_')}:${pr}`, path: join(locksDir, `pr_${repository.replace(/\//g, '_')}_${pr}.lock`) },
   ];
-
   const acquired = [];
-  const staleTimeoutMs = 120_000; // 2 min
+  const staleTimeoutMs = 120_000;
 
   for (const level of levels) {
     try {
@@ -59,12 +58,10 @@ async function acquireSlotLock(dir, repository, pr) {
       acquired.push(level.path);
     } catch (error) {
       if (error?.code === 'EEXIST') {
-        // Check if the lock is stale
         try {
           const content = JSON.parse(await readFile(level.path, 'utf-8'));
           const age = now - (content.at || 0);
           if (age > staleTimeoutMs) {
-            // Stale lock — attempt exclusive recovery: remove, then re-acquire with wx.
             try {
               await rm(level.path, { force: true });
               const handle = await open(level.path, 'wx');
@@ -72,23 +69,21 @@ async function acquireSlotLock(dir, repository, pr) {
               await handle.close();
               acquired.push(level.path);
               continue;
-            } catch { /* another process recovered it first */ }
+            } catch { }
           }
-        } catch { /* corrupt lock file — try to remove and claim */ }
-        // Could not acquire this level — release all we have
+        } catch { }
         await releaseSlotLocks(acquired);
         return { acquired: false };
       }
       throw error;
     }
   }
-
   return { acquired: true, paths: acquired };
 }
 
 async function releaseSlotLocks(paths) {
-  for (const p of paths) {
-    try { await rm(p, { force: true }); } catch { /* best-effort */ }
+  for (const path of paths) {
+    try { await rm(path, { force: true }); } catch { }
   }
 }
 
@@ -96,60 +91,71 @@ async function releaseSlotLock(result) {
   if (result?.paths) await releaseSlotLocks(result.paths);
 }
 
+async function dispatchAllowed(canDispatchAgent, agent) {
+  try {
+    return await canDispatchAgent(agent) !== false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Scan QUEUED and FIX_QUEUED tasks, atomically claim them within
- * concurrency limits using a slot reservation lock, then dispatch by
- * task.kind.  Tasks are left in CLAIMED state with the lease attached;
- * the caller must pass the lease to the executor so it can own the
- * transition to RUNNING / FIXING and terminal states.
- *
- * This is the single durable dispatch path: it ensures queued work
- * does not stay stuck forever when concurrency frees up or after
- * operator retry / resume.
+ * concurrency limits using both the task slot locks and the per-agent
+ * lifecycle gate. Tasks are left in CLAIMED state with the lease attached.
  */
-export async function dispatchEligibleTasks({ dir, instanceId }) {
+export async function dispatchEligibleTasks({
+  dir,
+  instanceId,
+  canDispatchAgent = async () => true,
+  withAgentDispatchGate = withAgentLifecycleGate,
+}) {
   const { tasks } = await scanReviewTasks({ dir });
   const dispatched = [];
   for (const task of tasks) {
     if (!DISPATCHABLE_STATES.has(task.state)) continue;
 
-    // Slot reservation prevents two processes from both seeing capacity and
-    // claiming beyond the limit.  Locks are acquired in hierarchy: global →
-    // repository → PR, with stale-lock recovery.
-    const lock = await acquireSlotLock(dir, task.repository, task.pr);
-    if (!lock.acquired) continue;
+    const claimedTask = await withAgentDispatchGate(task.agent, async () => {
+      if (!(await dispatchAllowed(canDispatchAgent, task.agent))) return null;
 
-    try {
-      // Re-read inside the lock to get accurate counts
-      const counts = await countActiveTasks({ dir, repository: task.repository, pr: task.pr });
-      const concurrency = checkConcurrency({ counts, limits: task.policy?.concurrency || {} });
-      if (!concurrency.allowed) continue;
+      const lock = await acquireSlotLock(dir, task.repository, task.pr);
+      if (!lock.acquired) return null;
 
-      const leaseEpoch = (task.lease?.lease_epoch || 0) + 1;
-      const claimed = await claimTask({
-        dir,
-        id: task.id,
-        instanceId,
-        leaseId: randomUUID(),
-        leaseEpoch,
-      });
-      if (!claimed.claimed) continue;
+      try {
+        if (!(await dispatchAllowed(canDispatchAgent, task.agent))) return null;
+        const counts = await countActiveTasks({ dir, repository: task.repository, pr: task.pr });
+        const concurrency = checkConcurrency({ counts, limits: task.policy?.concurrency || {} });
+        if (!concurrency.allowed) return null;
 
-      // Transition to CLAIMED — the caller's executor will move to RUNNING/FIXING.
-      // Only increment attempt once (the CLAIMED transition sets it; no second
-      // increment in the RUNNING transition).
-      const claimedTask = await transitionTask({
-        dir,
-        id: task.id,
-        to: 'CLAIMED',
-        reason: 'reconciler_claimed',
-        patch: { lease: claimed.claim, attempt: (task.attempt || 0) + 1, started_at: new Date().toISOString(), heartbeat_at: new Date().toISOString() },
-      });
-      dispatched.push({ ...claimedTask, lease: claimed.claim });
-    } finally {
-      await releaseSlotLock(lock);
-    }
+        const leaseEpoch = (task.lease?.lease_epoch || 0) + 1;
+        const claimed = await claimTask({
+          dir,
+          id: task.id,
+          instanceId,
+          leaseId: randomUUID(),
+          leaseEpoch,
+        });
+        if (!claimed.claimed) return null;
+
+        const transitioned = await transitionTask({
+          dir,
+          id: task.id,
+          to: 'CLAIMED',
+          reason: 'reconciler_claimed',
+          patch: {
+            lease: claimed.claim,
+            attempt: (task.attempt || 0) + 1,
+            started_at: new Date().toISOString(),
+            heartbeat_at: new Date().toISOString(),
+          },
+        });
+        return { ...transitioned, lease: claimed.claim };
+      } finally {
+        await releaseSlotLock(lock);
+      }
+    });
+
+    if (claimedTask) dispatched.push(claimedTask);
   }
-
   return { dispatched: dispatched.length, tasks: dispatched };
 }
