@@ -2,7 +2,7 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AGENT_NAMES, BOT_USERS, POLL_AGENTS } from '../lib/config.js';
 import { AGENT_DEFINITIONS } from './agent-definitions.js';
-import { getOpenABInstances } from './openab-instances.js';
+import { inspectAgentRuntimes } from './runtime-adapter/registry.js';
 import { AGENTS_CONFIG_DIR } from './runtime-paths.js';
 
 async function configExists(configDir) {
@@ -14,11 +14,15 @@ async function configExists(configDir) {
   }
 }
 
-export async function getAgentList({ getRuntimeSnapshot = getOpenABInstances } = {}) {
+function instanceAgentId(instance) {
+  return instance?.agent || instance?.agent_id || instance?.definition?.key || null;
+}
+
+export async function getAgentList({ getRuntimeSnapshot = inspectAgentRuntimes } = {}) {
   const agents = [];
   const runtimeSnapshot = getRuntimeSnapshot();
   const runtimeByAgent = new Map(
-    (runtimeSnapshot.instances || []).map((instance) => [instance.agent, instance.runtime]),
+    (runtimeSnapshot.instances || []).map((instance) => [instanceAgentId(instance), instance]),
   );
 
   for (const definition of AGENT_DEFINITIONS) {
@@ -32,6 +36,9 @@ export async function getAgentList({ getRuntimeSnapshot = getOpenABInstances } =
     const missing = [];
     if (!hasConfig) missing.push(configPath);
     if (!hasExample) missing.push(exampleConfigPath);
+
+    const inspected = runtimeByAgent.get(key);
+    const runtime = inspected?.runtime || null;
 
     agents.push({
       key,
@@ -48,8 +55,9 @@ export async function getAgentList({ getRuntimeSnapshot = getOpenABInstances } =
       enabled: hasConfig,
       github_polling_enabled: POLL_AGENTS.includes(key),
       desired_state: definition.desiredState,
-      observed_state: runtimeByAgent.get(key)?.status || 'unknown',
-      runtime: runtimeByAgent.get(key) || null,
+      observed_state: runtime?.status || 'unknown',
+      runtime_adapter: inspected?.adapter_id || null,
+      runtime,
       missing: missing.length > 0 ? missing : undefined,
     });
   }
