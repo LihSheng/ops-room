@@ -10,7 +10,44 @@ const {
   cleanupAskpassHelper,
   buildAgentEnv,
   maskToken,
+  renderAskpassScript,
 } = await import('../src/workflows/github-code.js');
+
+// ── Environment snapshot/restore ─────────────────────────────────────
+
+let envSnapshot = {};
+
+test.beforeEach(() => {
+  // Snapshot all process.env values that tests might mutate
+  envSnapshot = {};
+  for (const key of [
+    'PATH', 'HOME', 'USER', 'USERPROFILE',
+    'OPENAB_WEBHOOK_SECRET', 'OPS_ROOM_DASHBOARD_TOKEN', 'OPS_ROOM_OPERATOR_TOKEN',
+    'GITHUB_APP_PRIVATE_KEY', 'GITHUB_APP_KEY_PATH',
+    'GH_TOKEN', 'GIT_ASKPASS_TOKEN',
+    'OPENAI_API_KEY', 'OPENCODE_API_KEY', 'NVIDIA_API_KEY',
+  ]) {
+    if (key in process.env) envSnapshot[key] = process.env[key];
+  }
+});
+
+test.afterEach(() => {
+  // Restore all snapshotted env vars and delete any we added
+  for (const key of Object.keys(envSnapshot)) {
+    process.env[key] = envSnapshot[key];
+  }
+  for (const key of [
+    'OPENAB_WEBHOOK_SECRET', 'OPS_ROOM_DASHBOARD_TOKEN', 'OPS_ROOM_OPERATOR_TOKEN',
+    'GITHUB_APP_PRIVATE_KEY', 'GITHUB_APP_KEY_PATH',
+    'GH_TOKEN', 'GIT_ASKPASS_TOKEN',
+    'OPENAI_API_KEY',
+  ]) {
+    if (!(key in envSnapshot)) delete process.env[key];
+  }
+  envSnapshot = {};
+});
+
+// ── maskToken ────────────────────────────────────────────────────────
 
 test('maskToken redacts x-access-token URLs', () => {
   const input = 'https://x-access-token:secret123@github.com/owner/repo.git';
@@ -32,6 +69,29 @@ test('maskToken does not redact non-token URLs', () => {
   assert.equal(output, 'https://api.github.com/repos/owner/repo');
 });
 
+// ── renderAskpassScript ──────────────────────────────────────────────
+
+test('renderAskpassScript contains x-access-token without username= prefix (Unix)', { skip: platform() === 'win32' }, () => {
+  const script = renderAskpassScript();
+  // Should contain the literal x-access-token for Username case
+  assert.match(script, /x-access-token/);
+  // Should NOT have username= or password= prefix
+  assert.doesNotMatch(script, /^username=/m);
+  assert.doesNotMatch(script, /^password=/m);
+  // Should reference the token via env var, not inline it
+  assert.match(script, /\$GIT_ASKPASS_TOKEN/);
+});
+
+test('renderAskpassScript contains x-access-token without username= prefix (Windows)', { skip: platform() !== 'win32' }, () => {
+  const script = renderAskpassScript();
+  assert.match(script, /x-access-token/);
+  assert.doesNotMatch(script, /^username=/m);
+  assert.doesNotMatch(script, /^password=/m);
+  assert.match(script, /%GIT_ASKPASS_TOKEN%/);
+  // Should use explicit findstr.exe path for PATH-independence
+  assert.match(script, /%SystemRoot%\\System32\\findstr\.exe/);
+});
+
 // ── buildAgentEnv: env isolation ──────────────────────────────────────
 
 test('buildAgentEnv excludes GH_TOKEN from coding-agent env', () => {
@@ -41,13 +101,13 @@ test('buildAgentEnv excludes GH_TOKEN from coding-agent env', () => {
 });
 
 test('buildAgentEnv excludes all known harness secrets from coding-agent env', () => {
-  process.env.OPENAB_WEBHOOK_SECRET = 'should-be-excluded';
-  process.env.OPS_ROOM_DASHBOARD_TOKEN = 'should-be-excluded';
-  process.env.OPS_ROOM_OPERATOR_TOKEN = 'should-be-excluded';
-  process.env.GITHUB_APP_PRIVATE_KEY = 'should-be-excluded';
-  process.env.GITHUB_APP_KEY_PATH = 'should-be-excluded';
-  process.env.GH_TOKEN = 'should-be-excluded';
-  process.env.GIT_ASKPASS_TOKEN = 'should-be-excluded';
+  process.env.OPENAB_WEBHOOK_SECRET = 'should-be-excludedws';
+  process.env.OPS_ROOM_DASHBOARD_TOKEN = 'should-be-excludeddt';
+  process.env.OPS_ROOM_OPERATOR_TOKEN = 'should-be-excludedot';
+  process.env.GITHUB_APP_PRIVATE_KEY = 'should-be-excludedpk';
+  process.env.GITHUB_APP_KEY_PATH = 'should-be-excludedkp';
+  process.env.GH_TOKEN = 'should-be-excludedgh';
+  process.env.GIT_ASKPASS_TOKEN = 'should-be-excludedat';
   process.env.OPENAI_API_KEY = 'should-be-included';
   process.env.PATH = '/usr/bin';
 
@@ -95,24 +155,10 @@ test('buildAskpassScriptPath uses tmpdir', () => {
 // ── Askpass protocol: Unix ───────────────────────────────────────────
 
 test('askpass helper responds with x-access-token for username prompt (Unix)', { skip: platform() === 'win32' }, () => {
-  const scriptPath = join(tmpdir(), 'openab-askpass-test', 'askpass.sh');
+  const scriptPath = join(tmpdir(), 'openab-askpass-test-uname', 'askpass.sh');
   mkdirSync(dirname(scriptPath), { recursive: true });
   try {
-    writeFileSync(scriptPath,
-      `#!/bin/sh\n` +
-      `case "$1" in\n` +
-      `  *Username*)\n` +
-      `    printf '%s\\n' 'x-access-token'\n` +
-      `    ;;\n` +
-      `  *Password*)\n` +
-      `    printf '%s\\n' "$GIT_ASKPASS_TOKEN"\n` +
-      `    ;;\n` +
-      `  *)\n` +
-      `    exit 1\n` +
-      `    ;;\n` +
-      `esac\n`,
-      { mode: 0o500 }
-    );
+    writeFileSync(scriptPath, renderAskpassScript(), { mode: 0o500 });
 
     // Username prompt → should return just "x-access-token"
     const usernameOut = execFileSync(scriptPath, ["Username for 'https://github.com':"], {
@@ -140,21 +186,7 @@ test('askpass helper exits non-zero for unknown prompts (Unix)', { skip: platfor
   const scriptPath = join(tmpdir(), 'openab-askpass-test-unknown', 'askpass.sh');
   mkdirSync(dirname(scriptPath), { recursive: true });
   try {
-    writeFileSync(scriptPath,
-      `#!/bin/sh\n` +
-      `case "$1" in\n` +
-      `  *Username*)\n` +
-      `    printf '%s\\n' 'x-access-token'\n` +
-      `    ;;\n` +
-      `  *Password*)\n` +
-      `    printf '%s\\n' "$GIT_ASKPASS_TOKEN"\n` +
-      `    ;;\n` +
-      `  *)\n` +
-      `    exit 1\n` +
-      `    ;;\n` +
-      `esac\n`,
-      { mode: 0o500 }
-    );
+    writeFileSync(scriptPath, renderAskpassScript(), { mode: 0o500 });
 
     assert.throws(() => {
       execFileSync(scriptPath, ["Hostname: github.com"], {
@@ -173,19 +205,7 @@ test('askpass helper responds with x-access-token for username prompt (Windows)'
   const scriptPath = join(tmpdir(), 'openab-askpass-test-win', 'askpass.bat');
   mkdirSync(dirname(scriptPath), { recursive: true });
   try {
-    writeFileSync(scriptPath,
-      `@echo off\r\n` +
-      `setlocal enabledelayedexpansion\r\n` +
-      `echo %* | findstr /i "Username" >nul && (\r\n` +
-      `  echo x-access-token\r\n` +
-      `  exit /b 0\r\n` +
-      `)\r\n` +
-      `echo %* | findstr /i "Password" >nul && (\r\n` +
-      `  echo %GIT_ASKPASS_TOKEN%\r\n` +
-      `  exit /b 0\r\n` +
-      `)\r\n` +
-      `exit /b 1\r\n`
-    );
+    writeFileSync(scriptPath, renderAskpassScript());
 
     const comspec = process.env.ComSpec || process.env.WINDIR + '\\System32\\cmd.exe';
 
@@ -207,6 +227,24 @@ test('askpass helper responds with x-access-token for username prompt (Windows)'
   }
 });
 
+test('askpass helper exits non-zero for unknown prompts (Windows)', { skip: platform() !== 'win32' }, () => {
+  const scriptPath = join(tmpdir(), 'openab-askpass-test-win-unknown', 'askpass.bat');
+  mkdirSync(dirname(scriptPath), { recursive: true });
+  try {
+    writeFileSync(scriptPath, renderAskpassScript());
+
+    const comspec = process.env.ComSpec || process.env.WINDIR + '\\System32\\cmd.exe';
+    assert.throws(() => {
+      execFileSync(comspec, ['/c', scriptPath, "Hostname: github.com"], {
+        encoding: 'utf-8',
+        timeout: 5000,
+      });
+    });
+  } finally {
+    rmSync(dirname(scriptPath), { recursive: true, force: true });
+  }
+});
+
 // ── Token must not appear in script body ─────────────────────────────
 
 test('askpass script does not contain token in file body', () => {
@@ -215,37 +253,8 @@ test('askpass script does not contain token in file body', () => {
   const scriptPath = buildAskpassScriptPath(ctx);
 
   try {
-    if (platform() === 'win32') {
-      writeFileSync(scriptPath,
-        `@echo off\r\n` +
-        `setlocal enabledelayedexpansion\r\n` +
-        `echo %* | findstr /i "Username" >nul && (\r\n` +
-        `  echo x-access-token\r\n` +
-        `  exit /b 0\r\n` +
-        `)\r\n` +
-        `echo %* | findstr /i "Password" >nul && (\r\n` +
-        `  echo %GIT_ASKPASS_TOKEN%\r\n` +
-        `  exit /b 0\r\n` +
-        `)\r\n` +
-        `exit /b 1\r\n`
-      );
-    } else {
-      writeFileSync(scriptPath,
-        `#!/bin/sh\n` +
-        `case "$1" in\n` +
-        `  *Username*)\n` +
-        `    printf '%s\\n' 'x-access-token'\n` +
-        `    ;;\n` +
-        `  *Password*)\n` +
-        `    printf '%s\\n' "$GIT_ASKPASS_TOKEN"\n` +
-        `    ;;\n` +
-        `  *)\n` +
-        `    exit 1\n` +
-        `    ;;\n` +
-        `esac\n`,
-        { mode: 0o500 }
-      );
-    }
+    writeFileSync(scriptPath, renderAskpassScript(),
+      platform() !== 'win32' ? { mode: 0o500 } : {});
 
     const content = readFileSync(scriptPath, 'utf-8');
     assert.equal(content.includes(token), false,

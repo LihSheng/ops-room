@@ -32,43 +32,45 @@ function buildAskpassScriptPath(ctx) {
   return join(dir, ASKPASS_SCRIPT_NAME);
 }
 
-function createAskpassHelper(ctx) {
-  const token = githubToken(ctx.agent);
-  const scriptPath = buildAskpassScriptPath(ctx);
-
+function renderAskpassScript() {
   if (platform() === 'win32') {
-    // Git invokes the helper separately with a prompt argument (e.g. "Username for 'https://github.com':")
-    // The helper must respond with ONLY the credential value — no prefix.
-    writeFileSync(scriptPath,
+    return (
       `@echo off\r\n` +
       `setlocal enabledelayedexpansion\r\n` +
-      `echo %* | findstr /i "Username" >nul && (\r\n` +
+      `echo %* | "%SystemRoot%\\System32\\findstr.exe" /i "Username" >nul && (\r\n` +
       `  echo x-access-token\r\n` +
       `  exit /b 0\r\n` +
       `)\r\n` +
-      `echo %* | findstr /i "Password" >nul && (\r\n` +
+      `echo %* | "%SystemRoot%\\System32\\findstr.exe" /i "Password" >nul && (\r\n` +
       `  echo %GIT_ASKPASS_TOKEN%\r\n` +
       `  exit /b 0\r\n` +
       `)\r\n` +
       `exit /b 1\r\n`
     );
-  } else {
-    writeFileSync(scriptPath,
-      `#!/bin/sh\n` +
-      `case "$1" in\n` +
-      `  *Username*)\n` +
-      `    printf '%s\\n' 'x-access-token'\n` +
-      `    ;;\n` +
-      `  *Password*)\n` +
-      `    printf '%s\\n' "$GIT_ASKPASS_TOKEN"\n` +
-      `    ;;\n` +
-      `  *)\n` +
-      `    exit 1\n` +
-      `    ;;\n` +
-      `esac\n`,
-      { mode: 0o500 }
-    );
   }
+  return (
+    `#!/bin/sh\n` +
+    `case "$1" in\n` +
+    `  *Username*)\n` +
+    `    printf '%s\\n' 'x-access-token'\n` +
+    `    ;;\n` +
+    `  *Password*)\n` +
+    `    printf '%s\\n' "$GIT_ASKPASS_TOKEN"\n` +
+    `    ;;\n` +
+    `  *)\n` +
+    `    exit 1\n` +
+    `    ;;\n` +
+    `esac\n`
+  );
+}
+
+function createAskpassHelper(ctx) {
+  const token = githubToken(ctx.agent);
+  const scriptPath = buildAskpassScriptPath(ctx);
+  const scriptContent = renderAskpassScript();
+  const writeOpts = platform() !== 'win32' ? { mode: 0o500 } : {};
+
+  writeFileSync(scriptPath, scriptContent, writeOpts);
 
   return {
     scriptPath,
@@ -1128,4 +1130,5 @@ export {
   buildAskpassScriptPath,
   buildAgentEnv,
   maskToken,
+  renderAskpassScript,
 };
