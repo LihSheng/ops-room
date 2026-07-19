@@ -80,7 +80,7 @@ test('guarded stop is audited, durable, confirmed, and idempotent', async () => 
   const dirs = await fixture();
   let stopCalls = 0;
   const request = stopRequest(dirs, {
-    prepareTarget: () => fakeTarget(() => {
+    prepareTarget: () => fakeTarget(async () => {
       stopCalls += 1;
       return { controller_id: 'fake-lifecycle', action: 'stop' };
     }),
@@ -115,7 +115,7 @@ test('guarded stop is audited, durable, confirmed, and idempotent', async () => 
 test('different idempotency keys serialize without a second runtime stop', async () => {
   const dirs = await fixture();
   let stopCalls = 0;
-  const prepareTarget = () => fakeTarget(() => {
+  const prepareTarget = () => fakeTarget(async () => {
     stopCalls += 1;
     return { controller_id: 'fake-lifecycle', action: 'stop' };
   });
@@ -162,7 +162,7 @@ test('active tasks prevent stop and restore dispatchable desired state', async (
 
   let stopCalls = 0;
   const result = await handleOperatorAgentStop(stopRequest(dirs, {
-    prepareTarget: () => fakeTarget(() => { stopCalls += 1; }),
+    prepareTarget: () => fakeTarget(async () => { stopCalls += 1; }),
   }));
 
   assert.equal(result.status, 409);
@@ -186,7 +186,7 @@ test('corrupt lifecycle state fails closed without executing the runtime command
   let stopCalls = 0;
 
   const result = await handleOperatorAgentStop(stopRequest(dirs, {
-    prepareTarget: () => fakeTarget(() => { stopCalls += 1; }),
+    prepareTarget: () => fakeTarget(async () => { stopCalls += 1; }),
   }));
 
   assert.equal(result.status, 409);
@@ -229,7 +229,13 @@ test('startup recovery marks interrupted lifecycle operations failed', async () 
       desired_state: 'stopped',
       previous_desired_state: 'unmanaged',
       phase: 'draining',
-      last_operation: { operation: 'agent.stop', outcome: 'in_progress' },
+      last_operation: {
+        operation: 'agent.stop',
+        actor_id: 'lihsheng',
+        reason: 'test recovery',
+        requested_at: '2026-07-19T00:00:00.000Z',
+        outcome: 'in_progress',
+      },
     },
   });
 
@@ -242,25 +248,26 @@ test('startup recovery marks interrupted lifecycle operations failed', async () 
   assert.equal(state.last_error, 'interrupted_lifecycle_operation');
 });
 
-test('docker lifecycle controller uses fixed argv and exposes no force operations', () => {
+test('docker lifecycle controller uses fixed argv and exposes no force operations', async () => {
   const calls = [];
   const controller = createDockerAgentLifecycleController({
-    execFile: (command, args, options) => calls.push({ command, args, options }),
+    runCommand: async (command, args, options) => { calls.push({ command, args, options }); },
   });
   const prepared = {
     agent_id: 'gemini',
     target: { kind: 'docker-container', name: 'openab-gemini' },
   };
 
-  const result = controller.stop(prepared, { timeoutSeconds: 15 });
+  const result = await controller.stop(prepared, { timeoutSeconds: 15 });
 
   assert.equal(result.controller_id, 'docker-container-lifecycle');
   assert.deepEqual(calls[0].args, ['stop', '--time', '15', 'openab-gemini']);
   assert.equal(calls[0].command, 'docker');
+  assert.equal(calls[0].options.timeoutMs, 20_000);
   assert.equal('start' in controller, false);
   assert.equal('restart' in controller, false);
   assert.equal('kill' in controller, false);
-  assert.throws(
+  await assert.rejects(
     () => controller.stop({ agent_id: 'bad', target: { kind: 'docker-container', name: 'bad;name' } }),
     /does not support/,
   );
