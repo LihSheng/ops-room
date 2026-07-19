@@ -32,7 +32,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { opsApi } from '../api';
-import type { PublicAgentProfile } from '../api/agent-profiles';
+import type { ProfileMemoryAssignment, PublicAgentProfile } from '../api/agent-profiles';
 import type { CompatibilityStatus, RequirementStatus } from '../api/skills';
 import { useAgentProfile } from '../hooks/use-agent-profile';
 import type { AgentInstance } from '../types';
@@ -112,6 +112,51 @@ function SkillAssignments({ profile }: { profile: PublicAgentProfile }) {
   );
 }
 
+function MemoryAssignmentList({ title, icon, assignments }: { title: string; icon: ReactNode; assignments: ProfileMemoryAssignment[] }) {
+  return (
+    <Box>
+      <Text size="sm" fw={600} mb="sm"><Group gap={6}>{icon}<span>{title}</span></Group></Text>
+      {assignments.length ? (
+        <Stack gap="sm">
+          {assignments.map((assignment) => (
+            <Paper key={`${assignment.access}:${assignment.key}`} withBorder p="sm">
+              <Group justify="space-between" align="flex-start" wrap="nowrap">
+                <Box>
+                  <Text size="sm" fw={600}>{assignment.display_name}</Text>
+                  <Text size="xs" ff="monospace" c="dimmed">{assignment.key}@{assignment.version}</Text>
+                  <Text size="xs" ff="monospace" mt={4}>{assignment.publication_path}</Text>
+                </Box>
+                <Stack gap={4} align="flex-end">
+                  <Badge variant="light" color={assignment.kind === 'private-agent' ? 'orange' : assignment.kind === 'shared' ? 'teal' : 'blue'}>{assignment.kind}</Badge>
+                  <Badge variant="outline" color={assignment.write_policy === 'read-only' ? 'gray' : 'orange'}>{assignment.write_policy}</Badge>
+                </Stack>
+              </Group>
+              {assignment.provenance.review_required && (
+                <Text size="xs" c="dimmed" mt="xs">Future writes require review and provenance: {assignment.provenance.required_fields.join(', ')}.</Text>
+              )}
+            </Paper>
+          ))}
+        </Stack>
+      ) : <Text size="sm" c="dimmed">None</Text>}
+    </Box>
+  );
+}
+
+function MemoryPolicy({ profile }: { profile: PublicAgentProfile }) {
+  return (
+    <ProfileSection title="Memory Policy" icon={<IconDatabase size={16} />}>
+      <Alert color="violet" variant="light" mb="md" icon={<IconShieldCheck size={16} />} title="Validated governance only">
+        Every logical key resolves to an approved Git-backed space. Ops Room does not browse the Obsidian vault or perform writes through this view.
+      </Alert>
+      <Stack gap="md">
+        <MemoryAssignmentList title="Read spaces" icon={<IconEye size={14} />} assignments={profile.memory_assignments.read} />
+        <Divider />
+        <MemoryAssignmentList title="Write policy" icon={<IconPencil size={14} />} assignments={profile.memory_assignments.write} />
+      </Stack>
+    </ProfileSection>
+  );
+}
+
 function PolicyProfile({ profile }: { profile: PublicAgentProfile }) {
   return (
     <Stack gap="lg">
@@ -134,14 +179,7 @@ function PolicyProfile({ profile }: { profile: PublicAgentProfile }) {
         </Stack>
       </ProfileSection>
       <SkillAssignments profile={profile} />
-      <ProfileSection title="Memory Policy" icon={<IconDatabase size={16} />}>
-        <Alert color="violet" variant="light" mb="md" icon={<IconEye size={16} />} title="Declared policy scopes">These scopes are declarations from validated agent profiles. Ops Room does not inspect or verify the Obsidian vault through this page.</Alert>
-        <Stack gap="md">
-          <Box><Text size="sm" fw={600} mb={4}><Group gap={6}><IconEye size={14} /><span>Read scopes</span></Group></Text>{profile.memory.read.length ? <Stack gap={4}>{profile.memory.read.map((scope) => <Text key={scope} size="sm" ff="monospace" c="dimmed">{scope}</Text>)}</Stack> : <Text size="sm" c="dimmed">None</Text>}</Box>
-          <Divider />
-          <Box><Text size="sm" fw={600} mb={4}><Group gap={6}><IconPencil size={14} /><span>Write scopes</span></Group></Text>{profile.memory.write.length ? <Stack gap={4}>{profile.memory.write.map((scope) => <Text key={scope} size="sm" ff="monospace" c="dimmed">{scope}</Text>)}</Stack> : <Text size="sm" c="dimmed">None</Text>}</Box>
-        </Stack>
-      </ProfileSection>
+      <MemoryPolicy profile={profile} />
       <ProfileSection title="Allowed Repositories" icon={<IconGitBranch size={16} />}>
         <Alert color="violet" variant="light" mb="md" icon={<IconShieldCheck size={16} />} title="Declared access policy">This represents declared access policy, not proof of active repository credentials.</Alert>
         {profile.repositories.length ? <Stack gap={4}>{profile.repositories.map((repo) => <Text key={repo} size="sm" ff="monospace">{repo}</Text>)}</Stack> : <Text size="sm" c="dimmed">No repositories declared</Text>}
