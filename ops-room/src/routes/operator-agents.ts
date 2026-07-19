@@ -4,6 +4,7 @@ import {
   agentLifecycleAllowsDispatch,
   readAgentLifecycleState,
   updateAgentLifecycleState,
+  withAgentLifecycleGate,
 } from '../services/agent-lifecycle-store.js';
 import {
   executeIdempotent,
@@ -262,7 +263,7 @@ export async function handleOperatorAgentStop({
       targetId: rawAgentId,
       key: idempotencyKey,
       payload: { reason, confirm_agent_id: confirmation },
-      execute: () => withLifecycleActionLock(async () => {
+      execute: () => withLifecycleActionLock(() => withAgentLifecycleGate(rawAgentId, async () => {
         const current = await readAgentLifecycleState({ dir: lifecycleDir, agentId: rawAgentId });
         if (current.last_error === 'lifecycle_state_unavailable') {
           return rejected({
@@ -470,7 +471,7 @@ export async function handleOperatorAgentStop({
             audit_event_id: event.event_id,
           },
         };
-      }),
+      })),
     });
 
     return {
