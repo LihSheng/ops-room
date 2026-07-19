@@ -10,6 +10,7 @@ const LIFECYCLE_PHASES = new Set(['unmanaged', 'draining', 'stopping', 'stopped'
 const OPERATION_OUTCOMES = new Set(['in_progress', 'accepted', 'rejected', 'failed', 'interrupted']);
 const INTERRUPTED_PHASES = new Set(['draining', 'stopping']);
 const BLOCKED_DISPATCH_PHASES = new Set(['draining', 'stopping', 'stopped']);
+const AGENT_LIFECYCLE_GATES = new Map();
 
 function validateAgentId(agentId: string) {
   const value = String(agentId || '').trim();
@@ -161,6 +162,20 @@ export function agentLifecycleAllowsDispatch(state: any) {
   if (!state || state.last_error === 'lifecycle_state_unavailable') return false;
   if (state.desired_state === 'stopped') return false;
   return !BLOCKED_DISPATCH_PHASES.has(state.phase);
+}
+
+export async function withAgentLifecycleGate(agentId: string, execute: () => unknown) {
+  const normalizedId = validateAgentId(agentId);
+  const previous = AGENT_LIFECYCLE_GATES.get(normalizedId) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  AGENT_LIFECYCLE_GATES.set(normalizedId, previous.then(() => gate));
+  await previous;
+  try {
+    return await execute();
+  } finally {
+    release();
+  }
 }
 
 export async function recoverInterruptedAgentLifecycleStates({
