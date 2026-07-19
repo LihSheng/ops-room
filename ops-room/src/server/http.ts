@@ -15,7 +15,7 @@ import {
 import { handleTask, cancelTask } from '../workflows/github-code.js';
 import { runPrReviewWorkflow } from '../workflows/pr-review.js';
 import { createGitHubReviewStatusService } from '../services/github-review-status.js';
-import { listReviewTasks, readTask, renewClaim, requestCancellation, retryTask, pauseTask, resumeTask, transitionTask } from '../services/review-task-store.js';
+import { listReviewTasks, readTask, renewClaim, transitionTask } from '../services/review-task-store.js';
 import { listEffects, resolveAmbiguousEffect } from '../services/review-effect-ledger.js';
 import { createPrReviewController } from '../workflows/pr-review-controller.js';
 import { createFixChildTask } from '../workflows/fix-task-controller.js';
@@ -32,7 +32,7 @@ import { configurePrReviewController, handleWebhook, isPrReviewWebhook } from '.
 import { handleAgentsList } from '../routes/agents.js';
 import { handleOpenABInstances } from '../routes/openab-instances.js';
 import { handleStaticApp } from '../routes/static-app.js';
-import { handleOperatorTaskCancellation } from '../routes/operator-tasks.js';
+import { handleOperatorTaskAction, type OperatorTaskAction } from '../routes/operator-tasks.js';
 import { handleAuditEventDetail, handleAuditEventsList } from '../routes/audit-events.js';
 import { handleReadOnlyAgentProfileApi } from '../routes/agent-profiles.js';
 import { resolveOperatorIdentity } from '../services/operator-identity.js';
@@ -88,12 +88,9 @@ async function executeControllerFix({ dir, taskId, preClaimedLease }) {
 
 async function executeControllerReview(task) {
   const isChat = task.taskType === 'chat';
-  const lease = task.lease; // pre-claimed lease from dispatcher (optional)
+  const lease = task.lease;
 
   try {
-
-    // For reconciler-dispatched reviews that skipped the initial controller
-    // path, write the pending status BEFORE invoking the model workflow.
     if (!isChat && lease) {
       await reviewStatus.set({
         repository: task.repository,
@@ -123,8 +120,6 @@ async function executeControllerReview(task) {
       lease,
     });
 
-    // Chat tasks must not write the canonical commit status and should
-    // complete in a dedicated success state without side effects.
     if (isChat) {
       await transitionTask({
         dir: task.dir,
@@ -137,9 +132,6 @@ async function executeControllerReview(task) {
       return;
     }
 
-    // Write the final commit status BEFORE committing the terminal task state.
-    // This avoids marking the task PASSED / CHANGES_REQUESTED when the GitHub
-    // status is ambiguous (e.g. a pre-existing CLAIMED effect).
     const status = commitStatusForReviewEvent(result.review_event);
     const statusResult = await reviewStatus.set({
       repository: task.repository,
@@ -154,7 +146,6 @@ async function executeControllerReview(task) {
     });
 
     if (statusResult.ambiguous_effect) {
-      // External status is ambiguous — do NOT mark the task as terminal.
       await transitionTask({
         dir: task.dir,
         id: task.task_id,
@@ -177,9 +168,6 @@ async function executeControllerReview(task) {
     });
 
     if (state === 'CHANGES_REQUESTED' && task.mode === 'auto-fix') {
-      // Evaluate auto-fix policy against the actual returned findings BEFORE
-      // creating a fix child. Critical, ambiguous, or explicitly non-auto-fixable
-      // findings block automated fixing.
       const autoFixPolicy = evaluateAutoFixPolicy({
         requestedMode: task.mode,
         policy: task.policy || {},
@@ -199,8 +187,6 @@ async function executeControllerReview(task) {
           headRef: result.head_ref || null,
         });
 
-        // Keep parent terminal as CHANGES_REQUESTED; only store fix_child_task_id
-        // as metadata. The child owns FIX_QUEUED → FIXING → FIX_PUSHED/NEEDS_HUMAN/ERROR.
         await transitionTask({
           dir: task.dir,
           id: terminalTask.id,
@@ -216,7 +202,6 @@ async function executeControllerReview(task) {
           '[fix-child-controller] unhandled execution error:',
         );
       } else {
-        // Policy blocks auto-fix: move to NEEDS_HUMAN instead of creating fix child.
         await transitionTask({
           dir: task.dir,
           id: terminalTask.id,
@@ -226,7 +211,6 @@ async function executeControllerReview(task) {
         });
       }
     }
-
   } catch (error) {
     const message = error?.message || String(error);
     if (error?.code === 'REVIEW_CANCELLED') {
@@ -273,7 +257,48 @@ configurePrReviewController(createPrReviewController({
   ),
 }));
 
-// ── Server ──────────────────────────────────────────────────────────────────
+function scheduleOperatorDispatch() {
+  setImmediate(() => {
+    dispatchEligibleTasks({ dir: REVIEW_TASKS_DIR, instanceId: `ops-room-${process.pid}` })
+      .then((result) => {
+        for (const task of result.tasks) {
+          if (task.kind === 'fix') {
+            scheduleTracked(
+              `operator:${task.id}`,
+              () => executeControllerFix({
+                dir: REVIEW_TASKS_DIR,
+                taskId: task.id,
+                preClaimedLease: task.lease,
+              }),
+              '[operator-dispatch] fix execution error:',
+            );
+          } else {
+            scheduleTracked(
+              `operator:${task.id}`,
+              () => executeControllerReview({
+                dir: REVIEW_TASKS_DIR,
+                task_id: task.id,
+                task: task.task_text,
+                task_text: task.task_text,
+                taskType: task.task_type || 'review',
+                commenter: task.commenter,
+                commentId: task.comment_id,
+                headSha: task.reviewed_sha,
+                repository: task.repository,
+                pr: task.pr,
+                agent: task.agent,
+                mode: task.mode,
+                policy: task.policy || {},
+                lease: task.lease,
+              }),
+              '[operator-dispatch] review execution error:',
+            );
+          }
+        }
+      })
+      .catch((error) => console.error('[operator-dispatch] failed:', error?.message));
+  });
+}
 
 const server = createServer(async (req, res) => {
   res.setHeader('X-Powered-By', 'OpenAB Webhook');
@@ -287,13 +312,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Health
   if (req.method === 'GET' && pathname === '/health') {
     sendJSON(res, 200, { status: 'ok', uptime: process.uptime() });
     return;
   }
 
-  // API Health
   if (req.method === 'GET' && pathname === '/api/health') {
     try {
       const data = await handleHealth();
@@ -302,7 +325,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Tasks (legacy) and task detail
   if (req.method === 'GET' && pathname.startsWith('/tasks')) {
     const auth = req.headers['authorization'];
     if (!verifyAuth(auth)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
@@ -322,7 +344,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // API Tasks
   if (req.method === 'GET' && pathname === '/api/tasks') {
     try {
       const data = await handleTasksList();
@@ -347,23 +368,31 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const operatorCancelMatch = pathname.match(/^\/api\/operator\/tasks\/([A-Za-z0-9._:-]+)\/cancel$/);
-  if (req.method === 'POST' && operatorCancelMatch) {
+  const operatorTaskActionMatch = pathname.match(
+    /^\/api\/operator\/tasks\/([A-Za-z0-9._:-]+)\/(cancel|retry|pause|resume)$/,
+  );
+  const legacyTaskActionMatch = pathname.match(
+    /^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/(cancel|retry|pause|resume)$/,
+  );
+  const taskActionMatch = operatorTaskActionMatch || legacyTaskActionMatch;
+  if (req.method === 'POST' && taskActionMatch) {
     const actor = requireOperatorMutation(req, res);
     if (!actor) return;
     try {
       const body = await parseBody(req);
-      const result = await handleOperatorTaskCancellation({
-        taskId: operatorCancelMatch[1],
+      const result = await handleOperatorTaskAction({
+        action: taskActionMatch[2] as OperatorTaskAction,
+        taskId: taskActionMatch[1],
         body,
         actor,
         reviewTasksDir: REVIEW_TASKS_DIR,
         auditDir: AUDIT_DIR,
         idempotencyDir: IDEMPOTENCY_DIR,
       });
+      if (result.dispatch) scheduleOperatorDispatch();
       sendJSON(res, result.status, result.body);
     } catch (error) {
-      sendJSON(res, 500, { error: error?.message || 'Cancellation failed' });
+      sendJSON(res, 500, { error: error?.message || 'Task action failed' });
     }
     return;
   }
@@ -381,130 +410,6 @@ const server = createServer(async (req, res) => {
     const event = await handleAuditEventDetail(auditDetailMatch[1], { auditDir: AUDIT_DIR });
     if (!event) sendJSON(res, 404, { error: 'Audit event not found' });
     else sendJSON(res, 200, { event });
-    return;
-  }
-
-  const reviewCancelMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/cancel$/);
-  if (req.method === 'POST' && reviewCancelMatch) {
-    const actor = requireOperatorMutation(req, res);
-    if (!actor) return;
-    try {
-      const body = await parseBody(req);
-      const task = await requestCancellation({
-        dir: REVIEW_TASKS_DIR,
-        id: reviewCancelMatch[1],
-        actor: actor.actor_id,
-        reason: String(body?.reason || 'operator_requested'),
-      });
-      sendJSON(res, 202, { task });
-    } catch (error) {
-      sendJSON(res, 409, { error: error?.message || 'Cancellation failed' });
-    }
-    return;
-  }
-
-  const reviewRetryMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/retry$/);
-  if (req.method === 'POST' && reviewRetryMatch) {
-    if (!requireOperatorMutation(req, res)) return;
-    try {
-      const body = await parseBody(req);
-      const task = await retryTask({
-        dir: REVIEW_TASKS_DIR,
-        id: reviewRetryMatch[1],
-        reason: String(body?.reason || 'operator_retry'),
-      });
-      // Immediately attempt dispatch of this (and any other) eligible queued tasks.
-      setImmediate(() => {
-        dispatchEligibleTasks({ dir: REVIEW_TASKS_DIR, instanceId: `ops-room-${process.pid}` })
-          .then((dr) => {
-            for (const t of dr.tasks) {
-              const executor = t.kind === 'fix' ? executeControllerFix : executeControllerReview;
-              scheduleTracked(`operator:${t.id}`, () => executor({
-                dir: REVIEW_TASKS_DIR,
-                task_id: t.id,
-                taskId: t.id,
-                task: t.task_text,
-                task_text: t.task_text,
-                taskType: t.task_type || 'review',
-                commenter: t.commenter,
-                commentId: t.comment_id,
-                headSha: t.reviewed_sha,
-                repository: t.repository,
-                pr: t.pr,
-                agent: t.agent,
-                mode: t.mode,
-                policy: t.policy || {},
-                lease: t.lease,
-              }), '[operator-dispatch] execution error:');
-            }
-          })
-          .catch((error) => console.error('[operator-dispatch] failed:', error?.message));
-      });
-      sendJSON(res, 202, { task });
-    } catch (error) {
-      sendJSON(res, 409, { error: error?.message || 'Retry failed' });
-    }
-    return;
-  }
-
-  const reviewPauseMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/pause$/);
-  if (req.method === 'POST' && reviewPauseMatch) {
-    if (!requireOperatorMutation(req, res)) return;
-    try {
-      const body = await parseBody(req);
-      const task = await pauseTask({
-        dir: REVIEW_TASKS_DIR,
-        id: reviewPauseMatch[1],
-        reason: String(body?.reason || 'operator_paused'),
-      });
-      sendJSON(res, 202, { task });
-    } catch (error) {
-      sendJSON(res, 409, { error: error?.message || 'Pause failed' });
-    }
-    return;
-  }
-
-  const reviewResumeMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/resume$/);
-  if (req.method === 'POST' && reviewResumeMatch) {
-    if (!requireOperatorMutation(req, res)) return;
-    try {
-      const body = await parseBody(req);
-      const task = await resumeTask({
-        dir: REVIEW_TASKS_DIR,
-        id: reviewResumeMatch[1],
-        reason: String(body?.reason || 'operator_resumed'),
-      });
-      // Immediately attempt dispatch of eligible queued tasks.
-      setImmediate(() => {
-        dispatchEligibleTasks({ dir: REVIEW_TASKS_DIR, instanceId: `ops-room-${process.pid}` })
-          .then((dr) => {
-            for (const t of dr.tasks) {
-              const executor = t.kind === 'fix' ? executeControllerFix : executeControllerReview;
-              scheduleTracked(`operator:${t.id}`, () => executor({
-                dir: REVIEW_TASKS_DIR,
-                task_id: t.id,
-                taskId: t.id,
-                task: t.task_text,
-                task_text: t.task_text,
-                taskType: t.task_type || 'review',
-                commenter: t.commenter,
-                commentId: t.comment_id,
-                headSha: t.reviewed_sha,
-                repository: t.repository,
-                pr: t.pr,
-                agent: t.agent,
-                mode: t.mode,
-                policy: t.policy || {},
-                lease: t.lease,
-              }), '[operator-dispatch] execution error:');
-            }
-          })
-          .catch((error) => console.error('[operator-dispatch] failed:', error?.message));
-      });
-      sendJSON(res, 202, { task });
-    } catch (error) {
-      sendJSON(res, 409, { error: error?.message || 'Resume failed' });
-    }
     return;
   }
 
@@ -561,7 +466,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // API Agents
   if (req.method === 'GET' && pathname === '/api/agents') {
     try {
       const data = await handleAgentsList();
@@ -570,7 +474,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // API OpenAB Instances
   if (req.method === 'GET' && pathname === '/api/openab/instances') {
     try {
       const data = await handleOpenABInstances();
@@ -579,7 +482,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Webhook POST
   if (req.method === 'POST' && pathname === '/webhook') {
     const auth = req.headers['authorization'];
     if (!verifyAuth(auth)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
@@ -599,7 +501,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Agent Profiles / Skills / Memory Spaces (read-only, dashboard-auth)
   if (req.method === 'GET') {
     const apiResult = handleReadOnlyAgentProfileApi(pathname);
     if (apiResult) {
@@ -608,7 +509,6 @@ const server = createServer(async (req, res) => {
     }
   }
 
-  // Static App (Dashboard)
   if (req.method === 'GET') {
     const served = handleStaticApp(req, res, pathname);
     if (served) return;
@@ -616,8 +516,6 @@ const server = createServer(async (req, res) => {
 
   sendJSON(res, 404, { error: 'Not found' });
 });
-
-// ── Poller ──────────────────────────────────────────────────────────────────
 
 async function listOpenIssuesForAgent(agentKey) {
   const seen = new Set();
@@ -648,8 +546,6 @@ async function runReviewReconciliationCycle() {
   if (result.recovered.length > 0) {
     console.warn(`[review-reconciler] recovered ${result.recovered.length} stale task(s): ${result.recovered.join(', ')}`);
   }
-  // Dispatch any QUEUED / FIX_QUEUED tasks that are now eligible (concurrency
-  // freed up, or tasks that were left queued after submission / operator action).
   const dispatchResult = await dispatchEligibleTasks({ dir: REVIEW_TASKS_DIR, instanceId: `ops-room-${process.pid}` });
   if (dispatchResult.dispatched > 0) {
     console.log(`[review-reconciler] dispatched ${dispatchResult.dispatched} eligible task(s)`);
@@ -675,8 +571,6 @@ async function runReviewReconciliationCycle() {
     }
   }
 }
-
-// ── Start ───────────────────────────────────────────────────────────────────
 
 console.log(`[server] version: ${OPENAB_SERVER_VERSION}`);
 
@@ -708,9 +602,6 @@ const issuePollerPromise = ISSUE_POLLING_ENABLED ? processLifecycle.track(startI
 }), 'issue-poller') : Promise.resolve();
 issuePollerPromise.catch((e) => console.error('[server] poller fatal:', e.message));
 if (!ISSUE_POLLING_ENABLED) console.log('[poller] disabled by OPS_ROOM_ISSUE_POLLING_ENABLED=false');
-// PR review work is submitted only through the SHA-aware controller. The old
-// in-process PR scanner remains intentionally disabled; GitHub Actions provides
-// the event and recovery producer.
 console.log('[pr-poller] direct PR auto-review poller disabled; controller ingress is authoritative');
 await runReviewReconciliationCycle().catch((error) => console.error('[review-reconciler] initial cycle failed:', error?.message));
 const reconciliationInterval = setInterval(() => {
