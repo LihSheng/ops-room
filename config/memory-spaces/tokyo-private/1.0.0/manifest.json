@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "key": "tokyo-private",
+  "version": "1.0.0",
+  "displayName": "Tokyo Private Memory",
+  "description": "Curated private working memory reserved for the Tokyo agent identity.",
+  "kind": "private-agent",
+  "publicationPath": "90_Agents/tokyo",
+  "ownerAgent": "tokyo",
+  "writePolicy": "review-required",
+  "provenance": {
+    "requiredFields": ["agent_id", "task_id", "source_refs", "created_at"],
+    "reviewRequired": true
+  }
+}
