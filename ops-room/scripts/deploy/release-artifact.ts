@@ -9,10 +9,11 @@ import { promisify } from 'node:util';
 import { createGzip } from 'node:zlib';
 
 import { loadSkillManifests } from '../../src/services/skill-registry/loader.js';
+import { loadMemorySpaceManifests } from '../../src/services/memory-space-registry/loader.js';
 
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
-const SKILL_KEY_PATTERN = /^[a-z][a-z0-9-]*$/;
+const KEY_PATTERN = /^[a-z][a-z0-9-]*$/;
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const FORBIDDEN_SEGMENTS = new Set([
   '.env', 'data', 'secrets', 'node_modules', 'workspaces', 'logs', 'test', 'tests', 'dashboard',
@@ -31,6 +32,20 @@ export const REQUIRED_SKILL_MANIFESTS = [
   'test-authoring',
   'verification',
 ].map((key) => `config/skills/${key}/1.0.0/manifest.json`);
+export const REQUIRED_MEMORY_SPACE_MANIFESTS = [
+  'berlin-private',
+  'gemini-private',
+  'linkup-project',
+  'ops-room-archive',
+  'ops-room-implementation',
+  'ops-room-project',
+  'ops-room-research',
+  'ops-room-reviews',
+  'ops-room-shared',
+  'ops-room-verification',
+  'professor-private',
+  'tokyo-private',
+].map((key) => `config/memory-spaces/${key}/1.0.0/manifest.json`);
 
 export function validateReleaseSha(value) {
   const sha = String(value || '').toLowerCase();
@@ -46,13 +61,13 @@ export function normalizeArchivePath(value) {
   return normalized.replace(/\/$/, '');
 }
 
-function isAllowedSkillPath(path) {
+function isAllowedManifestPath(path, rootName) {
   const segments = path.split('/');
-  if (path === 'config/skills') return true;
-  if (segments[0] !== 'config' || segments[1] !== 'skills') return false;
-  if (segments.length === 3) return SKILL_KEY_PATTERN.test(segments[2]);
-  if (segments.length === 4) return SKILL_KEY_PATTERN.test(segments[2]) && SEMVER_PATTERN.test(segments[3]);
-  return segments.length === 5 && SKILL_KEY_PATTERN.test(segments[2]) && SEMVER_PATTERN.test(segments[3]) && segments[4] === 'manifest.json';
+  if (path === `config/${rootName}`) return true;
+  if (segments[0] !== 'config' || segments[1] !== rootName) return false;
+  if (segments.length === 3) return KEY_PATTERN.test(segments[2]);
+  if (segments.length === 4) return KEY_PATTERN.test(segments[2]) && SEMVER_PATTERN.test(segments[3]);
+  return segments.length === 5 && KEY_PATTERN.test(segments[2]) && SEMVER_PATTERN.test(segments[3]) && segments[4] === 'manifest.json';
 }
 
 export function assertAllowedReleasePath(value) {
@@ -60,7 +75,7 @@ export function assertAllowedReleasePath(value) {
   if (
     path === 'RELEASE.json' || path === 'ops-room' || path === 'ops-room/src' || path === 'ops-room/dist' ||
     path === 'ops-room/dist/dashboard' || path === 'config' || path === 'config/agent-profiles' ||
-    isAllowedSkillPath(path)
+    isAllowedManifestPath(path, 'skills') || isAllowedManifestPath(path, 'memory-spaces')
   ) {
     return path;
   }
@@ -114,6 +129,7 @@ export async function verifyReleaseArtifact({ archivePath, checksumPath, expecte
     'config/agent-profiles/professor.json', 'config/agent-profiles/berlin.json',
     'config/agent-profiles/tokyo.json', 'config/agent-profiles/gemini.json',
     ...REQUIRED_SKILL_MANIFESTS,
+    ...REQUIRED_MEMORY_SPACE_MANIFESTS,
   ]) {
     if (!entries.includes(required)) throw new Error(`Release is missing required file: ${required}`);
   }
@@ -121,6 +137,10 @@ export async function verifyReleaseArtifact({ archivePath, checksumPath, expecte
   const actualSkillManifests = entries.filter((entry) => entry.startsWith('config/skills/') && entry.endsWith('/manifest.json')).sort();
   if (JSON.stringify(actualSkillManifests) !== JSON.stringify([...REQUIRED_SKILL_MANIFESTS].sort())) {
     throw new Error('Release skill manifest set does not match the approved manifest set');
+  }
+  const actualMemoryManifests = entries.filter((entry) => entry.startsWith('config/memory-spaces/') && entry.endsWith('/manifest.json')).sort();
+  if (JSON.stringify(actualMemoryManifests) !== JSON.stringify([...REQUIRED_MEMORY_SPACE_MANIFESTS].sort())) {
+    throw new Error('Release memory-space manifest set does not match the approved manifest set');
   }
 
   const extractDir = await mkdtemp(join(tmpdir(), 'ops-room-release-verify-'));
@@ -180,6 +200,20 @@ async function copyApprovedSkillManifests(sourceRoot, releaseRoot) {
   }
 }
 
+async function copyApprovedMemorySpaceManifests(sourceRoot, releaseRoot) {
+  const sourceMemorySpaces = join(sourceRoot, '..', 'config', 'memory-spaces');
+  const loaded = await loadMemorySpaceManifests(sourceMemorySpaces);
+  const discovered = loaded.manifests.map((manifest) => `config/memory-spaces/${manifest.key}/${manifest.version}/manifest.json`).sort();
+  if (JSON.stringify(discovered) !== JSON.stringify([...REQUIRED_MEMORY_SPACE_MANIFESTS].sort())) {
+    throw new Error('Source memory-space manifest set does not match the approved release set');
+  }
+  for (const manifest of loaded.manifests) {
+    const destination = join(releaseRoot, 'config', 'memory-spaces', manifest.key, manifest.version);
+    await mkdir(destination, { recursive: true });
+    await cp(join(sourceMemorySpaces, manifest.key, manifest.version, 'manifest.json'), join(destination, 'manifest.json'));
+  }
+}
+
 export async function buildReleaseArtifact({ sourceRoot, outputDir, commitSha }) {
   const sha = validateReleaseSha(commitSha);
   const root = resolve(sourceRoot);
@@ -197,6 +231,7 @@ export async function buildReleaseArtifact({ sourceRoot, outputDir, commitSha })
     await cp(join(root, 'package.json'), join(releaseOpsRoom, 'package.json'));
     await cp(join(root, '..', 'config', 'agent-profiles'), join(releaseRoot, 'config', 'agent-profiles'), { recursive: true });
     await copyApprovedSkillManifests(root, releaseRoot);
+    await copyApprovedMemorySpaceManifests(root, releaseRoot);
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf-8'));
     await writeFile(join(releaseRoot, 'RELEASE.json'), `${JSON.stringify({
       schema: 'ops-room.release.v1',
