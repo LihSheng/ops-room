@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "key": "gemini-private",
+  "version": "1.0.0",
+  "displayName": "Gemini Private Memory",
+  "description": "Curated private working memory reserved for the Gemini agent identity.",
+  "kind": "private-agent",
+  "publicationPath": "90_Agents/gemini",
+  "ownerAgent": "gemini",
+  "writePolicy": "review-required",
+  "provenance": {
+    "requiredFields": ["agent_id", "task_id", "source_refs", "created_at"],
+    "reviewRequired": true
+  }
+}
