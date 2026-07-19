@@ -28,6 +28,7 @@ export const OPS_ROOM_DATA_DIR = _opsRoomDataDir;
 export const AGENTS_CONFIG_DIR = process.env.OPENAB_AGENTS_CONFIG_DIR || join(REPO_ROOT, 'config', 'agents');
 export const AGENT_PROFILES_DIR = process.env.OPS_ROOM_AGENT_PROFILES_DIR || join(REPO_ROOT, 'config', 'agent-profiles');
 export const SKILL_MANIFESTS_DIR = process.env.OPS_ROOM_SKILL_MANIFESTS_DIR || join(REPO_ROOT, 'config', 'skills');
+export const MEMORY_SPACE_MANIFESTS_DIR = process.env.OPS_ROOM_MEMORY_SPACE_MANIFESTS_DIR || join(REPO_ROOT, 'config', 'memory-spaces');
 export const TASKS_DIR = process.env.OPS_ROOM_TASKS_DIR || join(_opsRoomDataDir, 'tasks');
 export const REVIEW_TASKS_DIR = process.env.OPS_ROOM_REVIEW_TASKS_DIR || join(_opsRoomDataDir, 'review-tasks');
 export const LOG_DIR = process.env.OPS_ROOM_LOGS_DIR || join(_opsRoomDataDir, 'logs');
