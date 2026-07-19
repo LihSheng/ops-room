@@ -58,7 +58,7 @@ export const AGENT_DEFINITIONS = Object.freeze([
     discordId: null,
     botUser: null,
     pollEnabled: false,
-    lifecycleControl: 'guarded-stop-test',
+    lifecycleControl: 'guarded-test',
     service: 'gemini',
     configName: 'gemini',
     containerName: 'openab-gemini',

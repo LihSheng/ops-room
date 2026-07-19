@@ -51,6 +51,12 @@ export const AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS = boundedInteger(
   1,
   120,
 );
+export const AGENT_LIFECYCLE_START_TIMEOUT_SECONDS = boundedInteger(
+  process.env.OPS_ROOM_AGENT_LIFECYCLE_START_TIMEOUT_SECONDS,
+  30,
+  1,
+  120,
+);
 export const ISSUE_POLLING_ENABLED = process.env.OPS_ROOM_ISSUE_POLLING_ENABLED !== 'false';
 export const REQUIRED_COMMANDS = _requiredCommands.split(',').map((value) => value.trim()).filter(Boolean);
 export const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.OPS_ROOM_SHUTDOWN_TIMEOUT_MS || '55000', 10);

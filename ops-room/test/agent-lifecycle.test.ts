@@ -264,9 +264,14 @@ test('docker lifecycle controller uses fixed argv and exposes no force operation
   assert.deepEqual(calls[0].args, ['stop', '--time', '15', 'openab-gemini']);
   assert.equal(calls[0].command, 'docker');
   assert.equal(calls[0].options.timeoutMs, 20_000);
-  assert.equal('start' in controller, false);
+  assert.equal('start' in controller, true);
   assert.equal('restart' in controller, false);
   assert.equal('kill' in controller, false);
+
+  // Test start method uses fixed argv
+  const startResult = await controller.start(prepared, { timeoutSeconds: 10 });
+  assert.equal(startResult.action, 'start');
+  assert.deepEqual(calls[1].args, ['start', 'openab-gemini']);
   await assert.rejects(
     () => controller.stop({ agent_id: 'bad', target: { kind: 'docker-container', name: 'bad;name' } }),
     /does not support/,

@@ -5,11 +5,11 @@ import { dirname, join } from 'node:path';
 const LIFECYCLE_SCHEMA = 'ops-room.agent-lifecycle.v1';
 const SAFE_AGENT_ID = /^[A-Za-z0-9._-]+$/;
 const SAFE_ERROR_CODE = /^[A-Za-z0-9._:-]{1,100}$/;
-const DESIRED_STATES = new Set(['unmanaged', 'stopped']);
-const LIFECYCLE_PHASES = new Set(['unmanaged', 'draining', 'stopping', 'stopped', 'failed']);
+const DESIRED_STATES = new Set(['unmanaged', 'stopped', 'running']);
+const LIFECYCLE_PHASES = new Set(['unmanaged', 'draining', 'stopping', 'stopped', 'starting', 'running', 'failed']);
 const OPERATION_OUTCOMES = new Set(['in_progress', 'accepted', 'rejected', 'failed', 'interrupted']);
-const INTERRUPTED_PHASES = new Set(['draining', 'stopping']);
-const BLOCKED_DISPATCH_PHASES = new Set(['draining', 'stopping', 'stopped']);
+const INTERRUPTED_PHASES = new Set(['draining', 'stopping', 'starting']);
+const BLOCKED_DISPATCH_PHASES = new Set(['draining', 'stopping', 'stopped', 'starting']);
 const AGENT_LIFECYCLE_GATES = new Map();
 
 function validateAgentId(agentId: string) {
@@ -56,10 +56,10 @@ function unavailableAgentLifecycleState(agentId: string) {
 function normalizeLastOperation(value: any) {
   if (value == null) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid lifecycle operation');
-  if (value.operation !== 'agent.stop') throw new Error('Invalid lifecycle operation');
+  if (value.operation !== 'agent.stop' && value.operation !== 'agent.start') throw new Error('Invalid lifecycle operation');
   if (!OPERATION_OUTCOMES.has(value.outcome)) throw new Error('Invalid lifecycle operation outcome');
   return {
-    operation: 'agent.stop',
+    operation: value.operation,
     actor_id: boundedString(value.actor_id, 100),
     reason: boundedString(value.reason, 500),
     requested_at: boundedString(value.requested_at, 64),
@@ -217,4 +217,32 @@ export async function recoverInterruptedAgentLifecycleStates({
     recovered.push(agentId);
   }
   return recovered;
+}
+
+export function classifyConvergence(desiredState: string, phase: string, observedState: string) {
+  if (phase === 'starting' || phase === 'draining' || phase === 'stopping') {
+    return { status: 'transitioning', reason_code: 'transition_in_progress' };
+  }
+  if (phase === 'failed') {
+    return { status: 'mismatch', reason_code: 'operation_failed' };
+  }
+  if (desiredState === 'unmanaged') {
+    return { status: 'converged', reason_code: null };
+  }
+  if (desiredState === 'running' && phase === 'running') {
+    if (observedState === 'running') return { status: 'converged', reason_code: null };
+    return { status: 'mismatch', reason_code: 'observed_not_running' };
+  }
+  if (desiredState === 'stopped' && phase === 'stopped') {
+    const stoppedObserved = new Set(['exited', 'dead', 'missing', 'stopped']);
+    if (stoppedObserved.has(observedState)) return { status: 'converged', reason_code: null };
+    return { status: 'mismatch', reason_code: 'observed_running_desired_stopped' };
+  }
+  if (desiredState === 'running' && phase !== 'running') {
+    return { status: 'transitioning', reason_code: 'transition_in_progress' };
+  }
+  if (desiredState === 'stopped' && phase !== 'stopped') {
+    return { status: 'transitioning', reason_code: 'transition_in_progress' };
+  }
+  return { status: 'unknown', reason_code: 'observed_unknown' };
 }

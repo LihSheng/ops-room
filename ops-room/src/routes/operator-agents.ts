@@ -2,6 +2,7 @@ import { appendAuditEvent } from '../services/audit-log.js';
 import { getAgentDefinition } from '../services/agent-definitions.js';
 import {
   agentLifecycleAllowsDispatch,
+  classifyConvergence,
   readAgentLifecycleState,
   updateAgentLifecycleState,
   withAgentLifecycleGate,
@@ -491,6 +492,364 @@ export async function handleOperatorAgentStop({
   }
 }
 
+async function acceptedAlreadyRunning({
+  auditDir,
+  actor,
+  agentId,
+  reason,
+  idempotencyKey,
+  current,
+  observed,
+  target,
+  convergence,
+}) {
+  const event = await appendAuditEvent({
+    dir: auditDir,
+    operation: 'agent.start',
+    actor,
+    target: { type: 'agent', id: agentId },
+    reason,
+    idempotencyKey,
+    previousState: current.phase,
+    resultingState: current.phase,
+    outcome: 'accepted',
+    metadata: {
+      runtime_adapter: observed.adapter_id || target.runtime_adapter_id,
+      lifecycle_controller: target.controller.id,
+      observed_state_before: observed.status,
+      command_executed: false,
+      already_running: true,
+      convergence_status: convergence.status,
+      convergence_reason: convergence.reason_code,
+    },
+  });
+  return {
+    status: 202,
+    body: {
+      operation: 'agent.start',
+      agent: {
+        id: agentId,
+        desired_state: current.desired_state,
+        lifecycle_state: current.phase,
+        observed_state_before: observed.status,
+      },
+      command_executed: false,
+      audit_event_id: event.event_id,
+    },
+  };
+}
+
+export async function handleOperatorAgentStart({
+  agentId,
+  body,
+  actor,
+  reviewTasksDir,
+  lifecycleDir,
+  auditDir,
+  idempotencyDir,
+  allowedAgents = [],
+  startTimeoutSeconds = 30,
+  getRuntimeSnapshot = inspectAgentRuntimes,
+  prepareTarget = prepareAgentLifecycleTarget,
+  scanTasks = scanReviewTasks,
+  now = () => Date.now(),
+  nowIso = () => new Date().toISOString(),
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
+  const rawAgentId = String(agentId || '');
+  let reason = String(body?.reason || '').trim().slice(0, 500);
+  let idempotencyKey = body?.idempotency_key ? String(body.idempotency_key).trim() : null;
+
+  if (!SAFE_AGENT_ID.test(rawAgentId)) {
+    return rejected({
+      auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+      errorCode: 'invalid_agent_id', status: 400, message: 'Invalid agent ID',
+      operation: 'agent.start',
+    });
+  }
+
+  if (!getAgentDefinition(rawAgentId)) {
+    return rejected({
+      auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+      errorCode: 'agent_not_found', status: 404, message: 'Agent not found',
+      operation: 'agent.start',
+    });
+  }
+
+  if (!normalizeAllowedAgents(allowedAgents).has(rawAgentId)) {
+    return rejected({
+      auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+      errorCode: 'agent_not_allowed', status: 403,
+      message: 'Agent lifecycle control is not approved for this agent',
+      operation: 'agent.start',
+    });
+  }
+
+  let confirmation;
+  try {
+    reason = reasonFrom(body);
+    confirmation = confirmationFrom(body, rawAgentId);
+    idempotencyKey = validateIdempotencyKey(body?.idempotency_key);
+  } catch (error) {
+    return rejected({
+      auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+      errorCode: 'invalid_request', status: 400, message: error.message,
+      operation: 'agent.start',
+    });
+  }
+
+  try {
+    const result = await executeIdempotent({
+      dir: idempotencyDir,
+      actorId: actor.actor_id,
+      operation: 'agent.start',
+      targetId: rawAgentId,
+      key: idempotencyKey,
+      payload: { reason, confirm_agent_id: confirmation },
+      execute: () => withLifecycleActionLock(() => withAgentLifecycleGate(rawAgentId, async () => {
+        const current = await readAgentLifecycleState({ dir: lifecycleDir, agentId: rawAgentId });
+        if (current.last_error === 'lifecycle_state_unavailable') {
+          return rejected({
+            auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+            errorCode: 'lifecycle_state_unavailable', status: 409,
+            message: 'Lifecycle state is unavailable', previousState: current.phase,
+            operation: 'agent.start',
+          });
+        }
+
+        let target;
+        try {
+          target = prepareTarget(rawAgentId);
+        } catch {
+          return rejected({
+            auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+            errorCode: 'lifecycle_target_unavailable', status: 409,
+            message: 'Lifecycle target is unavailable', previousState: current.phase,
+            operation: 'agent.start',
+          });
+        }
+
+        const observed = inspectObservedRuntime(
+          getRuntimeSnapshot,
+          rawAgentId,
+          target.runtime_adapter_id || null,
+        );
+
+        // If already desired=running and phase=running, adopt without command
+        if (current.desired_state === 'running' && current.phase === 'running') {
+          const convergence = classifyConvergence(current.desired_state, current.phase, observed.status);
+          return acceptedAlreadyRunning({
+            auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+            current, observed, target, convergence,
+          });
+        }
+
+        // Reject if currently in a transitioning phase (draining, stopping, starting)
+        if (current.phase === 'draining' || current.phase === 'stopping' || current.phase === 'starting') {
+          return rejected({
+            auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+            errorCode: 'lifecycle_operation_active', status: 409,
+            message: `Agent is currently ${current.phase}; cannot start until operation completes or fails`,
+            previousState: current.phase,
+            operation: 'agent.start',
+          });
+        }
+
+        const requestedAt = nowIso();
+        const desiredRunning = 'running';
+        await updateAgentLifecycleState({
+          dir: lifecycleDir,
+          agentId: rawAgentId,
+          now: nowIso,
+          patch: {
+            desired_state: desiredRunning,
+            phase: 'starting',
+            previous_desired_state: current.desired_state,
+            last_error: null,
+            last_operation: {
+              operation: 'agent.start',
+              actor_id: actor.actor_id,
+              reason,
+              requested_at: requestedAt,
+              outcome: 'in_progress',
+            },
+          },
+        });
+
+        // Determine if we need to actually start or adopt
+        const alreadyRunning = observed.status === 'running';
+        let commandExecuted = false;
+        let controllerResult = { controller_id: target.controller.id, action: 'start' };
+
+        if (!alreadyRunning) {
+          commandExecuted = true;
+          try {
+            controllerResult = await target.controller.start(target.prepared, {
+              timeoutSeconds: startTimeoutSeconds,
+            });
+          } catch {
+            await updateAgentLifecycleState({
+              dir: lifecycleDir,
+              agentId: rawAgentId,
+              now: nowIso,
+              patch: {
+                desired_state: desiredRunning,
+                phase: 'failed',
+                previous_desired_state: null,
+                last_error: 'runtime_start_failed',
+                last_operation: {
+                  operation: 'agent.start',
+                  actor_id: actor.actor_id,
+                  reason,
+                  requested_at: requestedAt,
+                  completed_at: nowIso(),
+                  outcome: 'failed',
+                },
+              },
+            });
+            return rejected({
+              auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+              errorCode: 'runtime_start_failed', status: 502,
+              message: 'Agent runtime start failed', previousState: current.phase,
+              resultingState: 'failed',
+              operation: 'agent.start',
+              metadata: {
+                runtime_adapter: observed.adapter_id,
+                lifecycle_controller: target.controller.id,
+              },
+            });
+          }
+        }
+
+        // Check convergence after start
+        const startedAt = now();
+        let converged = false;
+        const convergenceTimeoutMs = Math.max(1000, Number(startTimeoutSeconds) * 1000);
+        const convergencePollMs = 500;
+        while (now() - startedAt < convergenceTimeoutMs) {
+          const postSnapshot = inspectObservedRuntime(getRuntimeSnapshot, rawAgentId, target.runtime_adapter_id || null);
+          if (postSnapshot.status === 'running') {
+            converged = true;
+            break;
+          }
+          await sleep(Math.min(convergencePollMs, Math.max(1, convergenceTimeoutMs - (now() - startedAt))));
+        }
+
+        if (!converged) {
+          await updateAgentLifecycleState({
+            dir: lifecycleDir,
+            agentId: rawAgentId,
+            now: nowIso,
+            patch: {
+              desired_state: desiredRunning,
+              phase: 'starting',
+              previous_desired_state: null,
+              last_error: 'runtime_start_convergence_timeout',
+              last_operation: {
+                operation: 'agent.start',
+                actor_id: actor.actor_id,
+                reason,
+                requested_at: requestedAt,
+                completed_at: nowIso(),
+                outcome: commandExecuted ? 'accepted' : 'in_progress',
+              },
+            },
+          });
+          return {
+            status: 202,
+            body: {
+              operation: 'agent.start',
+              agent: {
+                id: rawAgentId,
+                desired_state: desiredRunning,
+                lifecycle_state: 'starting',
+                observed_state_before: observed.status,
+              },
+              command_executed: commandExecuted,
+              convergence: { status: 'transitioning', reason_code: 'runtime_start_convergence_timeout' },
+              audit_event_id: null,
+            },
+          };
+        }
+
+        const lifecycle = await updateAgentLifecycleState({
+          dir: lifecycleDir,
+          agentId: rawAgentId,
+          now: nowIso,
+          patch: {
+            desired_state: desiredRunning,
+            phase: 'running',
+            previous_desired_state: null,
+            last_error: null,
+            last_operation: {
+              operation: 'agent.start',
+              actor_id: actor.actor_id,
+              reason,
+              requested_at: requestedAt,
+              completed_at: nowIso(),
+              outcome: 'accepted',
+            },
+          },
+        });
+
+        const postConvergence = inspectObservedRuntime(getRuntimeSnapshot, rawAgentId, target.runtime_adapter_id || null);
+        const convergence = classifyConvergence(lifecycle.desired_state, lifecycle.phase, postConvergence.status);
+
+        const event = await appendAuditEvent({
+          dir: auditDir,
+          operation: 'agent.start',
+          actor,
+          target: { type: 'agent', id: rawAgentId },
+          reason,
+          idempotencyKey,
+          previousState: current.phase,
+          resultingState: lifecycle.phase,
+          outcome: 'accepted',
+          metadata: {
+            runtime_adapter: observed.adapter_id || target.runtime_adapter_id,
+            lifecycle_controller: controllerResult.controller_id,
+            observed_state_before: observed.status,
+            command_executed: commandExecuted,
+            convergence_status: convergence.status,
+            convergence_reason: convergence.reason_code,
+          },
+        });
+
+        return {
+          status: 202,
+          body: {
+            operation: 'agent.start',
+            agent: {
+              id: rawAgentId,
+              desired_state: lifecycle.desired_state,
+              lifecycle_state: lifecycle.phase,
+              observed_state_before: observed.status,
+            },
+            command_executed: commandExecuted,
+            convergence,
+            audit_event_id: event.event_id,
+          },
+        };
+      })),
+    });
+
+    return {
+      status: result.response.status,
+      body: { ...result.response.body, idempotent_replay: result.replayed },
+    };
+  } catch (error) {
+    if (error instanceof IdempotencyConflictError || error instanceof IdempotencyInProgressError) {
+      const current = await readAgentLifecycleState({ dir: lifecycleDir, agentId: rawAgentId });
+      return rejected({
+        auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+        errorCode: error.code, status: 409, message: error.message,
+        previousState: current.phase,
+        operation: 'agent.start',
+      });
+    }
+    throw error;
+  }
+}
 export async function canDispatchAgentFromLifecycle({ lifecycleDir, agentId }) {
   const state = await readAgentLifecycleState({ dir: lifecycleDir, agentId });
   return agentLifecycleAllowsDispatch(state);
