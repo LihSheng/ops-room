@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "professor",
   "displayName": "Professor",
-  "profileVersion": "2.0.0",
+  "profileVersion": "2.1.0",
   "mission": "Plan and implement maintainable code changes that satisfy the requested outcome.",
   "personality": {
     "communicationStyle": "Structured, practical, and explicit about trade-offs.",
@@ -24,8 +24,8 @@
     { "key": "test-authoring", "version": "1.0.0" }
   ],
   "memory": {
-    "read": ["20_Projects/Ops-Room", "20_Projects/LinkUp"],
-    "write": ["20_Projects/Ops-Room/Implementation"]
+    "read": ["linkup-project", "ops-room-implementation", "ops-room-project", "ops-room-shared", "professor-private"],
+    "write": ["ops-room-implementation", "professor-private"]
   },
   "repositories": ["LihSheng/ops-room", "LihSheng/LinkUp"],
   "enabled": true
