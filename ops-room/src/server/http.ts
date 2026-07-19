@@ -47,6 +47,9 @@ import { recoverInterruptedAgentLifecycleStates } from '../services/agent-lifecy
 import { resolveOperatorIdentity } from '../services/operator-identity.js';
 import { sendJSON, verifyAuth, verifyOperatorAuth, parseBody } from '../routes/helpers.js';
 import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.js';
+import { createFreshRuntimeInspector } from '../services/runtime-adapter/registry.js';
+
+const freshRuntimeSnapshot = createFreshRuntimeInspector();
 
 const reviewStatus = createGitHubReviewStatusService({
   getCommitStatuses: async ({ sha, agent }) => getCommitStatuses(sha, agent),
@@ -468,6 +471,7 @@ const server = createServer(async (req, res) => {
         idempotencyDir: IDEMPOTENCY_DIR,
         allowedAgents: AGENT_LIFECYCLE_ALLOWED_AGENTS,
         startTimeoutSeconds: AGENT_LIFECYCLE_START_TIMEOUT_SECONDS,
+        freshRuntimeSnapshot,
       });
       sendJSON(res, result.status, result.body);
     } catch (error) {

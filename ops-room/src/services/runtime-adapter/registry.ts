@@ -1,5 +1,6 @@
 import { AGENT_DEFINITIONS } from '../agent-definitions.js';
 import { createOpenABDockerRuntimeAdapter } from './openab-docker-adapter.js';
+import { createDockerReadInspector } from './docker-read-inspector.js';
 import {
   unknownRuntimeStatus,
   type AgentRuntimeAdapter,
@@ -96,4 +97,20 @@ export function inspectAgentRuntimes({
 
 export function getDefaultRuntimeAdapters() {
   return [...DEFAULT_RUNTIME_ADAPTERS];
+}
+
+/**
+ * Create a runtime inspector factory that bypasses the 5-second cache.
+ * Used in production by http.ts as the freshRuntimeSnapshot parameter
+ * to prevent false convergence timeouts when the cached inspector
+ * has not yet observed the post-start state change.
+ */
+export function createFreshRuntimeInspector() {
+  const freshInspector = createDockerReadInspector({ cacheMs: 0 });
+  const freshAdapter = createOpenABDockerRuntimeAdapter({ inspector: freshInspector });
+  return (overrides = {}) => inspectAgentRuntimes({
+    definitions: AGENT_DEFINITIONS,
+    adapters: [freshAdapter],
+    ...overrides,
+  });
 }
