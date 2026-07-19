@@ -1,8 +1,8 @@
 # Ops Room
 
-Ops Room is a secure control surface for observing and coordinating OpenAB-backed AI agents. It brings agent status, tasks, workflows, skills, memory scopes, and operational health into one dashboard while keeping secrets and runtime data outside Git.
+Ops Room is a secure control surface for observing and coordinating OpenAB-backed AI agents. It brings agent status, tasks, workflows, skills, governed memory spaces, and operational health into one dashboard while keeping secrets and runtime data outside Git.
 
-> **Current scope:** Ops Room is intentionally read-only by default. It helps operators understand the agent fleet without exposing unsafe restart, execution, secret, or configuration controls.
+> **Current scope:** Ops Room is intentionally read-only by default. It helps operators understand the agent fleet without exposing unsafe restart, execution, secret, configuration, or Obsidian-write controls.
 
 ## What It Does
 
@@ -10,7 +10,7 @@ Ops Room is a secure control surface for observing and coordinating OpenAB-backe
 - Displays agent profiles, missions, policies, and exact skill versions.
 - Tracks tasks, workflows, activity, and operational logs.
 - Reports skill requirements and compatibility without exposing credentials.
-- Declares curated memory scopes without giving agents unrestricted Obsidian access.
+- Validates curated memory-space keys, publication boundaries, ownership, and future write-review policy without browsing the Obsidian vault.
 - Supports GitHub-driven agent workflows while keeping the runtime provider-independent.
 
 ## Built with Codex and GPT-5.6
@@ -80,10 +80,10 @@ http://127.0.0.1:7381/
 From the dashboard, use:
 
 - **Overview** for fleet health and operational status.
-- **Agents** for runtime state, profiles, and assigned skills.
+- **Agents** for runtime state, profiles, exact skills, and resolved memory assignments.
 - **Tasks, Workflows, and Activity** for current and historical work.
 - **Skills** for immutable skill versions and compatibility results.
-- **Memory** for declared read/write scopes.
+- **Memory** for validated spaces, curated relative publication paths, readers, writers, ownership, and review policy.
 - **Settings** for safe runtime and deployment information.
 
 ## Local Development
@@ -112,15 +112,17 @@ npm run smoke:instances
 ## Documentation
 
 - [Detailed setup and usage guide](docs/USAGE.md)
+- [Curated memory governance and publication runbook](docs/MEMORY_GOVERNANCE.md)
 - [Canonical architecture and security boundaries](ARCHITECTURE.md)
 - [Environment configuration reference](.env.example)
 - [Agent profile definitions](config/agent-profiles/)
 - [Versioned skill manifests](config/skills/)
+- [Versioned memory-space manifests](config/memory-spaces/)
 - [Deployment tooling](ops-room/deploy/)
 
 ## Repository Safety
 
-Safe templates, source code, profile policy, skill manifests, and documentation are committed to Git. Real credentials, private keys, generated agent homes, workspaces, logs, tasks, and mutable runtime state must remain local.
+Safe templates, source code, profile policy, skill manifests, memory-space manifests, and documentation are committed to Git. Real credentials, private keys, Obsidian note contents, generated agent homes, workspaces, logs, tasks, and mutable runtime state must remain local.
 
 ## License
 
