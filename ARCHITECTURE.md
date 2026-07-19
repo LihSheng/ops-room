@@ -18,12 +18,13 @@ Existing GitHub review, fix, lease-fencing, effect-ledger, and reconciliation be
 
 ## Current Goal
 
-Deliver a secure, reliable production control plane with deterministic deployment, audited task operations, and Git-backed read-only agent, skill, and memory policy before adding lifecycle or configuration editing.
+Deliver a secure, reliable production control plane with deterministic deployment, audited task operations, Git-backed read-only policy, and a runtime-neutral observation boundary before adding lifecycle or configuration editing.
 
 Completion requires:
 
 - CI committed and configured as a required `main` check.
 - One normalized runtime definition source exposing desired and observed state.
+- One read-only runtime adapter registry separating API consumers from Docker/OpenAB inspection details.
 - One versioned agent profile source exposing mission, behavior, exact skill assignments, logical memory assignments, and repository scope.
 - One validated versioned skill-manifest source exposing immutable metadata and declared requirements without execution authority.
 - One validated memory-space source exposing curated publication paths, ownership, write-review policy, and provenance requirements without vault I/O authority.
@@ -40,12 +41,12 @@ Completion requires:
 | Concern | Authority now |
 |---|---|
 | Agent runtime definitions, roles, and bindings | `ops-room/src/services/agent-definitions.ts` |
+| Runtime preparation and observed-state normalization | `ops-room/src/services/runtime-adapter/*` |
 | Agent mission, personality, exact skill assignments, logical memory assignments, and repository scope | `config/agent-profiles/*.json` |
 | Immutable skill metadata and declared requirements | `config/skills/<key>/<version>/manifest.json` |
 | Curated memory-space metadata and governance | `config/memory-spaces/<key>/<version>/manifest.json` |
 | OpenAB agent configuration | Git-managed `config/agents/*.toml` deployed outside release artifacts |
 | Task, effect, lease, audit, and idempotency state | Persistent paths under `data/ops-room/` |
-| Runtime and command observation | Docker/OpenAB and bounded health inspection |
 | Release identity | `RELEASE.json` plus external SHA-256 checksum |
 | Secrets | Protected environment/secret files outside Git and release directories |
 
@@ -62,6 +63,7 @@ PostgreSQL is not currently authoritative. Introducing it requires a separate mi
 - Skill compatibility is an inspection result, not proof that a skill is installed, materialized, or executable.
 - A memory write assignment is future policy intent only. OPS-005 does not grant filesystem write access, browse notes, perform search, sync Obsidian, or publish content.
 - Browser mutation controls remain deferred until stable browser identity, RBAC, session revocation, and confirmation rules are approved.
+- Runtime adapters may perform bounded read-only inspection only. They must not expose raw command output, secrets, host environment values, or lifecycle mutation methods.
 
 ## Agent Model
 
@@ -70,8 +72,8 @@ An agent is a logical identity independent from its current container.
 `agent-definitions.ts` owns operational bindings:
 
 - desired state: currently `unmanaged` until an audited lifecycle controller exists;
-- observed state: current Docker/OpenAB runtime inspection;
-- role, backend, service, container, config, data binding, and polling intent.
+- runtime backend, service, container target, config, data binding, and polling intent;
+- stable identity used by the runtime adapter registry.
 
 `config/agent-profiles/*.json` owns versioned policy metadata:
 
@@ -83,6 +85,8 @@ An agent is a logical identity independent from its current container.
 - enabled state and profile version.
 
 Profiles are validated before the HTTP server starts. A missing, malformed, unsupported, duplicate, or runtime-inconsistent profile blocks startup. Runtime bindings remain authoritative in `agent-definitions.ts`; profiles may reference but must not redefine container or service wiring.
+
+Observed state is produced by the read-only runtime adapter registry. It is evidence about the current runtime, not desired-state authority and not permission to mutate a provider process.
 
 Hardcoded workflow names may assign current roles, but future routing should select by capability and policy rather than treating a personified name as a capability.
 
@@ -146,6 +150,25 @@ Review and fix task mutations use one operator contract for `cancel`, `retry`, `
 - Compatibility aliases under `/api/review-tasks/:taskId/<action>` use the same contract; they do not bypass audit or idempotency.
 
 These task actions do not provide agent process start/stop/restart, unrestricted workflow execution, browser controls, or Docker mutation.
+
+## Runtime Adapter Read Model
+
+`ops-room/src/services/runtime-adapter/` is the only approved control-plane boundary for runtime preparation and observed-state inspection.
+
+The contract separates:
+
+- `prepare` — a deterministic, side-effect-free conversion from an agent definition to a provider-neutral prepared runtime target;
+- `inspect` — bounded read-only observation returning normalized status and adapter availability diagnostics;
+- registry selection — exactly one adapter must support each canonical agent definition;
+- API consumption — agent and instance services consume normalized snapshots rather than Docker/OpenAB command details.
+
+The current `openab-docker` adapter supports both OpenAB/OpenCode and OpenAB/Gemini because both are observed through the same named-container mechanism. Docker CLI access is isolated in `docker-read-inspector.ts`. Other API, registry, and dashboard services must not execute Docker or provider inspection commands directly.
+
+Adapter failures degrade to bounded `unknown` runtime status and a safe adapter diagnostic. Raw stdout/stderr, environment values, credentials, absolute provider paths, and Docker socket details are not returned.
+
+Existing `/api/agents` and `/api/openab/instances` response fields remain compatible. Additive runtime-adapter identifiers make the observation source visible without granting lifecycle authority.
+
+OPS-007 introduces no start, stop, restart, kill, recreate, provider-session, desired-state reconciliation, or Docker mutation operation. Those controls remain reserved for OPS-008 and require authenticated, audited, idempotent, resource-bounded lifecycle design.
 
 ## Runtime and Shutdown
 
