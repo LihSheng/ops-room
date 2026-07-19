@@ -1,242 +1,126 @@
 # Ops Room
 
-Ops Room is the control surface for configuring, launching, and monitoring OpenAB-backed agents. It stores safe config templates in Git, keeps runtime data under `data/`, and keeps private credentials under `secrets/`.
+Ops Room is a secure control surface for observing and coordinating OpenAB-backed AI agents. It brings agent status, tasks, workflows, skills, memory scopes, and operational health into one dashboard while keeping secrets and runtime data outside Git.
 
-Canonical product and runtime decisions: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+> **Current scope:** Ops Room is intentionally read-only by default. It helps operators understand the agent fleet without exposing unsafe restart, execution, secret, or configuration controls.
+
+## What It Does
+
+- Shows the current health and runtime state of each agent.
+- Displays agent profiles, missions, policies, and exact skill versions.
+- Tracks tasks, workflows, activity, and operational logs.
+- Reports skill requirements and compatibility without exposing credentials.
+- Declares curated memory scopes without giving agents unrestricted Obsidian access.
+- Supports GitHub-driven agent workflows while keeping the runtime provider-independent.
 
 ## Built with Codex and GPT-5.6
 
-Ops Room was designed and developed through a human-in-the-loop engineering workflow powered by **Codex and GPT-5.6**. They were used as development collaborators—not as an unrestricted production control plane—to help turn the product idea into reviewed, testable, and deployable software.
+Ops Room was developed through a human-controlled engineering workflow using **Codex and GPT-5.6**.
 
-- **Product and architecture planning** — refined Ops Room's positioning, agent lifecycle, read-only safety boundaries, skill model, memory scopes, and deployment architecture.
-- **Implementation with Codex** — translated milestones into code changes across the Node.js harness, React dashboard, APIs, validation rules, tests, release tooling, and documentation.
-- **Reasoning with GPT-5.6** — broke larger epics into smaller deliverables, evaluated design trade-offs, diagnosed CI and deployment failures, and proposed production-safe solutions.
-- **PR review and security hardening** — reviewed changes for correctness, secret exposure, unsafe GitHub Actions behavior, permission boundaries, path traversal, and credential-handling risks.
-- **Deployment and operations** — helped create immutable release, verification, activation, rollback, systemd, Cloudflare Access, and operator-API safeguards.
-- **Continuous documentation** — kept implementation reports, architecture decisions, security explanations, and next-step prompts aligned with the evolving codebase.
+- **Codex** helped implement the Node.js control plane, React dashboard, APIs, validation, tests, release tooling, and documentation.
+- **GPT-5.6** helped plan architecture, break milestones into deliverables, evaluate trade-offs, diagnose CI and deployment failures, and review security boundaries.
+- Every change remained subject to pull-request review, CI, and explicit operator approval before deployment.
 
-The workflow remained **human-controlled**: milestones were selected by the project owner, generated changes were reviewed through pull requests and CI, and production deployment required explicit operator action. Ops Room can support different model providers at runtime; its core architecture is not locked to GPT-5.6 or Codex.
-
-## Architecture
-
-```text
-openab-multi-agent/
-├── config/           → Safe config templates, profiles, and skill manifests
-├── data/             → Runtime data (agents, workspaces, shared memory, ops-room state)
-├── ops-room/         → Harness/control surface and React dashboard
-├── secrets/          → Private keys (ignored by Git)
-├── docker-compose.yml
-└── scripts/          → Container entrypoints
-```
-
-- **ops-room** — the control plane: receives GitHub webhooks, polls for tasks, routes to agents, and serves the dashboard
-- **OpenAB** — the runtime backbone: runs agent containers (gemini, opencode-1, opencode-2, opencode-professor)
-- **config/agent-profiles/** — versioned policy profiles with exact skill assignments
-- **config/skills/** — validated immutable skill metadata and declared requirements
-- **config/agents/** — per-agent configuration (Discord tokens, API keys, runtime env)
-- **data/agents/** — agent home directories (generated runtime state)
-- **data/workspaces/** — agent-generated project workspaces
-- **data/ops-room/** — harness logs, task files, processed state
+Codex and GPT-5.6 assisted the development process; Ops Room itself can support different runtime model providers.
 
 ## Quick Start
 
+### Requirements
+
+- Node.js **20.19 or newer**
+- npm
+- Git and GitHub CLI
+- Docker/OpenAB agent services when runtime inspection is required
+
+### 1. Clone the repository
+
 ```bash
-# 1. Clone and enter the repo
-git clone <repo-url>
+git clone https://github.com/LihSheng/ops-room.git openab-multi-agent
 cd openab-multi-agent
+```
 
-# 2. Copy env file and fill in secrets
+### 2. Configure the environment
+
+```bash
 cp .env.example .env
+```
 
-# 3. Create required agent configs from examples
+Edit `.env` and replace the example paths with absolute paths for your checkout. At minimum, configure `OPENAB_WEBHOOK_SECRET` and the required GitHub App values.
+
+Never commit `.env`, private keys, tokens, or runtime data.
+
+### 3. Create local agent configurations
+
+```bash
 cp config/agents/gemini.example.toml config/agents/gemini.toml
 cp config/agents/opencode-1.example.toml config/agents/opencode-1.toml
 cp config/agents/opencode-2.example.toml config/agents/opencode-2.toml
 cp config/agents/opencode-professor.example.toml config/agents/opencode-professor.toml
+```
 
-# 4. Install dependencies and build the SPA
+Update only the local `.toml` files with your runtime configuration.
+
+### 4. Install and start Ops Room
+
+```bash
 cd ops-room
 npm install
-
-# 5. Bootstrap runtime directories and start Ops Room
 npm run bootstrap
 npm start
 ```
 
-`npm install` runs the dashboard production build through the package `prepare` script. `npm run bootstrap` loads the repo-level `.env` and blocks startup when `OPENAB_WEBHOOK_SECRET` is missing. `npm start` loads the same file via Node's `--env-file` support. `OPENAB_WEBHOOK_PORT` defaults to `7381`.
+### 5. Open the dashboard
 
-`config/harness/ops-room.example.toml` documents the intended harness configuration shape. The current runtime does not load that TOML file; active server settings come from environment variables.
+Visit:
 
-Node.js 20.19 or newer is required by the Vite build toolchain.
+```text
+http://127.0.0.1:7381/
+```
 
-## Dashboard Development
+From the dashboard, use:
 
-The dashboard source lives in `ops-room/dashboard/`. Production output is generated in `ops-room/dist/dashboard/`.
+- **Overview** for fleet health and operational status.
+- **Agents** for runtime state, profiles, and assigned skills.
+- **Tasks, Workflows, and Activity** for current and historical work.
+- **Skills** for immutable skill versions and compatibility results.
+- **Memory** for declared read/write scopes.
+- **Settings** for safe runtime and deployment information.
+
+## Local Development
+
+Run the API and dashboard separately:
 
 ```bash
-# Terminal 1 — Ops Room APIs on port 7381
+# Terminal 1
+cd ops-room
 npm run dev
 
-# Terminal 2 — Vite SPA with /api proxying
+# Terminal 2
+cd ops-room
 npm run dev:dashboard
+```
 
-# Verification
+Before opening a pull request:
+
+```bash
 npm run typecheck
 npm test
 npm run build
 npm run smoke:instances
 ```
 
-## Read-only Agent Profile APIs
+## Documentation
 
-The following endpoints expose validated Git-backed profile policy from the in-memory registry initialized at startup:
+- [Detailed setup and usage guide](docs/USAGE.md)
+- [Canonical architecture and security boundaries](ARCHITECTURE.md)
+- [Environment configuration reference](.env.example)
+- [Agent profile definitions](config/agent-profiles/)
+- [Versioned skill manifests](config/skills/)
+- [Deployment tooling](ops-room/deploy/)
 
-- `GET /api/agents/profiles` — list normalized public profiles in agent-ID order.
-- `GET /api/agents/profiles/:id` — return one public profile; unknown IDs return `404`, while malformed IDs return `400`.
-- `GET /api/skills` — list validated skill versions while retaining the legacy `key` and `agents` fields.
-- `GET /api/skills/:key/:version` — return one immutable public manifest and per-agent compatibility results.
-- `GET /api/memory-spaces` — list declared memory scope strings with sorted readers and writers.
+## Repository Safety
 
-Profiles use schema version 2. Assignments are exact and immutable:
-
-```json
-{
-  "skills": [
-    { "key": "pull-request-review", "version": "1.0.0" }
-  ]
-}
-```
-
-Public profile responses intentionally preserve the existing key-only list and add explicit versioned results:
-
-```json
-{
-  "skills": ["pull-request-review"],
-  "skill_assignments": [
-    {
-      "key": "pull-request-review",
-      "version": "1.0.0",
-      "resolution_status": "resolved",
-      "compatibility": { "status": "compatible", "reasons": [] }
-    }
-  ]
-}
-```
-
-The APIs do not expose container bindings, images, data directories, source JSON paths, environment values, credential values, process details, mutable desired state, or complete skill instructions.
-
-## Read-only Skill Registry
-
-### Manifest root and schema
-
-Only files at this shape are discovered:
-
-```text
-config/skills/<lowercase-key>/<semantic-version>/manifest.json
-```
-
-A manifest contains immutable metadata and requirements:
-
-```json
-{
-  "schemaVersion": 1,
-  "key": "pull-request-review",
-  "version": "1.0.0",
-  "description": "Review pull requests for correctness, security, and maintainability risks.",
-  "supportedRuntimes": ["opencode"],
-  "requiredCommands": ["git", "gh"],
-  "requiredCredentials": ["github"],
-  "permissions": [
-    "repository.read",
-    "pull-request.read",
-    "pull-request.comment"
-  ]
-}
-```
-
-Validation rejects unsupported schemas, invalid keys or semantic versions, empty descriptions/runtime lists, unknown runtimes or permissions, duplicate values, wildcards, command arguments, absolute paths, traversal, symlinks, secret-looking fields, unexpected files, and key/version directory mismatches. Structural failures prevent the HTTP server from starting with a misleading registry.
-
-### Compatibility semantics
-
-Compatibility statuses are:
-
-- `compatible` — all declared requirements are known and present.
-- `incompatible` — a declared runtime, command, or credential-reference requirement is not satisfied.
-- `unknown` — a manifest is unresolved or required inspection data is unavailable.
-
-Stable reason codes include `unsupported_runtime`, `missing_command`, `missing_credential_reference`, `runtime_data_unavailable`, `credential_state_unknown`, and `manifest_unresolved`.
-
-Compatibility indicates declared requirements only. It does not prove that a skill is installed, materialized, activated, or executable. Manifests never supply command arguments and Ops Room never executes commands from them.
-
-### Credential-reference safety
-
-`requiredCredentials` contains logical names only. Configure safe presence checks with a JSON object that maps a logical name to an existing protected environment-variable name:
-
-```text
-OPS_ROOM_CREDENTIAL_REFERENCE_MAP={"github":"GITHUB_APP_KEY_PATH"}
-```
-
-The resolver reports only `present`, `missing`, or `unknown`. It never returns the target value, hash, length, prefix, or environment content. A missing or malformed mapping produces `unknown`; it does not expose configuration details or create credentials.
-
-### API contracts
-
-`GET /api/skills` retains `key` and `agents` and adds version, description, supported runtimes, declared requirements, permissions, and compatibility counts.
-
-`GET /api/skills/:key/:version` returns the public manifest plus deterministic assignment results. Unknown valid identifiers return `404`; malformed or traversal-like identifiers return `400` without filesystem access.
-
-The registry loads once during startup. Requests use only the in-memory registry and never read manifests from disk.
-
-### Immutable release behavior
-
-Release artifacts include the exact approved set of `config/skills/<key>/<version>/manifest.json` files. The builder validates the source tree before copying. Non-manifest files, extra manifests, traversal, symlinks, `.env`, secrets, runtime data, tests, provider homes, and dependencies are rejected or excluded.
-
-## Ops Room Dashboard
-
-Ops Room includes a read-only operational dashboard for the OpenAB fleet.
-
-- Local URL: `http://127.0.0.1:7381/` when the host systemd service is running.
-- Public URL: `https://ops-room.lihsheng.space/` after Cloudflare Access and the tunnel public hostname are configured.
-- SPA routes: `/`, `/agents`, `/agents/:id`, `/tasks`, `/workflows`, `/activity`, `/skills`, `/memory`, and `/settings`.
-- APIs: `/api/health`, `/api/openab/instances`, `/api/tasks`, `/api/logs`, `/api/agents/profiles`, `/api/skills`, and `/api/memory-spaces`.
-- Safety: the dashboard remains read-only. It does not expose restart, reload, config-edit, secret, install, execute, activate, or materialize controls.
-- Network boundary: host deployment binds `127.0.0.1` by default. Public traffic must pass through the configured Cloudflare Tunnel and Access policy.
-- Operator APIs: mutations are disabled unless `OPS_ROOM_OPERATOR_API_ENABLED=true` and a separate `OPS_ROOM_OPERATOR_TOKEN` is configured.
-- Knowledge: agents receive only the curated `OPENAB_AGENT_KNOWLEDGE_DIR` mount, read-only. Never point it at the whole Obsidian vault.
-
-### Agent Detail Page (`/agents/:id`)
-
-The read-only view joins profile policy with runtime state by stable agent ID. It shows exact skill versions, resolution, compatibility, safe reason codes, command presence, and credential-reference presence. Profile data remains visible when runtime inspection fails; runtime data remains visible when profile loading fails.
-
-### Skills Catalog (`/skills`)
-
-The catalog shows each immutable version, description, declaring agents, supported runtimes, requirement counts, and compatibility summary. Its read-only detail modal shows public permissions and per-agent assignment results without source paths, secret values, or complete skill content.
-
-### Memory Spaces (`/memory`)
-
-Memory scopes remain declarations from validated profiles. Ops Room does not inspect the Obsidian vault, browse notes, verify paths, perform memory search, or add write controls through this page.
-
-## Immutable Host Deployment
-
-Production releases should not pull or rebuild a mutable checkout:
-
-```bash
-cd ops-room
-npm ci --ignore-scripts
-npm run build
-npm run release:build -- "$(git rev-parse HEAD)" /tmp/ops-room-releases
-npm run release:verify -- /tmp/ops-room-releases/ops-room-<sha>.tar.gz <sha>
-```
-
-Install root-owned copies of `scripts/deploy/activate-release.sh`, `rollback-release.sh`, and the systemd template under `ops-room/deploy/`. Bind Node.js 20.19+ at `/opt/ops-room/bin/node`. Automatic deployment remains deferred.
-
-## What's Committed vs Local
-
-| Committed to Git | Kept Local |
-|---|---|
-| Safe examples, agent profiles, and skill manifests | Real agent configs and protected environment values |
-| `ops-room/src/` and `ops-room/dashboard/` source | `.env` with real secrets |
-| `docker-compose.yml` and scripts | `secrets/*.pem` private keys |
-| Documentation | `data/agents/`, workspaces, logs, tasks, and mutable state |
+Safe templates, source code, profile policy, skill manifests, and documentation are committed to Git. Real credentials, private keys, generated agent homes, workspaces, logs, tasks, and mutable runtime state must remain local.
 
 ## License
 
