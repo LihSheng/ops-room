@@ -25,10 +25,10 @@ const TRANSITIONS = new Map([
   ['FIX_PUSHED', new Set(['FIX_PUSHED'])],
   ['FIXING', new Set(['FIX_PUSHED', 'SUPERSEDED', 'CANCEL_REQUESTED', 'CANCELLED', 'NEEDS_HUMAN', 'ERROR'])],
   ['CANCEL_REQUESTED', new Set(['CANCELLED', 'SUPERSEDED', 'ERROR'])],
-  ['ERROR', new Set(['QUEUED', 'NEEDS_HUMAN'])],
-  ['NEEDS_HUMAN', new Set(['QUEUED'])],
-  ['SUPERSEDED', new Set(['QUEUED'])],
-  ['CANCELLED', new Set(['QUEUED'])],
+  ['ERROR', new Set(['QUEUED', 'FIX_QUEUED', 'NEEDS_HUMAN'])],
+  ['NEEDS_HUMAN', new Set(['QUEUED', 'FIX_QUEUED'])],
+  ['SUPERSEDED', new Set(['QUEUED', 'FIX_QUEUED'])],
+  ['CANCELLED', new Set(['QUEUED', 'FIX_QUEUED'])],
 ]);
 
 function safePart(value, fallback = 'unknown') {
@@ -99,6 +99,19 @@ function deduplicateTaskRecords(records) {
     }
   }
   return [...tasksById.values()].map(({ task }) => task);
+}
+
+function retryQueueState(task) {
+  return task.kind === 'fix' ? 'FIX_QUEUED' : 'QUEUED';
+}
+
+function operatorAction(operation, actor, reason) {
+  return {
+    operation,
+    actor: String(actor || 'unknown').slice(0, 100),
+    reason: String(reason || '').slice(0, 500),
+    requested_at: now(),
+  };
 }
 
 export function buildReviewTaskId({ repository, pr, headSha, agent, mode = 'review', taskType = 'review', commentId = null }) {
@@ -259,6 +272,7 @@ export async function requestCancellation({ dir, id, actor = 'unknown', reason =
     reason: to === 'CANCELLED' ? 'queued_cancellation_requested' : 'cancellation_requested',
     patch: {
       cancellation: { actor, reason, requested_at: now() },
+      last_operator_action: operatorAction('cancel', actor, reason),
     },
   });
 }
@@ -384,30 +398,44 @@ export async function recoverStaleTask({ dir, id, now: currentTime = now(), stal
   }
   const nextEpoch = (task.lease?.lease_epoch || 0) + 1;
   const retried = await transitionTask({
-    dir, id: taskId, to: 'QUEUED',
+    dir, id: taskId, to: retryQueueState(task),
     reason: 'stale_lease_requeued',
     patch: { attempt, lease: { lease_epoch: nextEpoch }, heartbeat_at: null },
   });
-  return { recovered: true, retry_allowed: true, re_dispatched: true, attempt };
+  return { recovered: true, retry_allowed: true, re_dispatched: true, attempt, task: retried };
 }
 
-export async function retryTask({ dir, id, reason = 'operator_retry' }) {
+export async function retryTask({ dir, id, actor = 'unknown', reason = 'requested' }) {
   const task = await readTask({ dir, id });
   if (!task) throw new Error(`Task not found: ${id}`);
   const retryableStates = new Set(['ERROR', 'NEEDS_HUMAN', 'SUPERSEDED', 'CANCELLED']);
   if (!retryableStates.has(task.state)) {
     throw new Error(`Cannot retry task in state: ${task.state}`);
   }
-  await releaseClaim({ dir, id });
   const attempt = (task.attempt || 0) + 1;
+  const configuredBudget = Number(task.policy?.retry_budget);
+  if (Number.isFinite(configuredBudget) && attempt > configuredBudget) {
+    throw new Error(`Retry budget exhausted: attempt ${attempt} exceeds ${configuredBudget}`);
+  }
+  await releaseClaim({ dir, id });
   return transitionTask({
-    dir, id, to: 'QUEUED',
-    reason,
-    patch: { attempt, lease: null, heartbeat_at: null, error: null, cancellation: null },
+    dir,
+    id,
+    to: retryQueueState(task),
+    reason: 'operator_retry',
+    patch: {
+      attempt,
+      lease: null,
+      heartbeat_at: null,
+      error: null,
+      cancellation: null,
+      completed_at: null,
+      last_operator_action: operatorAction('retry', actor, reason),
+    },
   });
 }
 
-export async function pauseTask({ dir, id, reason = 'operator_paused' }) {
+export async function pauseTask({ dir, id, actor = 'unknown', reason = 'requested' }) {
   const task = await readTask({ dir, id });
   if (!task) throw new Error(`Task not found: ${id}`);
   const pausableStates = new Set(['QUEUED', 'FIX_QUEUED']);
@@ -415,22 +443,34 @@ export async function pauseTask({ dir, id, reason = 'operator_paused' }) {
     throw new Error(`Cannot pause task in state: ${task.state}`);
   }
   return transitionTask({
-    dir, id, to: 'PAUSED',
-    reason,
-    patch: { paused_at: now(), pause_reason: reason },
+    dir,
+    id,
+    to: 'PAUSED',
+    reason: 'operator_paused',
+    patch: {
+      paused_at: now(),
+      pause_reason: reason,
+      last_operator_action: operatorAction('pause', actor, reason),
+    },
   });
 }
 
-export async function resumeTask({ dir, id, reason = 'operator_resumed' }) {
+export async function resumeTask({ dir, id, actor = 'unknown', reason = 'requested' }) {
   const task = await readTask({ dir, id });
   if (!task) throw new Error(`Task not found: ${id}`);
   if (task.state !== 'PAUSED') {
     throw new Error(`Cannot resume task in state: ${task.state}`);
   }
   return transitionTask({
-    dir, id, to: task.kind === 'fix' ? 'FIX_QUEUED' : 'QUEUED',
-    reason,
-    patch: { paused_at: null, pause_reason: null },
+    dir,
+    id,
+    to: retryQueueState(task),
+    reason: 'operator_resumed',
+    patch: {
+      paused_at: null,
+      pause_reason: null,
+      last_operator_action: operatorAction('resume', actor, reason),
+    },
   });
 }
 
