@@ -3,12 +3,13 @@ import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import {
   TASKS_DIR, REVIEW_TASKS_DIR, STATE_DIR, LOG_DIR, WORKSPACE_BASE, AUDIT_DIR, IDEMPOTENCY_DIR,
-  AGENT_PROFILES_DIR, OPENAB_SERVER_VERSION, REQUIRED_COMMANDS
+  AGENT_PROFILES_DIR, MEMORY_SPACE_MANIFESTS_DIR, OPENAB_SERVER_VERSION, REQUIRED_COMMANDS
 } from '../services/runtime-paths.js';
 import { processLifecycle } from '../services/process-lifecycle.js';
 import { readReleaseInfo } from '../services/release-info.js';
 import { getAgentProfileRegistryStatus } from '../services/agent-profile/registry.js';
 import { getSkillRegistryStatus } from '../services/skill-registry/registry.js';
+import { getMemorySpaceRegistryStatus } from '../services/memory-space-registry/registry.js';
 
 let cachedCommandStatus = null;
 let cachedAt = 0;
@@ -54,6 +55,7 @@ export async function handleHealth({
   releaseInfoFn = readReleaseInfo,
   profileStatusFn = getAgentProfileRegistryStatus,
   skillStatusFn = getSkillRegistryStatus,
+  memoryStatusFn = getMemorySpaceRegistryStatus,
   requiredCommands = REQUIRED_COMMANDS,
 } = {}) {
   let releaseInfo;
@@ -68,6 +70,7 @@ export async function handleHealth({
 
   const profileRegistry = profileStatusFn();
   const skillRegistry = skillStatusFn();
+  const memoryRegistry = memoryStatusFn();
   const commands = await getCommandStatus(commandExistsFn, requiredCommands);
   const dependencyEntries = await Promise.all([
     ['task_store', directoryCheckFn(TASKS_DIR)],
@@ -79,6 +82,7 @@ export async function handleHealth({
     ['workspace_store', directoryCheckFn(WORKSPACE_BASE)],
     ['agent_profiles', profileRegistry],
     ['skill_registry', skillRegistry],
+    ['memory_registry', memoryRegistry],
     ['release_identity', releaseIdentity],
     ...requiredCommands.map((command) => [
       `command_${command}`,
@@ -100,6 +104,7 @@ export async function handleHealth({
     lifecycle: lifecycleStatus,
     profiles: profileRegistry,
     skill_registry: skillRegistry,
+    memory_registry: memoryRegistry,
     dependencies,
     paths: {
       tasks_dir: TASKS_DIR,
@@ -108,6 +113,7 @@ export async function handleHealth({
       audit_dir: AUDIT_DIR,
       idempotency_dir: IDEMPOTENCY_DIR,
       agent_profiles_dir: AGENT_PROFILES_DIR,
+      memory_space_manifests_dir: MEMORY_SPACE_MANIFESTS_DIR,
       workspaces_dir: WORKSPACE_BASE,
     },
     commands,

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "key": "ops-room-implementation",
+  "version": "1.0.0",
+  "displayName": "Ops Room Implementation",
+  "description": "Reviewed implementation notes and delivery evidence produced for Ops Room.",
+  "kind": "project",
+  "publicationPath": "20_Projects/Ops-Room/Implementation",
+  "parentKey": "ops-room-project",
+  "writePolicy": "review-required",
+  "provenance": {
+    "requiredFields": ["agent_id", "task_id", "source_refs", "created_at"],
+    "reviewRequired": true
+  }
+}

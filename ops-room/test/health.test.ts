@@ -16,6 +16,12 @@ const healthySkills = (overrides = {}) => ({
   compatible_assignments: 11, incompatible_assignments: 0, unknown_assignments: 1,
   initialized_at: '2026-07-18T00:00:00.000Z', schema_version: 1, ...overrides,
 });
+const healthyMemory = (overrides = {}) => ({
+  status: 'ready', required: true, manifest_count: 12, assignment_count: 27,
+  read_assignments: 19, write_assignments: 8,
+  kind_counts: { project: 6, shared: 1, 'private-agent': 4, archive: 1 },
+  initialized_at: '2026-07-19T00:00:00.000Z', schema_version: 1, ...overrides,
+});
 
 function options(overrides = {}) {
   return {
@@ -24,11 +30,12 @@ function options(overrides = {}) {
     lifecycle: createProcessLifecycle(),
     profileStatusFn: healthyProfiles,
     skillStatusFn: healthySkills,
+    memoryStatusFn: healthyMemory,
     ...overrides,
   };
 }
 
-test('health reports bounded skill registry status without making compatibility unknown non-ready', async () => {
+test('health reports bounded skill and memory registry status without making compatibility unknown non-ready', async () => {
   const health = await handleHealth(options());
 
   assert.equal(health.status, 'ok');
@@ -36,11 +43,15 @@ test('health reports bounded skill registry status without making compatibility 
   assert.equal(health.profiles.count, 4);
   assert.equal(health.skill_registry.manifest_count, 12);
   assert.equal(health.skill_registry.unknown_assignments, 1);
+  assert.equal(health.memory_registry.manifest_count, 12);
+  assert.equal(health.memory_registry.write_assignments, 8);
   assert.equal('sources' in health.skill_registry, false);
   assert.equal('manifests' in health.skill_registry, false);
+  assert.equal('sources' in health.memory_registry, false);
+  assert.equal('manifests' in health.memory_registry, false);
   assert.deepEqual(Object.keys(health.dependencies), [
     'task_store', 'review_task_store', 'state_store', 'log_store', 'audit_store', 'idempotency_store',
-    'workspace_store', 'agent_profiles', 'skill_registry', 'release_identity', 'command_git', 'command_gh',
+    'workspace_store', 'agent_profiles', 'skill_registry', 'memory_registry', 'release_identity', 'command_git', 'command_gh',
   ]);
 });
 
@@ -59,7 +70,7 @@ test('health becomes non-ready while draining or when a critical store fails', a
   assert.equal(health.dependencies.command_git.status, 'error');
 });
 
-test('structurally invalid profile or skill registry makes health non-ready', async () => {
+test('structurally invalid profile, skill, or memory registry makes health non-ready', async () => {
   const profileHealth = await handleHealth(options({
     profileStatusFn: () => ({ status: 'error', required: true, count: 0, initialized_at: null, schema_version: 2 }),
   }));
@@ -71,6 +82,12 @@ test('structurally invalid profile or skill registry makes health non-ready', as
   }));
   assert.equal(skillHealth.ready, false);
   assert.equal(skillHealth.dependencies.skill_registry.status, 'error');
+
+  const memoryHealth = await handleHealth(options({
+    memoryStatusFn: () => healthyMemory({ status: 'error', manifest_count: 0 }),
+  }));
+  assert.equal(memoryHealth.ready, false);
+  assert.equal(memoryHealth.dependencies.memory_registry.status, 'error');
 });
 
 test('health checks configured critical commands beyond the default report set', async () => {

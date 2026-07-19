@@ -1,6 +1,5 @@
 import { getAgentProfile, listAgentProfiles } from '../services/agent-profile/registry.js';
 import { toPublicAgentProfile } from '../services/agent-profile/public-profile.js';
-import { buildMemorySpaceCatalog } from '../services/agent-profile/catalogs.js';
 import {
   getSkillAssignmentsForAgent,
   getSkillManifest,
@@ -13,6 +12,18 @@ import {
   toPublicSkillDetail,
 } from '../services/skill-registry/public-skill.js';
 import { isValidSemanticVersion, SKILL_KEY_PATTERN } from '../services/skill-registry/schema.js';
+import {
+  getMemoryAssignmentsForAgent,
+  getMemorySpaceManifest,
+  listMemoryAssignments,
+  listMemorySpaceManifests,
+} from '../services/memory-space-registry/registry.js';
+import {
+  buildPublicMemorySpaceCatalog,
+  toPublicMemorySpace,
+  toPublicProfileMemoryAssignments,
+} from '../services/memory-space-registry/public-memory-space.js';
+import { MEMORY_SPACE_KEY_PATTERN } from '../services/memory-space-registry/schema.js';
 
 const SAFE_AGENT_ID = /^[a-z][a-z0-9-]*$/;
 
@@ -22,6 +33,7 @@ function publicProfile(profile) {
   return {
     ...toPublicAgentProfile(profile),
     skill_assignments: toPublicProfileSkillAssignments(profile, getSkillAssignmentsForAgent(profile.id)),
+    memory_assignments: toPublicProfileMemoryAssignments(profile, getMemoryAssignmentsForAgent(profile.id)),
   };
 }
 
@@ -74,8 +86,19 @@ export function handleReadOnlyAgentProfileApi(pathname: string): ReadOnlyApiResu
   }
 
   if (pathname === '/api/memory-spaces') {
-    const memorySpaces = buildMemorySpaceCatalog(listAgentProfiles());
+    const memorySpaces = buildPublicMemorySpaceCatalog(listMemorySpaceManifests(), listMemoryAssignments());
     return { status: 200, body: { memory_spaces: memorySpaces, count: memorySpaces.length } };
+  }
+
+  const memoryDetailMatch = pathname.match(/^\/api\/memory-spaces\/([^/]+)$/);
+  if (memoryDetailMatch) {
+    const key = decodeRouteValue(memoryDetailMatch[1]);
+    if (key === null || !MEMORY_SPACE_KEY_PATTERN.test(key)) {
+      return { status: 400, body: { error: 'invalid_memory_space_key' } };
+    }
+    const manifest = getMemorySpaceManifest(key);
+    if (!manifest) return { status: 404, body: { error: 'memory_space_not_found', key } };
+    return { status: 200, body: { memory_space: toPublicMemorySpace(manifest, listMemoryAssignments()) } };
   }
 
   return null;

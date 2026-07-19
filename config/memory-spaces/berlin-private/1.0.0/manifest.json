@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "key": "berlin-private",
+  "version": "1.0.0",
+  "displayName": "Berlin Private Memory",
+  "description": "Curated private working memory reserved for the Berlin agent identity.",
+  "kind": "private-agent",
+  "publicationPath": "90_Agents/berlin",
+  "ownerAgent": "berlin",
+  "writePolicy": "review-required",
+  "provenance": {
+    "requiredFields": ["agent_id", "task_id", "source_refs", "created_at"],
+    "reviewRequired": true
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "key": "linkup-project",
+  "version": "1.0.0",
+  "displayName": "LinkUp Project",
+  "description": "Curated project knowledge published for LinkUp architecture, implementation, and product context.",
+  "kind": "project",
+  "publicationPath": "20_Projects/LinkUp",
+  "writePolicy": "read-only",
+  "provenance": {
+    "requiredFields": [],
+    "reviewRequired": false
+  }
+}

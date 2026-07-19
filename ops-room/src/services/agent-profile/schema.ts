@@ -3,6 +3,7 @@ export const AGENT_PROFILE_SCHEMA_VERSION = 2;
 export const SUPPORTED_PROFILE_BACKENDS = new Set(['opencode', 'gemini']);
 const SEMANTIC_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const SKILL_KEY_PATTERN = /^[a-z][a-z0-9-]*$/;
+const MEMORY_SPACE_KEY_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 export type AgentSkillAssignment = {
   key: string;
@@ -54,6 +55,21 @@ function duplicateValues(values: string[]) {
     seen.add(value);
   }
   return [...duplicates];
+}
+
+function validateMemoryKeys(value: unknown, field: string, source: string, issues: string[]) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    issues.push(`${source}: ${field} must be a string array`);
+    return;
+  }
+  const keys = value as string[];
+  for (const key of keys) {
+    if (!MEMORY_SPACE_KEY_PATTERN.test(key)) {
+      issues.push(`${source}: ${field} entries must be normalized logical memory-space keys`);
+    }
+  }
+  const duplicates = duplicateValues(keys);
+  if (duplicates.length) issues.push(`${source}: duplicate ${field} assignments: ${duplicates.join(', ')}`);
 }
 
 function validateSkillAssignments(value: unknown, source: string, issues: string[]): value is AgentSkillAssignment[] {
@@ -127,12 +143,8 @@ export function validateAgentProfile(value: unknown, source: string): AgentProfi
   if (!profile.memory || typeof profile.memory !== 'object') {
     issues.push(`${source}: memory policy is required`);
   } else {
-    if (!Array.isArray(profile.memory.read) || !profile.memory.read.every((item) => typeof item === 'string')) {
-      issues.push(`${source}: memory.read must be a string array`);
-    }
-    if (!Array.isArray(profile.memory.write) || !profile.memory.write.every((item) => typeof item === 'string')) {
-      issues.push(`${source}: memory.write must be a string array`);
-    }
+    validateMemoryKeys(profile.memory.read, 'memory.read', source, issues);
+    validateMemoryKeys(profile.memory.write, 'memory.write', source, issues);
   }
   if (!isStringArray(profile.repositories)) {
     issues.push(`${source}: repositories must be a non-empty string array`);

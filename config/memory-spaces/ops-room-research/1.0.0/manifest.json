@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "key": "ops-room-research",
+  "version": "1.0.0",
+  "displayName": "Ops Room Research",
+  "description": "Reviewed technical and product research prepared for Ops Room decisions.",
+  "kind": "project",
+  "publicationPath": "20_Projects/Ops-Room/Research",
+  "parentKey": "ops-room-project",
+  "writePolicy": "review-required",
+  "provenance": {
+    "requiredFields": ["agent_id", "task_id", "source_refs", "created_at"],
+    "reviewRequired": true
+  }
+}

@@ -23,7 +23,7 @@ function minimalProfile(overrides = {}) {
     schemaVersion: 2,
     id: 'professor',
     displayName: 'Professor',
-    profileVersion: '2.0.0',
+    profileVersion: '2.1.0',
     mission: 'Build software.',
     personality: {
       communicationStyle: 'Structured.',
@@ -39,15 +39,16 @@ function minimalProfile(overrides = {}) {
   };
 }
 
-test('loads canonical schema-v2 profiles with exact skill versions', async () => {
+test('loads canonical schema-v2 profiles with exact skill versions and logical memory keys', async () => {
   const { root, dir } = await fixture();
   try {
     const loaded = await loadAgentProfiles(dir);
     assert.deepEqual(loaded.profiles.map((profile) => profile.id), ['berlin', 'gemini', 'professor', 'tokyo']);
     for (const profile of loaded.profiles) {
       assert.equal(profile.schemaVersion, 2);
-      assert.equal(profile.profileVersion, '2.0.0');
+      assert.equal(profile.profileVersion, '2.1.0');
       assert.ok(profile.skills.every((skill) => skill.key && skill.version === '1.0.0'));
+      assert.ok([...profile.memory.read, ...profile.memory.write].every((key) => /^[a-z][a-z0-9-]*$/.test(key)));
     }
 
     resetAgentProfileRegistryForTests();
@@ -71,7 +72,7 @@ test('rejects malformed JSON', async () => {
   }
 });
 
-test('rejects old schema, unversioned skills, duplicate keys, and invalid semantic versions', async () => {
+test('rejects old schema, unversioned skills, duplicate keys, invalid semantic versions, and path-shaped memory values', async () => {
   const { root, dir } = await fixture();
   try {
     await writeFile(join(dir, 'professor.json'), JSON.stringify(minimalProfile({
@@ -81,6 +82,7 @@ test('rejects old schema, unversioned skills, duplicate keys, and invalid semant
         { key: 'implementation', version: '1.0.0' },
         { key: 'implementation', version: 'latest' },
       ],
+      memory: { read: ['20_Projects/Ops-Room'], write: [] },
     })));
     await assert.rejects(() => loadAgentProfiles(dir), (error) => {
       assert.ok(error instanceof AgentProfileValidationError);
@@ -88,6 +90,7 @@ test('rejects old schema, unversioned skills, duplicate keys, and invalid semant
       assert.match(error.message, /profileVersion must be semantic version format/);
       assert.match(error.message, /duplicate skill assignments/);
       assert.match(error.message, /version must be a valid semantic version/);
+      assert.match(error.message, /normalized logical memory-space keys/);
       return true;
     });
   } finally {

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "key": "ops-room-shared",
+  "version": "1.0.0",
+  "displayName": "Ops Room Shared Memory",
+  "description": "Curated cross-agent operating context approved for all Ops Room agents.",
+  "kind": "shared",
+  "publicationPath": "90_Shared/Ops-Room",
+  "writePolicy": "read-only",
+  "provenance": {
+    "requiredFields": [],
+    "reviewRequired": false
+  }
+}

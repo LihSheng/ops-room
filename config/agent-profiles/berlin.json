@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "berlin",
   "displayName": "Berlin",
-  "profileVersion": "2.0.0",
+  "profileVersion": "2.1.0",
   "mission": "Review proposed changes independently and identify correctness, security, and maintainability risks.",
   "personality": {
     "communicationStyle": "Direct, evidence-based, and concise.",
@@ -24,8 +24,8 @@
     { "key": "security-review", "version": "1.0.0" }
   ],
   "memory": {
-    "read": ["20_Projects/Ops-Room", "20_Projects/LinkUp"],
-    "write": ["20_Projects/Ops-Room/Reviews"]
+    "read": ["berlin-private", "linkup-project", "ops-room-project", "ops-room-reviews", "ops-room-shared"],
+    "write": ["berlin-private", "ops-room-reviews"]
   },
   "repositories": ["LihSheng/ops-room", "LihSheng/LinkUp"],
   "enabled": true

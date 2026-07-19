@@ -8,6 +8,20 @@ export interface ProfileSkillAssignment {
   requirements: SkillRequirements;
 }
 
+export interface ProfileMemoryAssignment {
+  key: string;
+  version: string;
+  access: 'read' | 'write';
+  display_name: string;
+  kind: 'project' | 'shared' | 'private-agent' | 'archive';
+  publication_path: string;
+  write_policy: 'read-only' | 'review-required';
+  provenance: {
+    required_fields: string[];
+    review_required: boolean;
+  };
+}
+
 export interface PublicAgentProfile {
   id: string;
   display_name: string;
@@ -27,6 +41,10 @@ export interface PublicAgentProfile {
   memory: {
     read: string[];
     write: string[];
+  };
+  memory_assignments: {
+    read: ProfileMemoryAssignment[];
+    write: ProfileMemoryAssignment[];
   };
   repositories: string[];
   enabled: boolean;
