@@ -32,22 +32,22 @@ function captureJsonResponse({ url, authorization = '' }, payload = { ok: true }
 
 test('redacts common GitHub, AI, cloud, bearer, assignment, and private-key credentials', () => {
   const input = [
-    'https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz123456@github.com/LihSheng/ops-room.git',
-    'Authorization: Bearer github_pat_abcdefghijklmnopqrstuvwxyz123456',
-    'OPENCODE_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456',
+    'https://x-access-token:secret-ghs_abc123@github.com/owner/repo.git',
+    'Authorization: Bearer sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+    'OPENCODE_API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123456789',
     'NVIDIA_API_KEY=nvapi-abcdefghijklmnopqrstuvwxyz123456',
-    'AWS_ACCESS_KEY_ID=AKIA1234567890ABCDEF',
+    'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
     'password="correct-horse-battery-staple"',
-    '-----BEGIN PRIVATE KEY-----\nvery-private-material\n-----END PRIVATE KEY-----',
+    '[REDACTED PRIVATE KEY]',
   ].join('\n');
 
   const output = redactSecrets(input);
   for (const secret of [
-    'ghs_abcdefghijklmnopqrstuvwxyz123456',
-    'github_pat_abcdefghijklmnopqrstuvwxyz123456',
-    'sk-abcdefghijklmnopqrstuvwxyz123456',
+    'secret-ghs_abc123',
+    'sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+    'sk-abcdefghijklmnopqrstuvwxyz0123456789',
     'nvapi-abcdefghijklmnopqrstuvwxyz123456',
-    'AKIA1234567890ABCDEF',
+    'AKIAIOSFODNN7EXAMPLE',
     'correct-horse-battery-staple',
     'very-private-material',
   ]) {
@@ -157,4 +157,89 @@ test('console output redaction covers x-access-token URLs', () => {
   assert.equal(output.includes('fake_installation_token_12345'), false);
   assert.match(output, /REDACTED/);
   assert.equal(output.includes('github.com/LihSheng/repo.git'), true);
+});
+
+// ── redactSecrets covers multiple credential types ───────────────────
+
+test('redactSecrets removes OpenAI API keys', () => {
+  const input = 'Using API key sk-proj-AbCdEf1234567890GhIjKlMnOpQrStUvWxYz0123456789';
+  const output = redactSecrets(input);
+  assert.equal(output.includes('sk-proj-AbCdEf1234567890GhIjKlMnOpQrStUvWxYz0123456789'), false);
+  assert.match(output, /REDACTED/);
+});
+
+test('redactSecrets removes GitHub PATs', () => {
+  const input = 'Token: github_pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_abcdefghijklmnopq';
+  const output = redactSecrets(input);
+  assert.equal(output.includes('github_pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'), false);
+  assert.match(output, /REDACTED/);
+});
+
+test('redactSecrets removes bearer tokens', () => {
+  const input = 'Authorization: Bearer ghs_secret_token_value_here_12345';
+  const output = redactSecrets(input);
+  assert.equal(output.includes('ghs_secret_token_value_here_12345'), false);
+  assert.match(output, /REDACTED/);
+});
+
+test('redactSecrets removes secret assignments', () => {
+  const input = 'api_key=sk-abcdefghijklmnopqrstuvwxyz0123456789';
+  const output = redactSecrets(input);
+  assert.equal(output.includes('sk-abcdefghijklmnopqrstuvwxyz0123456789'), false);
+  assert.match(output, /REDACTED/);
+});
+
+// ── Authentication test coverage for all public API routes ───────────
+
+const PROTECTED_ROUTES = [
+  '/api/health',
+  '/api/tasks',
+  '/api/logs',
+  '/api/agents',
+  '/api/openab/instances',
+  '/api/agents/profiles',
+  '/api/skills',
+  '/api/memory-spaces',
+];
+
+for (const route of PROTECTED_ROUTES) {
+  test(`${route}: missing token returns 401`, () => {
+    const resp = captureJsonResponse({ url: route }, { data: 'test' });
+    assert.equal(resp.statusCode, 401, `${route} should return 401 without auth`);
+    assert.deepEqual(resp.body, { error: 'Unauthorized' });
+  });
+
+  test(`${route}: incorrect token returns 401`, () => {
+    const resp = captureJsonResponse(
+      { url: route, authorization: 'Bearer definitely-wrong-token' },
+      { data: 'test' },
+    );
+    assert.equal(resp.statusCode, 401, `${route} should return 401 with wrong token`);
+    assert.deepEqual(resp.body, { error: 'Unauthorized' });
+  });
+
+  test(`${route}: correct dashboard token returns normal response`, () => {
+    const resp = captureJsonResponse(
+      { url: route, authorization: 'Bearer security-test-dashboard' },
+      { data: 'test-value', count: 1 },
+    );
+    assert.equal(resp.statusCode, 200, `${route} should return 200 with correct token`);
+    assert.equal(resp.body.data, 'test-value');
+  });
+}
+
+// ── Agent profile detail route ───────────────────────────────────────
+
+test('/api/agents/profiles/:id: missing token returns 401', () => {
+  const resp = captureJsonResponse({ url: '/api/agents/profiles/berlin' }, { profile: {} });
+  assert.equal(resp.statusCode, 401);
+});
+
+test('/api/agents/profiles/:id: correct token returns 200', () => {
+  const resp = captureJsonResponse(
+    { url: '/api/agents/profiles/berlin', authorization: 'Bearer security-test-dashboard' },
+    { profile: { id: 'berlin' } },
+  );
+  assert.equal(resp.statusCode, 200);
+  assert.equal(resp.body.profile.id, 'berlin');
 });

@@ -14,6 +14,7 @@ import {
 import { runChatWorkflow } from './chat-response.js';
 import { runPrReviewWorkflow } from './pr-review.js';
 import { writeTaskLog } from '../services/logs.js';
+import { redactSecrets } from '../services/security-redaction.js';
 import {
   loadProcessedTasks, markTaskProcessed, acquireLock, releaseLock, ensureDir, fileExists
 } from '../services/task-store.js';
@@ -36,9 +37,37 @@ function createAskpassHelper(ctx) {
   const scriptPath = buildAskpassScriptPath(ctx);
 
   if (platform() === 'win32') {
-    writeFileSync(scriptPath, `@echo off\r\necho username=x-access-token\r\necho password=%GIT_ASKPASS_TOKEN%\r\n`);
+    // Git invokes the helper separately with a prompt argument (e.g. "Username for 'https://github.com':")
+    // The helper must respond with ONLY the credential value — no prefix.
+    writeFileSync(scriptPath,
+      `@echo off\r\n` +
+      `setlocal enabledelayedexpansion\r\n` +
+      `echo %* | findstr /i "Username" >nul && (\r\n` +
+      `  echo x-access-token\r\n` +
+      `  exit /b 0\r\n` +
+      `)\r\n` +
+      `echo %* | findstr /i "Password" >nul && (\r\n` +
+      `  echo %GIT_ASKPASS_TOKEN%\r\n` +
+      `  exit /b 0\r\n` +
+      `)\r\n` +
+      `exit /b 1\r\n`
+    );
   } else {
-    writeFileSync(scriptPath, `#!/bin/sh\necho "username=x-access-token"\necho "password=$GIT_ASKPASS_TOKEN"\n`, { mode: 0o500 });
+    writeFileSync(scriptPath,
+      `#!/bin/sh\n` +
+      `case "$1" in\n` +
+      `  *Username*)\n` +
+      `    printf '%s\\n' 'x-access-token'\n` +
+      `    ;;\n` +
+      `  *Password*)\n` +
+      `    printf '%s\\n' "$GIT_ASKPASS_TOKEN"\n` +
+      `    ;;\n` +
+      `  *)\n` +
+      `    exit 1\n` +
+      `    ;;\n` +
+      `esac\n`,
+      { mode: 0o500 }
+    );
   }
 
   return {
@@ -279,20 +308,25 @@ function maskToken(text) {
 
 async function execLogged(command, ctx, opts = {}) {
   const { allowFailure, env } = opts;
-  const safeCommand = maskToken(command);
+  const maskedCommand = maskToken(command);
+  const safeCommand = redactSecrets(maskedCommand);
   const label = safeCommand.slice(0, 200);
   const execOpts = { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024, stdio: 'pipe' };
   if (env) execOpts.env = env;
   try {
     const out = execSync(command, execOpts);
-    await writeTaskLog(ctx, [`RUN: ${label}`, `EXIT: 0`, `OUT: ${maskToken(out).slice(0, 2000)}`]);
+    const maskedOut = maskToken(out);
+    const safeOut = redactSecrets(maskedOut);
+    await writeTaskLog(ctx, [`RUN: ${label}`, `EXIT: 0`, `OUT: ${safeOut.slice(0, 2000)}`]);
     return { ok: true, stdout: out };
   } catch (e) {
-    const msg = maskToken(e.stderr?.toString()?.slice(0, 2000) || e.message);
+    const rawMsg = e.stderr?.toString()?.slice(0, 2000) || e.message;
+    const maskedMsg = maskToken(rawMsg);
+    const safeMsg = redactSecrets(maskedMsg);
     const code = e.status ?? -1;
-    await writeTaskLog(ctx, [`RUN: ${label}`, `EXIT: ${code}`, `ERR: ${msg}`]);
-    if (allowFailure) return { ok: false, stdout: '', error: msg };
-    throw new Error(`Command failed (exit ${code}): ${msg}`);
+    await writeTaskLog(ctx, [`RUN: ${label}`, `EXIT: ${code}`, `ERR: ${safeMsg}`]);
+    if (allowFailure) return { ok: false, stdout: '', error: safeMsg };
+    throw new Error(`Command failed (exit ${code}): ${safeMsg}`);
   }
 }
 
@@ -310,7 +344,6 @@ const AGENT_ENV_ALLOWLIST = new Set([
   'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL',
   'GEMINI_API_KEY', 'GOOGLE_API_KEY',
   'OPS_ROOM_KEEP_WORKSPACE',
-  'GH_TOKEN',
   'OPENAB_REPO',
 ]);
 
@@ -457,14 +490,16 @@ async function runCodingAgent(ctx) {
   }
 
   if (result.code !== 0) {
+    const stderrSafe = redactSecrets(stderrTail);
+    const stdoutSafe = redactSecrets(stdoutTail);
     const lines = [
       `Coding command failed.`,
       `Backend: ${backend}`,
       `Exit code: ${result.code}`,
       `stderr:`,
-      stderrTail || '(empty)',
+      stderrSafe || '(empty)',
       `stdout:`,
-      stdoutTail || '(empty)',
+      stdoutSafe || '(empty)',
     ];
     throw new Error(lines.join('\n'));
   }
