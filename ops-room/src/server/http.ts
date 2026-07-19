@@ -8,6 +8,7 @@ import {
   LIFECYCLE_DIR, OPENAB_SERVER_VERSION, OPERATOR_API_ENABLED, SHUTDOWN_TIMEOUT_MS, ISSUE_POLLING_ENABLED,
   AGENT_LIFECYCLE_ENABLED, AGENT_LIFECYCLE_ALLOWED_AGENTS, AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS,
   AGENT_LIFECYCLE_DRAIN_POLL_MS, AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS,
+  AGENT_LIFECYCLE_START_TIMEOUT_SECONDS,
 } from '../services/runtime-paths.js';
 import { initDirs } from '../services/task-store.js';
 import '../services/logs.js';
@@ -35,13 +36,20 @@ import { handleAgentsList } from '../routes/agents.js';
 import { handleOpenABInstances } from '../routes/openab-instances.js';
 import { handleStaticApp } from '../routes/static-app.js';
 import { handleOperatorTaskAction, type OperatorTaskAction } from '../routes/operator-tasks.js';
-import { canDispatchAgentFromLifecycle, handleOperatorAgentStop } from '../routes/operator-agents.js';
+import {
+  canDispatchAgentFromLifecycle,
+  handleOperatorAgentStart,
+  handleOperatorAgentStop,
+} from '../routes/operator-agents.js';
 import { handleAuditEventDetail, handleAuditEventsList } from '../routes/audit-events.js';
 import { handleReadOnlyAgentProfileApi } from '../routes/agent-profiles.js';
 import { recoverInterruptedAgentLifecycleStates } from '../services/agent-lifecycle-store.js';
 import { resolveOperatorIdentity } from '../services/operator-identity.js';
 import { sendJSON, verifyAuth, verifyOperatorAuth, parseBody } from '../routes/helpers.js';
 import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.js';
+import { createFreshRuntimeInspector } from '../services/runtime-adapter/registry.js';
+
+const freshRuntimeSnapshot = createFreshRuntimeInspector();
 
 const reviewStatus = createGitHubReviewStatusService({
   getCommitStatuses: async ({ sha, agent }) => getCommitStatuses(sha, agent),
@@ -445,6 +453,33 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const operatorAgentStartMatch = pathname.match(
+    /^\/api\/operator\/agents\/([A-Za-z0-9._-]+)\/start$/,
+  );
+  if (req.method === 'POST' && operatorAgentStartMatch) {
+    const actor = requireAgentLifecycleMutation(req, res);
+    if (!actor) return;
+    try {
+      const body = await parseBody(req);
+      const result = await handleOperatorAgentStart({
+        agentId: operatorAgentStartMatch[1],
+        body,
+        actor,
+        reviewTasksDir: REVIEW_TASKS_DIR,
+        lifecycleDir: LIFECYCLE_DIR,
+        auditDir: AUDIT_DIR,
+        idempotencyDir: IDEMPOTENCY_DIR,
+        allowedAgents: AGENT_LIFECYCLE_ALLOWED_AGENTS,
+        startTimeoutSeconds: AGENT_LIFECYCLE_START_TIMEOUT_SECONDS,
+        freshRuntimeSnapshot,
+      });
+      sendJSON(res, result.status, result.body);
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Agent start failed' });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && pathname === '/api/audit-events') {
     if (!requireOperatorMutation(req, res)) return;
     const data = await handleAuditEventsList(searchParams, { auditDir: AUDIT_DIR });
@@ -674,6 +709,7 @@ server.listen(PORT, HOST, () => {
   console.log(`  GET  /api/agents  - List agents`);
   console.log(`  GET  /api/openab/instances - OpenAB instance dashboard`);
   if (AGENT_LIFECYCLE_ENABLED) console.log(`  POST /api/operator/agents/:agent/stop - Guarded graceful stop`);
+  if (AGENT_LIFECYCLE_ENABLED) console.log(`  POST /api/operator/agents/:agent/start - Guarded graceful start`);
   console.log(`  WORKSPACE_BASE   - ${WORKSPACE_BASE}`);
 });
 

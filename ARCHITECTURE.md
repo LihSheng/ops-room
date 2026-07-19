@@ -201,16 +201,36 @@ Accepted and rejected requests use the stable audit operation `agent.stop`.
 
 ### State model
 
-Durable per-agent records under the lifecycle store separate desired state and operation phase from read-only observed runtime state.
+Durable per-agent records under the lifecycle store separate desired state and operation phase from read-only runtime observation.
 
 Current phases are:
 
 ```text
 unmanaged → draining → stopping → stopped
                   ↘ failed ↗
+
+unmanaged → starting → running
+                  ↘ failed ↗
 ```
 
-`failed` records a bounded failure or interrupted operation. A later reviewed start slice may add `starting` and explicit `running` phases.
+`starting` and `running` phases were added alongside the guarded-start endpoint (OPS-008B). `failed` records a bounded failure or interrupted operation. The `running` terminal phase indicates durable convergence, while `starting` blocks task dispatch until the convergence watch completes.
+
+### Start endpoint and eligibility
+
+```text
+POST /api/operator/agents/:agentId/start
+```
+
+Same eligibility rules as stop: requires operator API + lifecycle feature flag, allowlist presence, and `guarded-test` lifecycle control in agent definitions. Gemini is the only current eligible target.
+
+Every request requires the same preconditions as stop:
+
+- authenticated stable operator identity;
+- bounded human reason;
+- client-generated idempotency key;
+- `confirm_agent_id` exactly matching the path target.
+
+Accepted and rejected requests use the stable audit operation `agent.start`.
 
 ### Drain and dispatch rules
 
@@ -238,13 +258,75 @@ If read-only observation already reports an exited, dead, missing, or stopped ru
 
 Lifecycle mutations are serialized globally in the current process, limiting the 2 CPU / 8 GB host to one heavy runtime action at a time.
 
-Startup does not replay an interrupted external command. Records left in `draining` or `stopping` are converted to `failed` with bounded interruption evidence. Operators must inspect desired and observed state before any manual recovery.
+Startup does not replay an interrupted external command. Records left in `draining` or `stopping` are converted to `failed` with bounded interruption evidence. Records left in `starting` also convert to `failed`, preserving `desired_state=running`. Operators must inspect desired and observed state before any manual recovery.
+
+### Guarded start flow (OPS-008B)
+
+The start handler uses strict observation allowlisting before executing any command:
+
+| Observation | Classification | Action |
+|---|---|---|
+| `running` + health `healthy` or `none` | Adoptable | Audited no-op adoption, zero commands |
+| `running` + health `starting` | Unapproved | Rejected with `runtime_observation_unexpected` |
+| `running` + health `unhealthy` | Unapproved | Rejected with `runtime_observation_unexpected` |
+| `exited`, `dead`, `stopped` | Startable | Guarded start: `docker start <container>` |
+| `unknown`, `unavailable`, `missing` | Non-observable | Rejected with `runtime_observation_<status>` |
+| `created`, `paused`, `restarting`, `removing` | Non-approved | Rejected with `runtime_observation_unexpected` |
+
+**Approved health states** are `healthy` and `none` (no health check configured). All other health values (`starting`, `unhealthy`, `unknown`) prevent adoption.
+
+#### Adoption path (already running)
+
+When `desired_state=running` + `phase=running` + observed is running with approved health, the handler records an audited no-op with `command_executed=false` and returns the current convergence status. No Docker command is executed.
+
+#### OPS-008A mismatch resolution
+
+When `desired_state=stopped` + `phase=stopped` + observed is running with approved health, the handler transitions the record to `desired_state=running` + `phase=running` without executing any command. This absorbs containers that were manually started after a stop.
+
+#### Recovery path (durable running, observed startable)
+
+When `desired_state=running` + `phase=running` + observed is a startable state (exited, dead, stopped), the handler enters the guarded-start path rather than rejecting. This allows recovery of a previously converged container that later exited.
+
+#### Guarded start with convergence watch
+
+For startable observations:
+
+1. Persist `desired_state=running` + `phase=starting` (blocks task dispatch).
+2. Execute `docker start <container>` via the lifecycle controller (fixed args, no shell).
+3. Poll convergence for up to `OPS_ROOM_AGENT_LIFECYCLE_START_TIMEOUT_SECONDS` (default 30s, minimum 1s).
+4. Convergence requires running status **and** approved health. `running` + `unhealthy` fails fast with `runtime_start_convergence_unhealthy`.
+5. On timeout, persist `phase=failed` with `last_error=runtime_start_convergence_timeout` (or `unhealthy`), append failed audit event, return HTTP 504.
+6. On convergence, persist `phase=running`, append accepted audit event, return HTTP 202.
+
+#### Cache-bypass for convergence polling
+
+The `freshRuntimeSnapshot` parameter allows the production harness to inject an uncached inspection function for convergence polling. When set, the convergence loop uses this fresh view instead of the potentially stale cached `getRuntimeSnapshot`. This prevents false convergence timeouts when the Docker inspector cache TTL (5s) exceeds the configured start timeout.
+
+#### Start-time timeout minimum
+
+`OPS_ROOM_AGENT_LIFECYCLE_START_TIMEOUT_SECONDS` enforces a minimum of 1 second. Operators configuring this below the established Docker inspector cache TTL should also provide a fresh inspection path to avoid false negative convergence.
+
+### Runtime mutation boundary
+
+After drain succeeds, the selected lifecycle controller may execute only:
+
+```text
+docker stop --time <bounded-seconds> <validated-container-name>
+```
+
+For start, the controller executes only:
+
+```text
+docker start <validated-container-name>
+```
+
+Both commands use a fixed executable and argument array without a shell. Container names and timeout values are bounded. Stdout and stderr are suppressed. Errors returned to APIs and audit records are normalized and do not expose provider or host details.
 
 ### Explicit boundary retained
 
-This slice adds no start, restart, kill, force stop, recreate, automatic reconciliation, arbitrary Docker command execution, Docker socket exposure, browser lifecycle control, RBAC, automatic idle stop, provider session creation, or production-agent lifecycle authority.
+This slice adds no restart, kill, force stop, recreate, automatic reconciliation, arbitrary Docker command execution, Docker socket exposure, browser lifecycle control, RBAC, automatic idle stop, provider session creation, or production-agent lifecycle authority (Professor, Berlin, Tokyo remain lifecycle-disabled).
 
-Disabling the lifecycle endpoint does not restart a stopped agent. Until a reviewed start slice exists, recovery uses a separately approved manual runtime procedure.
+Disabling the lifecycle endpoint does not restart a stopped agent. Recovery uses the explicitly confirmed start endpoint when the lifecycle feature flag is re-enabled.
 
 ## Runtime and Shutdown
 
@@ -258,7 +340,7 @@ On SIGTERM/SIGINT, Ops Room:
 4. waits for tracked review/fix/poller operations up to `OPS_ROOM_SHUTDOWN_TIMEOUT_MS`;
 5. exits non-zero on timeout so systemd and startup reconciliation can recover durable work;
 6. removes dead legacy issue locks during next startup;
-7. converts interrupted agent lifecycle `draining` or `stopping` records to `failed` on the next start rather than replaying runtime commands.
+7. converts interrupted agent lifecycle `draining` or `stopping` records to `failed` on the next start rather than replaying runtime commands. `starting` records also convert to `failed`, preserving `desired_state=running`.
 
 Legacy issue coding/chat work does not yet have the full durable effect ledger used by review/fix tasks. Production deployment must not force restart while such work remains active. This limitation is also why the first lifecycle target is restricted to non-polling Gemini.
 
@@ -309,7 +391,8 @@ Automatic deployment remains deferred until manual activation, active-work drain
 7. Expand the proven mutation contract to audited retry, pause, and resume task actions.
 8. Introduce a runtime adapter read model.
 9. Add one guarded graceful-stop action for a non-critical test agent.
-10. Validate production evidence before considering start, broader lifecycle reconciliation, shared workspaces, or multi-agent orchestration.
+| 10. Add one guarded graceful-start action for Gemini (guarded-start & already-running adoption).
+| 11. Validate production evidence before considering broader lifecycle reconciliation, shared workspaces, or multi-agent orchestration.
 
 ## Explicit Non-Goals Now
 
@@ -319,8 +402,7 @@ Automatic deployment remains deferred until manual activation, active-work drain
 - credential creation, storage, rotation, or value display
 - Obsidian note browsing, search, synchronization, publication, or writes
 - browser mutation controls before authentication and RBAC
-- agent start or restart
-- force stop, kill, recreate, or unrestricted Docker control
+- agent force restart, kill, force stop, recreate, or unrestricted Docker control
 - lifecycle control for Professor, Berlin, or Tokyo
 - automatic desired-state reconciliation or idle shutdown
 - general workflow engine

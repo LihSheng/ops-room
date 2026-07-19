@@ -68,5 +68,27 @@ export function createDockerAgentLifecycleController({ runCommand = runBoundedCo
         target_kind: 'docker-container',
       };
     },
+
+    async start(preparedRuntime, { timeoutSeconds = 20 } = {}) {
+      if (!this.supports(preparedRuntime)) {
+        throw new Error('Docker lifecycle controller does not support this runtime target');
+      }
+      const timeout = normalizeTimeoutSeconds(timeoutSeconds);
+      const containerName = preparedRuntime.target.name;
+      try {
+        await runCommand(
+          'docker',
+          ['start', containerName],
+          { timeoutMs: (timeout + 5) * 1000 },
+        );
+      } catch {
+        throw new Error('docker start failed');
+      }
+      return {
+        controller_id: this.id,
+        action: 'start',
+        target_kind: 'docker-container',
+      };
+    },
   };
 }

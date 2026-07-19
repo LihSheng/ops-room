@@ -2,6 +2,8 @@ import { AGENT_DEFINITIONS } from '../agent-definitions.js';
 import { prepareAgentRuntimes } from '../runtime-adapter/registry.js';
 import { createDockerAgentLifecycleController } from './docker-lifecycle-controller.js';
 
+const APPROVED_LIFECYCLE_CONTROL = Object.freeze(new Set(['guarded-stop-test', 'guarded-test']));
+
 const DEFAULT_LIFECYCLE_CONTROLLERS = Object.freeze([
   createDockerAgentLifecycleController(),
 ]);
@@ -24,7 +26,7 @@ export function prepareAgentLifecycleTarget(agentId: string, {
 } = {}) {
   const definition = definitions.find((entry) => entry.key === agentId);
   if (!definition) throw new Error(`Unknown agent: ${agentId}`);
-  if (definition.lifecycleControl !== 'guarded-stop-test') {
+  if (!APPROVED_LIFECYCLE_CONTROL.has(definition.lifecycleControl)) {
     throw new Error(`Lifecycle control is not approved for agent ${agentId}`);
   }
 

@@ -2,7 +2,7 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AGENT_NAMES, BOT_USERS, POLL_AGENTS } from '../lib/config.js';
 import { AGENT_DEFINITIONS } from './agent-definitions.js';
-import { readAgentLifecycleState } from './agent-lifecycle-store.js';
+import { classifyConvergence, readAgentLifecycleState } from './agent-lifecycle-store.js';
 import { inspectAgentRuntimes } from './runtime-adapter/registry.js';
 import { AGENTS_CONFIG_DIR, LIFECYCLE_DIR } from './runtime-paths.js';
 
@@ -38,13 +38,18 @@ export async function getAgentList({
     const hasConfig = await configExists(join(AGENTS_CONFIG_DIR, `${definition.configName}.toml`));
     const hasExample = await configExists(join(AGENTS_CONFIG_DIR, `${definition.configName}.example.toml`));
     const lifecycle = await getLifecycleState({ dir: lifecycleDir, agentId: key });
-
     const missing = [];
     if (!hasConfig) missing.push(configPath);
     if (!hasExample) missing.push(exampleConfigPath);
 
     const inspected = runtimeByAgent.get(key);
     const runtime = inspected?.runtime || null;
+
+    const convergence = lifecycle ? classifyConvergence(
+      lifecycle.desired_state || definition.desiredState,
+      lifecycle.phase,
+      runtime?.status || 'unknown',
+    ) : { status: 'unknown', reason_code: 'observed_unknown' };
 
     agents.push({
       key,
@@ -64,6 +69,8 @@ export async function getAgentList({
       lifecycle_state: lifecycle.phase,
       lifecycle_error: lifecycle.last_error,
       lifecycle_updated_at: lifecycle.updated_at,
+      convergence_status: convergence.status,
+      convergence_reason_code: convergence.reason_code,
       observed_state: runtime?.status || 'unknown',
       runtime_adapter: inspected?.adapter_id || null,
       runtime,

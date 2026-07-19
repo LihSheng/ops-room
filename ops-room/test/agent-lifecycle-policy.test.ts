@@ -43,7 +43,7 @@ test('only the canonical guarded-stop test agent can prepare a lifecycle target'
   };
 
   const gemini = prepareAgentLifecycleTarget('gemini', options);
-  assert.equal(gemini.definition.lifecycleControl, 'guarded-stop-test');
+  assert.equal(gemini.definition.lifecycleControl, 'guarded-test');
   assert.equal(gemini.prepared.agent_id, 'gemini');
 
   for (const agentId of ['professor', 'berlin', 'tokyo']) {

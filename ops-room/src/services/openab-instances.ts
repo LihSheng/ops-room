@@ -1,6 +1,6 @@
 import { POLL_AGENTS } from '../lib/config.js';
 import { AGENT_DEFINITIONS } from './agent-definitions.js';
-import { readAgentLifecycleStateSync } from './agent-lifecycle-store.js';
+import { classifyConvergence, readAgentLifecycleStateSync } from './agent-lifecycle-store.js';
 import { inspectAgentRuntimes } from './runtime-adapter/registry.js';
 import { unknownRuntimeStatus } from './runtime-adapter/types.js';
 import { LIFECYCLE_DIR } from './runtime-paths.js';
@@ -27,6 +27,12 @@ export function getOpenABInstances({
     const containerName = prepared?.target?.kind === 'docker-container'
       ? prepared.target.name
       : entry.containerName;
+    const convergence = classifyConvergence(
+      lifecycle.desired_state || prepared?.desired_state || entry.desiredState,
+      lifecycle.phase,
+      runtime.status || 'unknown',
+      runtime.health,
+    );
 
     return {
       agent: entry.key,
@@ -44,6 +50,8 @@ export function getOpenABInstances({
       lifecycle_state: lifecycle.phase,
       lifecycle_error: lifecycle.last_error,
       lifecycle_updated_at: lifecycle.updated_at,
+      convergence_status: convergence.status,
+      convergence_reason_code: convergence.reason_code,
       observed_state: runtime.status || 'unknown',
       runtime_adapter: inspected?.adapter_id || null,
       runtime,
