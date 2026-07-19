@@ -60,6 +60,14 @@ function observedRuntime(snapshot, agentId) {
   };
 }
 
+function inspectObservedRuntime(getRuntimeSnapshot, agentId, fallbackAdapterId = null) {
+  try {
+    return observedRuntime(getRuntimeSnapshot(), agentId);
+  } catch {
+    return { adapter_id: fallbackAdapterId, status: 'unknown' };
+  }
+}
+
 async function waitForAgentDrain({
   reviewTasksDir,
   agentId,
@@ -143,6 +151,52 @@ async function rejected({
   };
 }
 
+async function acceptedAlreadyStopped({
+  auditDir,
+  actor,
+  agentId,
+  reason,
+  idempotencyKey,
+  current,
+  observed,
+  target,
+}) {
+  const event = await appendAuditEvent({
+    dir: auditDir,
+    operation: 'agent.stop',
+    actor,
+    target: { type: 'agent', id: agentId },
+    reason,
+    idempotencyKey,
+    previousState: current.phase,
+    resultingState: current.phase,
+    outcome: 'accepted',
+    metadata: {
+      runtime_adapter: observed.adapter_id || target.runtime_adapter_id,
+      lifecycle_controller: target.controller.id,
+      observed_state_before: observed.status,
+      command_executed: false,
+      already_desired_state: true,
+      active_task_count: 0,
+      drain_waited_ms: 0,
+    },
+  });
+  return {
+    status: 202,
+    body: {
+      operation: 'agent.stop',
+      agent: {
+        id: agentId,
+        desired_state: current.desired_state,
+        lifecycle_state: current.phase,
+        observed_state_before: observed.status,
+      },
+      command_executed: false,
+      audit_event_id: event.event_id,
+    },
+  };
+}
+
 export async function handleOperatorAgentStop({
   agentId,
   body,
@@ -210,6 +264,14 @@ export async function handleOperatorAgentStop({
       payload: { reason, confirm_agent_id: confirmation },
       execute: () => withLifecycleActionLock(async () => {
         const current = await readAgentLifecycleState({ dir: lifecycleDir, agentId: rawAgentId });
+        if (current.last_error === 'lifecycle_state_unavailable') {
+          return rejected({
+            auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+            errorCode: 'lifecycle_state_unavailable', status: 409,
+            message: 'Lifecycle state is unavailable', previousState: current.phase,
+          });
+        }
+
         let target;
         try {
           target = prepareTarget(rawAgentId);
@@ -221,11 +283,23 @@ export async function handleOperatorAgentStop({
           });
         }
 
-        let observed = { adapter_id: target.runtime_adapter_id || null, status: 'unknown' };
-        try {
-          observed = observedRuntime(getRuntimeSnapshot(), rawAgentId);
-        } catch {
-          observed = { adapter_id: target.runtime_adapter_id || null, status: 'unknown' };
+        const observed = inspectObservedRuntime(
+          getRuntimeSnapshot,
+          rawAgentId,
+          target.runtime_adapter_id || null,
+        );
+
+        if (current.desired_state === 'stopped' && current.phase === 'stopped') {
+          return acceptedAlreadyStopped({
+            auditDir,
+            actor,
+            agentId: rawAgentId,
+            reason,
+            idempotencyKey,
+            current,
+            observed,
+            target,
+          });
         }
 
         const requestedAt = nowIso();
