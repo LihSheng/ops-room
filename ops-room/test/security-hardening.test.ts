@@ -82,57 +82,28 @@ test('basic health check remains public', () => {
   assert.deepEqual(response.body, { status: 'ok' });
 });
 
-// ── Profile API route protection ──────────────────────────────────────
+// ── Profile and policy API route protection ────────────────────────────
 
-test('/api/agents/profiles requires dashboard auth', () => {
-  const noAuth = captureJsonResponse({ url: '/api/agents/profiles' }, { profiles: [], count: 0 });
-  assert.equal(noAuth.statusCode, 401);
-
-  const wrongToken = captureJsonResponse(
-    { url: '/api/agents/profiles', authorization: 'Bearer wrong-token' },
-    { profiles: [], count: 0 },
-  );
-  assert.equal(wrongToken.statusCode, 401);
-
-  const correct = captureJsonResponse(
-    { url: '/api/agents/profiles', authorization: 'Bearer security-test-dashboard' },
-    { profiles: [], count: 0 },
-  );
-  assert.equal(correct.statusCode, 200);
-});
-
-test('/api/agents/profiles/:id requires dashboard auth', () => {
-  const noAuth = captureJsonResponse({ url: '/api/agents/profiles/berlin' }, { profile: {} });
-  assert.equal(noAuth.statusCode, 401);
-
-  const correct = captureJsonResponse(
-    { url: '/api/agents/profiles/berlin', authorization: 'Bearer security-test-dashboard' },
-    { profile: {} },
-  );
-  assert.equal(correct.statusCode, 200);
-});
-
-test('/api/skills requires dashboard auth', () => {
-  const noAuth = captureJsonResponse({ url: '/api/skills' }, { skills: [], count: 0 });
-  assert.equal(noAuth.statusCode, 401);
-
-  const correct = captureJsonResponse(
-    { url: '/api/skills', authorization: 'Bearer security-test-dashboard' },
-    { skills: [], count: 0 },
-  );
-  assert.equal(correct.statusCode, 200);
-});
-
-test('/api/memory-spaces requires dashboard auth', () => {
-  const noAuth = captureJsonResponse({ url: '/api/memory-spaces' }, { memory_spaces: [], count: 0 });
-  assert.equal(noAuth.statusCode, 401);
-
-  const correct = captureJsonResponse(
-    { url: '/api/memory-spaces', authorization: 'Bearer security-test-dashboard' },
-    { memory_spaces: [], count: 0 },
-  );
-  assert.equal(correct.statusCode, 200);
-});
+for (const route of [
+  '/api/agents/profiles',
+  '/api/agents/profiles/berlin',
+  '/api/skills',
+  '/api/skills/pull-request-review/1.0.0',
+  '/api/memory-spaces',
+  '/api/memory-spaces/ops-room-project',
+]) {
+  test(`${route} requires dashboard auth`, () => {
+    const noAuth = captureJsonResponse({ url: route }, { data: 'test' });
+    assert.equal(noAuth.statusCode, 401);
+    const wrong = captureJsonResponse({ url: route, authorization: 'Bearer wrong-token' }, { data: 'test' });
+    assert.equal(wrong.statusCode, 401);
+    const correct = captureJsonResponse(
+      { url: route, authorization: 'Bearer security-test-dashboard' },
+      { data: 'test-value' },
+    );
+    assert.equal(correct.statusCode, 200);
+  });
+}
 
 test('/webhook uses webhook secret not dashboard token', () => {
   assert.equal(verifyAuth('Bearer security-test-webhook'), true);
@@ -144,9 +115,6 @@ test('/webhook uses webhook secret not dashboard token', () => {
 // ── Workspace path removal from public surfaces ───────────────────────
 
 test('coding failure error messages no longer embed workspace paths', () => {
-  // Workspace paths are removed at source in handleCodingFailure() and
-  // runCodingAgent(), not by redactSecrets(). redactSecrets() is
-  // defense-in-depth for credentials, not a path sanitizer.
   const messageWithoutPath = 'Coding command failed.\nBackend: opencode\nExit code: 1\nstderr: error\nstdout: empty';
   assert.doesNotMatch(messageWithoutPath, /\/data\/workspaces\//);
 });
@@ -159,7 +127,7 @@ test('console output redaction covers x-access-token URLs', () => {
   assert.equal(output.includes('github.com/LihSheng/repo.git'), true);
 });
 
-// ── redactSecrets covers multiple credential types ───────────────────
+// ── redactSecrets covers multiple credential types ────────────────────
 
 test('redactSecrets removes OpenAI API keys', () => {
   const input = 'Using API key sk-proj-AbCdEf1234567890GhIjKlMnOpQrStUvWxYz0123456789';
@@ -189,7 +157,7 @@ test('redactSecrets removes secret assignments', () => {
   assert.match(output, /REDACTED/);
 });
 
-// ── Authentication test coverage for all public API routes ───────────
+// ── Authentication test coverage for all operational API roots ────────
 
 const PROTECTED_ROUTES = [
   '/api/health',
@@ -227,19 +195,3 @@ for (const route of PROTECTED_ROUTES) {
     assert.equal(resp.body.data, 'test-value');
   });
 }
-
-// ── Agent profile detail route ───────────────────────────────────────
-
-test('/api/agents/profiles/:id: missing token returns 401', () => {
-  const resp = captureJsonResponse({ url: '/api/agents/profiles/berlin' }, { profile: {} });
-  assert.equal(resp.statusCode, 401);
-});
-
-test('/api/agents/profiles/:id: correct token returns 200', () => {
-  const resp = captureJsonResponse(
-    { url: '/api/agents/profiles/berlin', authorization: 'Bearer security-test-dashboard' },
-    { profile: { id: 'berlin' } },
-  );
-  assert.equal(resp.statusCode, 200);
-  assert.equal(resp.body.profile.id, 'berlin');
-});
