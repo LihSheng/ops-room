@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  agentLifecycleAllowsDispatch,
+  readAgentLifecycleState,
+  withAgentLifecycleGate,
+} from '../services/agent-lifecycle-store.js';
+import {
   claimTask,
   checkConcurrency,
   countActiveTasks,
@@ -9,6 +14,7 @@ import {
   transitionTask,
 } from '../services/review-task-store.js';
 import { evaluateAutoFixPolicy } from '../services/review-policy.js';
+import { LIFECYCLE_DIR } from '../services/runtime-paths.js';
 
 const REVIEW_CONTEXT = 'OpenAB PR Review';
 
@@ -39,16 +45,33 @@ function normalizeRequest(request) {
   };
 }
 
+async function defaultCanDispatchAgent(agentId) {
+  const state = await readAgentLifecycleState({ dir: LIFECYCLE_DIR, agentId });
+  return agentLifecycleAllowsDispatch(state);
+}
+
+async function dispatchAllowed(canDispatchAgent, agentId) {
+  try {
+    return await canDispatchAgent(agentId) !== false;
+  } catch {
+    return false;
+  }
+}
+
 export function createPrReviewController({
   fetchPullRequest,
   setCommitStatus,
   dispatchReview,
+  canDispatchAgent = defaultCanDispatchAgent,
+  withAgentDispatchGate = withAgentLifecycleGate,
   instanceId = `ops-room-${process.pid}`,
   clock = () => new Date(),
 }) {
   if (typeof fetchPullRequest !== 'function') throw new Error('fetchPullRequest is required');
   if (typeof setCommitStatus !== 'function') throw new Error('setCommitStatus is required');
   if (typeof dispatchReview !== 'function') throw new Error('dispatchReview is required');
+  if (typeof canDispatchAgent !== 'function') throw new Error('canDispatchAgent is required');
+  if (typeof withAgentDispatchGate !== 'function') throw new Error('withAgentDispatchGate is required');
 
   async function submit(request) {
     const normalized = normalizeRequest(request);
@@ -110,52 +133,93 @@ export function createPrReviewController({
       };
     }
 
-    // Concurrency gate: before claiming and dispatching, verify we are within
-    // bounded concurrency limits. If limits are exceeded, leave the task queued
-    // for later pickup by reconciliation.
-    const counts = await countActiveTasks({ dir: request.dir, repository: normalized.repository, pr: normalized.pr });
-    const concurrency = checkConcurrency({ counts, limits: request.policy?.concurrency || {} });
-    if (!concurrency.allowed) {
-      return {
-        task_id: task.id,
-        status: 'QUEUED',
-        queued: true,
-        reason: concurrency.reason,
-        concurrency: counts,
-      };
-    }
+    const gateResult = await withAgentDispatchGate(normalized.agent, async () => {
+      if (!(await dispatchAllowed(canDispatchAgent, normalized.agent))) {
+        return {
+          dispatched: false,
+          response: {
+            task_id: task.id,
+            status: 'QUEUED',
+            queued: true,
+            reason: 'agent_lifecycle_blocked',
+          },
+        };
+      }
 
-    const leaseId = randomUUID();
-    const claimed = await claimTask({
-      dir: request.dir,
-      id: task.id,
-      instanceId,
-      leaseId,
-      leaseEpoch: 1,
-    });
-    if (!claimed.claimed) {
-      const existing = await readTask({ dir: request.dir, id: task.id });
-      return { task_id: task.id, status: existing?.state || 'CLAIMED', queued: false, deduplicated: true };
-    }
+      // Concurrency gate: before claiming and dispatching, verify we are within
+      // bounded concurrency limits. If limits are exceeded, leave the task queued
+      // for later pickup by reconciliation.
+      const counts = await countActiveTasks({ dir: request.dir, repository: normalized.repository, pr: normalized.pr });
+      const concurrency = checkConcurrency({ counts, limits: request.policy?.concurrency || {} });
+      if (!concurrency.allowed) {
+        return {
+          dispatched: false,
+          response: {
+            task_id: task.id,
+            status: 'QUEUED',
+            queued: true,
+            reason: concurrency.reason,
+            concurrency: counts,
+          },
+        };
+      }
 
-    const running = await transitionTask({
-      dir: request.dir,
-      id: task.id,
-      to: 'CLAIMED',
-      reason: 'atomic_claim',
-      patch: { attempt: 1, lease: claimed.claim },
+      if (!(await dispatchAllowed(canDispatchAgent, normalized.agent))) {
+        return {
+          dispatched: false,
+          response: {
+            task_id: task.id,
+            status: 'QUEUED',
+            queued: true,
+            reason: 'agent_lifecycle_blocked',
+          },
+        };
+      }
+
+      const leaseId = randomUUID();
+      const claimed = await claimTask({
+        dir: request.dir,
+        id: task.id,
+        instanceId,
+        leaseId,
+        leaseEpoch: 1,
+      });
+      if (!claimed.claimed) {
+        const existing = await readTask({ dir: request.dir, id: task.id });
+        return {
+          dispatched: false,
+          response: {
+            task_id: task.id,
+            status: existing?.state || 'CLAIMED',
+            queued: false,
+            deduplicated: true,
+          },
+        };
+      }
+
+      const running = await transitionTask({
+        dir: request.dir,
+        id: task.id,
+        to: 'CLAIMED',
+        reason: 'atomic_claim',
+        patch: { attempt: 1, lease: claimed.claim },
+      });
+      await transitionTask({
+        dir: request.dir,
+        id: running.id,
+        to: 'RUNNING',
+        reason: 'review_dispatched',
+        patch: { started_at: clock().toISOString(), heartbeat_at: clock().toISOString() },
+      });
+
+      return { dispatched: true, claim: claimed.claim };
     });
-    await transitionTask({
-      dir: request.dir,
-      id: running.id,
-      to: 'RUNNING',
-      reason: 'review_dispatched',
-      patch: { started_at: clock().toISOString(), heartbeat_at: clock().toISOString() },
-    });
+
+    if (!gateResult.dispatched) return gateResult.response;
 
     await dispatchReview({
       task_id: task.id,
-      lease: claimed.claim,
+      lease: gateResult.claim,
       dir: request.dir,
       task: request.task,
       commenter: request.commenter,
@@ -174,8 +238,8 @@ export function createPrReviewController({
         agent: normalized.agent,
         dir: request.dir,
         taskId: task.id,
-        leaseId: claimed.claim.lease_id,
-        leaseEpoch: claimed.claim.lease_epoch,
+        leaseId: gateResult.claim.lease_id,
+        leaseEpoch: gateResult.claim.lease_epoch,
       });
     }
 
