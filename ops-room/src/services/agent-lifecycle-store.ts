@@ -4,6 +4,10 @@ import { dirname, join } from 'node:path';
 
 const LIFECYCLE_SCHEMA = 'ops-room.agent-lifecycle.v1';
 const SAFE_AGENT_ID = /^[A-Za-z0-9._-]+$/;
+const SAFE_ERROR_CODE = /^[A-Za-z0-9._:-]{1,100}$/;
+const DESIRED_STATES = new Set(['unmanaged', 'stopped']);
+const LIFECYCLE_PHASES = new Set(['unmanaged', 'draining', 'stopping', 'stopped', 'failed']);
+const OPERATION_OUTCOMES = new Set(['in_progress', 'accepted', 'rejected', 'failed', 'interrupted']);
 const INTERRUPTED_PHASES = new Set(['draining', 'stopping']);
 const BLOCKED_DISPATCH_PHASES = new Set(['draining', 'stopping', 'stopped']);
 
@@ -19,6 +23,11 @@ function statePath(dir: string, agentId: string) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function boundedString(value: unknown, maximum: number) {
+  if (value == null) return null;
+  return String(value).slice(0, maximum);
 }
 
 export function unmanagedAgentLifecycleState(agentId: string) {
@@ -43,22 +52,63 @@ function unavailableAgentLifecycleState(agentId: string) {
   };
 }
 
+function normalizeLastOperation(value: any) {
+  if (value == null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid lifecycle operation');
+  if (value.operation !== 'agent.stop') throw new Error('Invalid lifecycle operation');
+  if (!OPERATION_OUTCOMES.has(value.outcome)) throw new Error('Invalid lifecycle operation outcome');
+  return {
+    operation: 'agent.stop',
+    actor_id: boundedString(value.actor_id, 100),
+    reason: boundedString(value.reason, 500),
+    requested_at: boundedString(value.requested_at, 64),
+    completed_at: boundedString(value.completed_at, 64),
+    outcome: value.outcome,
+  };
+}
+
 function normalizeLifecycleState(agentId: string, value: any) {
+  const normalizedId = validateAgentId(agentId);
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return unavailableAgentLifecycleState(agentId);
+    throw new Error('Invalid lifecycle state');
+  }
+  if (value.schema !== LIFECYCLE_SCHEMA || value.agent_id !== normalizedId) {
+    throw new Error('Invalid lifecycle state identity');
+  }
+  if (!DESIRED_STATES.has(value.desired_state) || !LIFECYCLE_PHASES.has(value.phase)) {
+    throw new Error('Invalid lifecycle state value');
+  }
+  if (value.previous_desired_state != null && !DESIRED_STATES.has(value.previous_desired_state)) {
+    throw new Error('Invalid previous desired state');
+  }
+  if (value.last_error != null && !SAFE_ERROR_CODE.test(String(value.last_error))) {
+    throw new Error('Invalid lifecycle error code');
   }
   return {
-    ...unmanagedAgentLifecycleState(agentId),
-    ...value,
     schema: LIFECYCLE_SCHEMA,
-    agent_id: validateAgentId(agentId),
+    agent_id: normalizedId,
+    desired_state: value.desired_state,
+    phase: value.phase,
+    previous_desired_state: value.previous_desired_state || null,
+    last_operation: normalizeLastOperation(value.last_operation),
+    last_error: value.last_error == null ? null : String(value.last_error),
+    updated_at: boundedString(value.updated_at, 64),
   };
+}
+
+function buildLifecycleState(agentId: string, value: any) {
+  const normalizedId = validateAgentId(agentId);
+  return normalizeLifecycleState(normalizedId, {
+    schema: LIFECYCLE_SCHEMA,
+    agent_id: normalizedId,
+    ...value,
+  });
 }
 
 async function writeAtomic(path: string, value: unknown) {
   await mkdir(dirname(path), { recursive: true });
   const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
+  await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf-8', mode: 0o640 });
   await rename(tempPath, path);
 }
 
@@ -95,7 +145,10 @@ export async function updateAgentLifecycleState({
 }) {
   const normalizedId = validateAgentId(agentId);
   const current = await readAgentLifecycleState({ dir, agentId: normalizedId });
-  const next = normalizeLifecycleState(normalizedId, {
+  if (current.last_error === 'lifecycle_state_unavailable') {
+    throw new Error('Lifecycle state is unavailable');
+  }
+  const next = buildLifecycleState(normalizedId, {
     ...current,
     ...patch,
     updated_at: now(),
@@ -131,6 +184,7 @@ export async function recoverInterruptedAgentLifecycleStates({
     const state = await readAgentLifecycleState({ dir, agentId });
     if (!INTERRUPTED_PHASES.has(state.phase)) continue;
 
+    const completedAt = now();
     await updateAgentLifecycleState({
       dir,
       agentId,
@@ -138,9 +192,10 @@ export async function recoverInterruptedAgentLifecycleStates({
       patch: {
         desired_state: state.previous_desired_state || 'unmanaged',
         phase: 'failed',
+        previous_desired_state: null,
         last_error: 'interrupted_lifecycle_operation',
         last_operation: state.last_operation
-          ? { ...state.last_operation, completed_at: now(), outcome: 'interrupted' }
+          ? { ...state.last_operation, completed_at: completedAt, outcome: 'interrupted' }
           : null,
       },
     });
