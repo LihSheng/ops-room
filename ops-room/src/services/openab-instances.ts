@@ -31,6 +31,7 @@ export function getOpenABInstances({
       lifecycle.desired_state || prepared?.desired_state || entry.desiredState,
       lifecycle.phase,
       runtime.status || 'unknown',
+      runtime.health,
     );
 
     return {

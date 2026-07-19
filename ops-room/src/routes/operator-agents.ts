@@ -3,6 +3,7 @@ import { getAgentDefinition } from '../services/agent-definitions.js';
 import {
   agentLifecycleAllowsDispatch,
   classifyConvergence,
+  isApprovedHealth,
   readAgentLifecycleState,
   updateAgentLifecycleState,
   withAgentLifecycleGate,
@@ -57,9 +58,12 @@ function observedRuntime(snapshot, agentId) {
   const instance = (snapshot?.instances || []).find((entry) => (
     entry?.agent === agentId || entry?.agent_id === agentId || entry?.definition?.key === agentId
   ));
+  const r = instance?.runtime;
   return {
     adapter_id: instance?.adapter_id || null,
-    status: instance?.runtime?.status || 'unknown',
+    status: r?.status || 'unknown',
+    health: r?.health || 'unknown',
+    state: r?.state || 'unknown',
   };
 }
 
@@ -552,6 +556,7 @@ export async function handleOperatorAgentStart({
   allowedAgents = [],
   startTimeoutSeconds = 30,
   getRuntimeSnapshot = inspectAgentRuntimes,
+  freshRuntimeSnapshot,
   prepareTarget = prepareAgentLifecycleTarget,
   scanTasks = scanReviewTasks,
   now = () => Date.now(),
@@ -637,28 +642,50 @@ export async function handleOperatorAgentStart({
           target.runtime_adapter_id || null,
         );
 
-        // === Adoption: durable desired=running + phase=running requires observed running ===
+        // === Strict observation allowlist ===
+        // running + approved health (healthy/none) → adoptable
+        // startable state (exited, dead, stopped) → guarded start
+        // everything else → bounded rejection with zero commands
+        const observationIsRunningApproved = observed.status === 'running' && isApprovedHealth(observed.health);
+        const observationIsStartable = STARTABLE_RUNTIME_STATES.has(observed.status);
+        const observationIsMissing = observed.status === 'unknown' || observed.status === 'unavailable' || observed.status === 'missing';
+
+        if (!observationIsRunningApproved && !observationIsStartable) {
+          if (observationIsMissing) {
+            return rejected({
+              auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+              errorCode: 'runtime_observation_' + observed.status, status: 409,
+              message: 'Cannot start agent because runtime observation is ' + observed.status, previousState: current.phase,
+              operation: 'agent.start',
+            });
+          }
+          return rejected({
+            auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
+            errorCode: 'runtime_observation_unexpected', status: 409,
+            message: 'Cannot start agent because runtime observation is ' + observed.status + ' with health ' + observed.health,
+            previousState: current.phase,
+            operation: 'agent.start',
+            metadata: { runtime_status: observed.status, runtime_health: observed.health },
+          });
+        }
+
+        // === Adoption: durable desired=running + phase=running requires observed running + approved health ===
+        // Startable states in this branch enter guarded-start recovery path
         if (current.desired_state === 'running' && current.phase === 'running') {
-          if (observed.status === 'running') {
+          if (observationIsRunningApproved) {
             // Already running and healthy — audited no-op adoption
-            const convergence = classifyConvergence(current.desired_state, current.phase, observed.status);
+            const convergence = classifyConvergence(current.desired_state, current.phase, observed.status, observed.health);
             return acceptedAlreadyRunning({
               auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
               current, observed, target, convergence,
             });
           }
-          // Durable running but observed not running — mismatch, not adoption
-          return rejected({
-            auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
-            errorCode: 'lifecycle_mismatch', status: 409,
-            message: 'Durable lifecycle state is running but observed runtime is ' + observed.status + '; cannot adopt without convergence',
-            previousState: current.phase, operation: 'agent.start',
-          });
+          // Startable state — enter guarded start recovery (falls through below)
         }
 
-        // === OPS-008A mismatch resolution: desired=stopped, observed=running ===
+        // === OPS-008A mismatch resolution: desired=stopped, observed=running+healthy ===
         // This handles the mismatch left by OPS-008A manual recovery
-        if (current.desired_state === 'stopped' && current.phase === 'stopped' && observed.status === 'running') {
+        if (current.desired_state === 'stopped' && current.phase === 'stopped' && observationIsRunningApproved) {
           const requestedAt = nowIso();
           const lifecycle = await updateAgentLifecycleState({
             dir: lifecycleDir, agentId: rawAgentId, now: nowIso,
@@ -684,6 +711,7 @@ export async function handleOperatorAgentStart({
               runtime_adapter: observed.adapter_id || target.runtime_adapter_id,
               lifecycle_controller: target.controller.id,
               observed_state_before: observed.status,
+              observed_health_before: observed.health,
               command_executed: false,
               mismatch_resolution: true,
             },
@@ -704,16 +732,6 @@ export async function handleOperatorAgentStart({
           };
         }
 
-        // === Fail closed for unsafe observation ===
-        if (observed.status === 'unknown' || observed.status === 'unavailable' || observed.status === 'missing') {
-          return rejected({
-            auditDir, actor, agentId: rawAgentId, reason, idempotencyKey,
-            errorCode: 'runtime_observation_' + observed.status, status: 409,
-            message: 'Cannot start agent because runtime observation is ' + observed.status, previousState: current.phase,
-            operation: 'agent.start',
-          });
-        }
-
         // === Reject if currently in a transitioning phase ===
         if (current.phase === 'draining' || current.phase === 'stopping' || current.phase === 'starting') {
           return rejected({
@@ -724,6 +742,7 @@ export async function handleOperatorAgentStart({
             operation: 'agent.start',
           });
         }
+
         const requestedAt = nowIso();
         const desiredRunning = 'running';
         await updateAgentLifecycleState({
@@ -790,15 +809,22 @@ export async function handleOperatorAgentStart({
           }
         }
 
-        // Check convergence after start
+        // Check convergence after start using fresh snapshot when provided
         const startedAt = now();
         let converged = false;
+        let failedUnhealthy = false;
         const convergenceTimeoutMs = Math.max(1000, Number(startTimeoutSeconds) * 1000);
         const convergencePollMs = 500;
+        const convergenceSnapshot = freshRuntimeSnapshot || getRuntimeSnapshot;
         while (now() - startedAt < convergenceTimeoutMs) {
-          const postSnapshot = inspectObservedRuntime(getRuntimeSnapshot, rawAgentId, target.runtime_adapter_id || null);
-          if (postSnapshot.status === 'running') {
+          const postSnapshot = inspectObservedRuntime(convergenceSnapshot, rawAgentId, target.runtime_adapter_id || null);
+          if (postSnapshot.status === 'running' && isApprovedHealth(postSnapshot.health)) {
             converged = true;
+            break;
+          }
+          if (postSnapshot.status === 'running' && postSnapshot.health === 'unhealthy') {
+            // Fail fast — running but health check failed
+            failedUnhealthy = true;
             break;
           }
           await sleep(Math.min(convergencePollMs, Math.max(1, convergenceTimeoutMs - (now() - startedAt))));
@@ -807,13 +833,17 @@ export async function handleOperatorAgentStart({
         if (!converged) {
           // Persist durable failed state with audit evidence
           const timeoutCompletedAt = nowIso();
+          const errorCode = failedUnhealthy ? 'runtime_start_convergence_unhealthy' : 'runtime_start_convergence_timeout';
+          const errorMsg = failedUnhealthy
+            ? 'Agent runtime started but health check failed'
+            : 'Agent runtime start timed out waiting for health convergence';
           await updateAgentLifecycleState({
             dir: lifecycleDir, agentId: rawAgentId, now: nowIso,
             patch: {
               desired_state: desiredRunning,
               phase: 'failed',
               previous_desired_state: null,
-              last_error: 'runtime_start_convergence_timeout',
+              last_error: errorCode,
               last_operation: {
                 operation: 'agent.start',
                 actor_id: actor.actor_id, reason,
@@ -833,15 +863,17 @@ export async function handleOperatorAgentStart({
               runtime_adapter: observed.adapter_id || target.runtime_adapter_id,
               lifecycle_controller: target.controller.id,
               observed_state_before: observed.status,
+              observed_health_before: observed.health,
               command_executed: commandExecuted,
-              convergence_timeout_ms: Math.max(1000, Number(startTimeoutSeconds) * 1000),
+              convergence_timeout_ms: convergenceTimeoutMs,
+              failed_unhealthy: failedUnhealthy,
             },
           });
           return {
             status: 504,
             body: {
-              error: 'Agent runtime start timed out waiting for health convergence',
-              error_code: 'runtime_start_convergence_timeout',
+              error: errorMsg,
+              error_code: errorCode,
               audit_event_id: timeoutEvent.event_id,
               agent: {
                 id: rawAgentId,
@@ -872,8 +904,8 @@ export async function handleOperatorAgentStart({
           },
         });
 
-        const postConvergence = inspectObservedRuntime(getRuntimeSnapshot, rawAgentId, target.runtime_adapter_id || null);
-        const convergence = classifyConvergence(lifecycle.desired_state, lifecycle.phase, postConvergence.status);
+        const postConvergence = inspectObservedRuntime(convergenceSnapshot, rawAgentId, target.runtime_adapter_id || null);
+        const convergence = classifyConvergence(lifecycle.desired_state, lifecycle.phase, postConvergence.status, postConvergence.health);
 
         const event = await appendAuditEvent({
           dir: auditDir,
