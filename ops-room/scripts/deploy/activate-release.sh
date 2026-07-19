@@ -13,8 +13,17 @@ revision=$3
 install_root=${OPS_ROOM_INSTALL_ROOT:-/opt/ops-room}
 service=${OPS_ROOM_SERVICE:-openab-ops-room.service}
 health_url=${OPS_ROOM_HEALTH_URL:-http://127.0.0.1:7381/api/health}
+health_bearer=${OPS_ROOM_HEALTH_BEARER_TOKEN:-}
 systemctl_bin=${OPS_ROOM_SYSTEMCTL_BIN:-systemctl}
 curl_bin=${OPS_ROOM_CURL_BIN:-curl}
+health_curl() {
+  if [[ -n $health_bearer ]]; then
+    "$curl_bin" --fail --silent --show-error --connect-timeout 2 --max-time 5 \
+      -H "Authorization: Bearer $health_bearer" "$@"
+  else
+    "$curl_bin" --fail --silent --show-error --connect-timeout 2 --max-time 5 "$@"
+  fi
+}
 node_bin=${OPS_ROOM_NODE_BIN:-/opt/ops-room/bin/node}
 allow_legacy_migration=${OPS_ROOM_ALLOW_LEGACY_MIGRATION:-false}
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -51,7 +60,7 @@ trap cleanup EXIT
 health_matches() {
   local expected=$1 response
   for _attempt in $(seq 1 30); do
-    if response=$($curl_bin --fail --silent --show-error --connect-timeout 2 --max-time 5 "$health_url" 2>/dev/null) &&
+    if response=$(health_curl "$health_url" 2>/dev/null) &&
       HEALTH_JSON="$response" EXPECTED_REVISION="$expected" "$node_bin" -e '
         const value = JSON.parse(process.env.HEALTH_JSON);
         if (value.ready !== true || value.revision !== process.env.EXPECTED_REVISION) process.exit(1);
@@ -91,7 +100,7 @@ else
 fi
 
 if [[ -L "$install_root/current" ]]; then
-  response=$($curl_bin --fail --silent --show-error --connect-timeout 2 --max-time 5 "$health_url") || {
+  response=$(health_curl "$health_url") || {
     echo "current service health unavailable; refusing forced restart" >&2
     exit 69
   }
