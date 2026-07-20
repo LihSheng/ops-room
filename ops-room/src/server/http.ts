@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import { POLL_AGENTS } from '../lib/config.js';
 import { pollAgentIssues, startIssuePoller } from '../lib/issue-poller.js';
 import {
-  REPO, PORT, HOST, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR, AUDIT_DIR, IDEMPOTENCY_DIR,
+  REPO, PORT, HOST, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR, WORKFLOW_RUNS_DIR, AUDIT_DIR, IDEMPOTENCY_DIR,
   LIFECYCLE_DIR, OPENAB_SERVER_VERSION, OPERATOR_API_ENABLED, SHUTDOWN_TIMEOUT_MS, ISSUE_POLLING_ENABLED,
   AGENT_LIFECYCLE_ENABLED, AGENT_LIFECYCLE_ALLOWED_AGENTS, AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS,
   AGENT_LIFECYCLE_DRAIN_POLL_MS, AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS,
@@ -43,6 +43,7 @@ import {
 } from '../routes/operator-agents.js';
 import { handleAuditEventDetail, handleAuditEventsList } from '../routes/audit-events.js';
 import { handleReadOnlyAgentProfileApi } from '../routes/agent-profiles.js';
+import { handleWorkflowRunDetail, handleWorkflowRunsList } from '../routes/workflow-runs.js';
 import { recoverInterruptedAgentLifecycleStates } from '../services/agent-lifecycle-store.js';
 import { resolveOperatorIdentity } from '../services/operator-identity.js';
 import { sendJSON, verifyAuth, verifyOperatorAuth, parseBody } from '../routes/helpers.js';
@@ -380,6 +381,31 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/api/workflows') {
+    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    try {
+      const result = await handleWorkflowRunsList(searchParams, { workflowRunsDir: WORKFLOW_RUNS_DIR });
+      sendJSON(res, result.status, result.body);
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Failed to list workflows' });
+    }
+    return;
+  }
+
+  const workflowDetailMatch = pathname.match(/^\/api\/workflows\/([A-Za-z0-9._:-]+)$/);
+  if (req.method === 'GET' && workflowDetailMatch) {
+    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    try {
+      const result = await handleWorkflowRunDetail(decodeURIComponent(workflowDetailMatch[1]), {
+        workflowRunsDir: WORKFLOW_RUNS_DIR,
+      });
+      sendJSON(res, result.status, result.body);
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Failed to read workflow' });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && pathname === '/api/review-tasks') {
     if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 100);
@@ -705,6 +731,8 @@ server.listen(PORT, HOST, () => {
   console.log(`  GET  /health     - Health check`);
   console.log(`  GET  /api/health  - Detailed health`);
   console.log(`  GET  /api/tasks   - List tasks`);
+  console.log(`  GET  /api/workflows - List durable workflows`);
+  console.log(`  GET  /api/workflows/:workflowId - Workflow detail`);
   console.log(`  GET  /api/logs    - List bounded redacted logs`);
   console.log(`  GET  /api/agents  - List agents`);
   console.log(`  GET  /api/openab/instances - OpenAB instance dashboard`);
