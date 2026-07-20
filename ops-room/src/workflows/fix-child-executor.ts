@@ -20,7 +20,16 @@ function stateForFixOutcome(outcome) {
   return 'ERROR';
 }
 
-export async function executeFixChildTask({ dir, id, instanceId, runWorker, preClaimedLease }) {
+export async function executeFixChildTask({
+  dir,
+  id,
+  instanceId,
+  runWorker,
+  preClaimedLease,
+  ensureWorkspace = ensureTaskWorkspace,
+  applyOutcome = applyTaskWorkspaceOutcome,
+  workspaceConfig = {},
+}) {
   let task = await readTask({ dir, id });
   if (!task) throw new Error(`Fix task not found: ${id}`);
 
@@ -37,9 +46,7 @@ export async function executeFixChildTask({ dir, id, instanceId, runWorker, preC
     const claimed = await claimTask({
       dir, id, instanceId, leaseId: randomUUID(), leaseEpoch: (task.lease?.lease_epoch || 0) + 1,
     });
-    if (!claimed.claimed) {
-      return { state: (await readTask({ dir, id }))?.state || 'CLAIMED', deduplicated: true };
-    }
+    if (!claimed.claimed) return { state: (await readTask({ dir, id }))?.state || 'CLAIMED', deduplicated: true };
     lease = claimed.claim;
     task = await transitionTask({
       dir, id, to: 'CLAIMED', reason: 'fix_child_claimed',
@@ -47,15 +54,15 @@ export async function executeFixChildTask({ dir, id, instanceId, runWorker, preC
     });
   }
 
-  const binding = await ensureTaskWorkspace({
+  const binding = await ensureWorkspace({
     task,
-    cacheRoot: REPOSITORY_CACHE_ROOT,
-    workspaceRoot: TASK_WORKSPACE_ROOT,
-    recordRoot: WORKSPACE_RECORDS_DIR,
-    lockRoot: WORKSPACE_LOCK_DIR,
-    remote: `https://github.com/${task.repository}.git`,
-    maxActiveWorkspaces: WORKSPACE_MAX_ACTIVE,
-    minimumFreeBytes: WORKSPACE_MIN_FREE_BYTES,
+    cacheRoot: workspaceConfig.cacheRoot || REPOSITORY_CACHE_ROOT,
+    workspaceRoot: workspaceConfig.workspaceRoot || TASK_WORKSPACE_ROOT,
+    recordRoot: workspaceConfig.recordRoot || WORKSPACE_RECORDS_DIR,
+    lockRoot: workspaceConfig.lockRoot || WORKSPACE_LOCK_DIR,
+    remote: workspaceConfig.remote || `https://github.com/${task.repository}.git`,
+    maxActiveWorkspaces: workspaceConfig.maxActiveWorkspaces || WORKSPACE_MAX_ACTIVE,
+    minimumFreeBytes: workspaceConfig.minimumFreeBytes ?? WORKSPACE_MIN_FREE_BYTES,
   });
 
   if (task.state !== 'FIXING') {
@@ -94,6 +101,9 @@ export async function executeFixChildTask({ dir, id, instanceId, runWorker, preC
     });
   }
 
-  await applyTaskWorkspaceOutcome({ task: terminal, recordRoot: WORKSPACE_RECORDS_DIR });
+  await applyOutcome({
+    task: terminal,
+    recordRoot: workspaceConfig.recordRoot || WORKSPACE_RECORDS_DIR,
+  });
   return terminal;
 }
