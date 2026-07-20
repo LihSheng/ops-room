@@ -1,6 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
 import { claimTask, readTask, transitionTask } from '../services/review-task-store.js';
+import { ensureTaskWorkspace, taskWorkspacePatch } from '../services/task-workspace-binding.js';
+import { applyTaskWorkspaceOutcome } from '../services/task-workspace-lifecycle.js';
+import {
+  REPOSITORY_CACHE_ROOT,
+  TASK_WORKSPACE_ROOT,
+  WORKSPACE_RECORDS_DIR,
+  WORKSPACE_LOCK_DIR,
+  WORKSPACE_MAX_ACTIVE,
+  WORKSPACE_MIN_FREE_BYTES,
+} from '../services/runtime-paths.js';
 
 function stateForFixOutcome(outcome) {
   if (outcome === 'FIX_PUSHED') return 'FIX_PUSHED';
@@ -11,24 +21,21 @@ function stateForFixOutcome(outcome) {
 }
 
 /**
- * Execute a fix child task.  Accepts an optional pre-claimed lease so the
+ * Execute a fix child task. Accepts an optional pre-claimed lease so the
  * durable dispatcher can atomically claim within concurrency limits and pass
  * ownership to this executor without a second claim+transition cycle.
  */
 export async function executeFixChildTask({ dir, id, instanceId, runWorker, preClaimedLease }) {
-  const task = await readTask({ dir, id });
+  let task = await readTask({ dir, id });
   if (!task) throw new Error(`Fix task not found: ${id}`);
 
   let lease;
   if (preClaimedLease) {
-    // Dispatcher already claimed and transitioned the task to CLAIMED (or
-    // FIXING for a stale-recovered task).  Accept the lease if it matches.
     if (!['CLAIMED', 'FIXING', 'QUEUED', 'FIX_QUEUED'].includes(task.state)) {
       return { state: task.state, deduplicated: true };
     }
     lease = preClaimedLease;
   } else {
-    // Fresh execution: claim the task ourselves.
     if (!['QUEUED', 'FIX_QUEUED'].includes(task.state)) {
       return { state: task.state, deduplicated: true };
     }
@@ -40,20 +47,63 @@ export async function executeFixChildTask({ dir, id, instanceId, runWorker, preC
       return { state: (await readTask({ dir, id }))?.state || 'CLAIMED', deduplicated: true };
     }
     lease = claimed.claim;
-    await transitionTask({ dir, id, to: 'CLAIMED', reason: 'fix_child_claimed', patch: { lease, started_at: new Date().toISOString() } });
+    task = await transitionTask({
+      dir,
+      id,
+      to: 'CLAIMED',
+      reason: 'fix_child_claimed',
+      patch: { lease, started_at: new Date().toISOString() },
+    });
   }
 
-  // Transition to FIXING if not already there (reconciler may have done it)
+  const binding = await ensureTaskWorkspace({
+    task,
+    cacheRoot: REPOSITORY_CACHE_ROOT,
+    workspaceRoot: TASK_WORKSPACE_ROOT,
+    recordRoot: WORKSPACE_RECORDS_DIR,
+    lockRoot: WORKSPACE_LOCK_DIR,
+    remote: `https://github.com/${task.repository}.git`,
+    maxActiveWorkspaces: WORKSPACE_MAX_ACTIVE,
+    minimumFreeBytes: WORKSPACE_MIN_FREE_BYTES,
+  });
+
   if (task.state !== 'FIXING') {
-    await transitionTask({ dir, id, to: 'FIXING', reason: 'fix_child_started', patch: { heartbeat_at: new Date().toISOString() }, leaseEpoch: lease.lease_epoch });
+    task = await transitionTask({
+      dir,
+      id,
+      to: 'FIXING',
+      reason: binding.reused ? 'fix_workspace_recovered' : 'fix_workspace_allocated',
+      patch: { heartbeat_at: new Date().toISOString(), ...taskWorkspacePatch(binding) },
+      leaseEpoch: lease.lease_epoch,
+    });
+  } else if (!task.workspace_id) {
+    throw new Error('fix_workspace_binding_missing');
   }
 
+  let terminal;
   try {
-    const result = await runWorker({ task: await readTask({ dir, id }), lease });
+    const result = await runWorker({ task: await readTask({ dir, id }), lease, workspace: binding });
     const state = stateForFixOutcome(result?.outcome);
-    return transitionTask({ dir, id, to: state, reason: `fix_${String(result?.outcome || 'error').toLowerCase()}`, patch: { completed_at: new Date().toISOString(), result }, leaseEpoch: lease.lease_epoch });
+    terminal = await transitionTask({
+      dir,
+      id,
+      to: state,
+      reason: `fix_${String(result?.outcome || 'error').toLowerCase()}`,
+      patch: { completed_at: new Date().toISOString(), result },
+      leaseEpoch: lease.lease_epoch,
+    });
   } catch (error) {
     const state = error?.name === 'FixSupersededError' ? 'SUPERSEDED' : 'ERROR';
-    return transitionTask({ dir, id, to: state, reason: state === 'SUPERSEDED' ? 'fix_stale_sha' : 'fix_worker_error', patch: { completed_at: new Date().toISOString(), error: error?.message || String(error) }, leaseEpoch: lease.lease_epoch });
+    terminal = await transitionTask({
+      dir,
+      id,
+      to: state,
+      reason: state === 'SUPERSEDED' ? 'fix_stale_sha' : 'fix_worker_error',
+      patch: { completed_at: new Date().toISOString(), error: error?.message || String(error) },
+      leaseEpoch: lease.lease_epoch,
+    });
   }
+
+  await applyTaskWorkspaceOutcome({ task: terminal, recordRoot: WORKSPACE_RECORDS_DIR });
+  return terminal;
 }
