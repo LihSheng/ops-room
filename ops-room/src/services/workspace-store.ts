@@ -14,19 +14,22 @@ export const WORKSPACE_STATES = Object.freeze([
 ]);
 
 const SAFE_ID = /^[A-Za-z0-9._-]{1,120}$/;
+const SAFE_REPOSITORY_ID = /^(?:[A-Za-z0-9._-]{1,120}|[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100})$/;
 const SAFE_SHA = /^[0-9a-f]{40}$/i;
 
 export function validateWorkspaceRecord(record) {
   if (!record || record.version !== WORKSPACE_RECORD_VERSION) throw new Error('unsupported_workspace_record');
-  for (const field of ['workspace_id', 'owner_agent', 'task_id', 'repository_id']) {
+  for (const field of ['workspace_id', 'owner_agent', 'task_id']) {
     if (!SAFE_ID.test(String(record[field] || ''))) throw new Error(`invalid_${field}`);
   }
+  if (!SAFE_REPOSITORY_ID.test(String(record.repository_id || ''))) throw new Error('invalid_repository_id');
   if (!['branch', 'detached'].includes(record.mode)) throw new Error('invalid_workspace_mode');
   if (!WORKSPACE_STATES.includes(record.state)) throw new Error('invalid_workspace_state');
   if (record.mode === 'branch' && !record.branch) throw new Error('workspace_branch_required');
   if (record.requested_sha && !SAFE_SHA.test(record.requested_sha)) throw new Error('invalid_requested_sha');
   if (record.resolved_sha && !SAFE_SHA.test(record.resolved_sha)) throw new Error('invalid_resolved_sha');
-  if (String(record.relative_path || '').includes('..') || String(record.relative_path || '').startsWith('/')) {
+  const relativePath = String(record.relative_path || '').replaceAll('\\', '/');
+  if (!relativePath || relativePath.includes('..') || relativePath.startsWith('/')) {
     throw new Error('invalid_workspace_relative_path');
   }
   return record;
