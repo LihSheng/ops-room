@@ -60,7 +60,7 @@ Completion requires:
 
 Clearly distinguish:
 
-- **Repository cache** = shared read-only Git object storage. Never an execution working directory.
+- **Repository cache** = shared bare Git object and reference cache managed only by the workspace administration layer. It is never an execution working directory or a task-owned writable checkout.
 - **Task workspace** = isolated execution directory owned by one task.
 - **Workspace record** = durable ownership and lifecycle evidence.
 
@@ -254,7 +254,9 @@ allocating
  released
 ```
 
-`failed` is reachable from `allocating`, `active`, and `cleanup_requested`. `held_for_investigation` is reachable from `active`, `failed`, and `cleanup_requested`.
+Allocation succeeds from `allocating` to `active` or fails to `failed`.
+Cleanup progresses from `cleanup_requested` to `cleaning`, then to `released` or `failed`.
+`held_for_investigation` may be entered from `active`, `failed`, or `cleanup_requested`.
 
 | State | Meaning |
 |---|---|
@@ -273,7 +275,7 @@ allocating
 - Cleanup and hold transitions are idempotent.
 - Active, queued, or investigation-held workspaces cannot be deleted automatically.
 - Cleanup is not complete merely because cleanup was requested — the workspace record must transition through `cleaning` to `released`.
-- The workspace reconciler applies terminal outcomes at startup and on its recurring cycle to recover from interrupted cleanup requests.
+- The task reconciler idempotently reapplies terminal outcome classification after restart. Successful tasks remain `cleanup_requested` until the separate cleanup operation advances the workspace through `cleaning` to `released`.
 
 ### Restart recovery
 
