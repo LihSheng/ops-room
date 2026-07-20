@@ -1,0 +1,97 @@
+import { execFile as execFileCallback } from 'node:child_process';
+import { mkdir, realpath, stat } from 'node:fs/promises';
+import { dirname, join, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
+
+import { withWorkspaceLock } from './workspace-locks.js';
+
+const execFileDefault = promisify(execFileCallback);
+const SAFE_REPOSITORY_ID = /^[A-Za-z0-9._-]{1,120}$/;
+const SAFE_REF = /^[A-Za-z0-9._\/-]{1,240}$/;
+const SAFE_SHA = /^[0-9a-f]{40}$/i;
+
+export function assertPathWithinRoot(root, candidate) {
+  const resolvedRoot = resolve(root);
+  const resolvedCandidate = resolve(candidate);
+  if (resolvedCandidate !== resolvedRoot && !resolvedCandidate.startsWith(`${resolvedRoot}${sep}`)) {
+    throw new Error('workspace_path_escape');
+  }
+  return resolvedCandidate;
+}
+
+export function repositoryCachePath(cacheRoot, repositoryId) {
+  if (!SAFE_REPOSITORY_ID.test(repositoryId)) throw new Error('invalid_repository_id');
+  return assertPathWithinRoot(cacheRoot, join(cacheRoot, `${repositoryId}.git`));
+}
+
+async function runGit(execFile, args, options = {}) {
+  try {
+    const result = await execFile('git', args, {
+      cwd: options.cwd,
+      encoding: 'utf8',
+      timeout: options.timeoutMs || 60_000,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    });
+    return String(result?.stdout || '').trim();
+  } catch {
+    throw new Error(options.errorCode || 'git_command_failed');
+  }
+}
+
+export async function ensureRepositoryCache({
+  cacheRoot,
+  lockRoot,
+  repositoryId,
+  remote,
+  execFile = execFileDefault,
+}) {
+  if (!remote || /[\r\n]/.test(remote)) throw new Error('invalid_repository_remote');
+  await mkdir(cacheRoot, { recursive: true });
+  const cachePath = repositoryCachePath(cacheRoot, repositoryId);
+
+  return withWorkspaceLock({
+    dir: lockRoot,
+    name: `repository-${repositoryId}`,
+    execute: async () => {
+      let exists = false;
+      try {
+        exists = (await stat(cachePath)).isDirectory();
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+
+      if (!exists) {
+        await mkdir(dirname(cachePath), { recursive: true });
+        await runGit(execFile, ['clone', '--bare', '--', remote, cachePath], {
+          errorCode: 'repository_cache_clone_failed',
+        });
+      } else {
+        await runGit(execFile, ['--git-dir', cachePath, 'fetch', '--prune', '--tags', 'origin'], {
+          errorCode: 'repository_cache_fetch_failed',
+        });
+      }
+
+      return { repository_id: repositoryId, cache_path: cachePath };
+    },
+  });
+}
+
+export async function resolveRepositoryRevision({ cachePath, revision, execFile = execFileDefault }) {
+  if (!(SAFE_SHA.test(revision) || SAFE_REF.test(revision))) throw new Error('invalid_repository_revision');
+  const resolved = await runGit(execFile, ['--git-dir', cachePath, 'rev-parse', '--verify', `${revision}^{commit}`], {
+    errorCode: 'repository_revision_unavailable',
+  });
+  if (!SAFE_SHA.test(resolved)) throw new Error('repository_revision_unavailable');
+  return resolved.toLowerCase();
+}
+
+export async function assertExistingPathWithinRoot(root, candidate) {
+  const checked = assertPathWithinRoot(root, candidate);
+  const [realRoot, realCandidate] = await Promise.all([realpath(root), realpath(candidate)]);
+  if (realCandidate !== realRoot && !realCandidate.startsWith(`${realRoot}${sep}`)) {
+    throw new Error('workspace_symlink_escape');
+  }
+  return checked;
+}
