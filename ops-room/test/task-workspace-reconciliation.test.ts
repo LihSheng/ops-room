@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 import { reconcileTaskWorkspace, reconcileTaskWorkspaces } from '../src/services/task-workspace-reconciliation.js';
@@ -37,7 +38,7 @@ test('reconnects an active task to its existing workspace without allocation', a
     statPath: async () => directory,
   });
   assert.equal(result.status, 'ready');
-  assert.equal(result.workspace_path, '/workspaces/berlin/task-berlin-1');
+  assert.equal(result.workspace_path, resolve(join('/workspaces', 'berlin', 'task-berlin-1')));
 });
 
 test('missing directory and ownership mismatch fail closed', async () => {

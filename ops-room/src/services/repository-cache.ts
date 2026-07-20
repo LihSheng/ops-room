@@ -17,6 +17,10 @@ export function validateRepositoryId(value) {
   if (!(SAFE_LEGACY_REPOSITORY_ID.test(repositoryId) || SAFE_CANONICAL_REPOSITORY_ID.test(repositoryId))) {
     throw new Error('invalid_repository_id');
   }
+  // Reject path traversal sequences: '..', leading/trailing dots, or dot-separated '.' segments
+  if (repositoryId.includes('..') || repositoryId.startsWith('.') || repositoryId.endsWith('.')) {
+    throw new Error('invalid_repository_id');
+  }
   return repositoryId;
 }
 

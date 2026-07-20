@@ -23,6 +23,12 @@ test('agent registry reports desired and observed state from one definition set'
     getRuntimeSnapshot: () => ({
       instances: AGENT_DEFINITIONS.map((agent) => ({ agent: agent.key, runtime })),
     }),
+    getLifecycleState: async () => ({
+      desired_state: 'unmanaged',
+      phase: 'unmanaged',
+      last_error: null,
+      updated_at: null,
+    }),  // Isolated: no production lifecycle state
   });
 
   assert.deepEqual(agents.map((agent) => agent.key), AGENT_DEFINITIONS.map((agent) => agent.key));
