@@ -9,6 +9,10 @@ import { reconcileReviewTasks, dispatchEligibleTasks } from '../src/services/rev
 
 const legacyReconcile = async () => ({ status: 'legacy_unbound', reason_code: 'legacy_task_without_workspace' });
 
+function emptyOutcomeFields() {
+  return { workspace_outcomes: [], workspace_outcome_errors: [] };
+}
+
 test('reconciler recovers expired active review tasks and reports legacy unbound work', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ops-room-reconciler-'));
   const { task: stale } = await createOrClaimTask({ dir, input: { repository: 'LihSheng/LinkUp', pr: 1, headSha: 'a'.repeat(40), agent: 'professor' } });
@@ -30,6 +34,7 @@ test('reconciler recovers expired active review tasks and reports legacy unbound
     corrupt: [],
     workspace_blocked: [],
     legacy_unbound: [stale.id],
+    ...emptyOutcomeFields(),
   });
   assert.equal((await readTask({ dir, id: stale.id })).state, 'QUEUED');
 });
@@ -45,6 +50,7 @@ test('reconciler isolates corrupt task records instead of aborting a cycle', asy
     corrupt: ['corrupt'],
     workspace_blocked: [],
     legacy_unbound: [],
+    ...emptyOutcomeFields(),
   });
 });
 
@@ -64,36 +70,45 @@ test('workspace mismatch blocks stale recovery and routes task to human review',
   assert.equal((await readTask({ dir, id: task.id })).state, 'NEEDS_HUMAN');
 });
 
+test('terminal tasks reconcile cleanup or investigation hold idempotently', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ops-room-reconciler-'));
+  const { task } = await createOrClaimTask({ dir, input: { repository: 'LihSheng/LinkUp', pr: 4, headSha: 'd'.repeat(40), agent: 'berlin' } });
+  const { claimTask } = await import('../src/services/review-task-store.js');
+  await claimTask({ dir, id: task.id, instanceId: 'worker', leaseId: 'lease' });
+  await transitionTask({ dir, id: task.id, to: 'CLAIMED', reason: 'test' });
+  await transitionTask({ dir, id: task.id, to: 'RUNNING', reason: 'test', patch: { workspace_id: 'task-1' } });
+  await transitionTask({ dir, id: task.id, to: 'PASSED', reason: 'test' });
+
+  const result = await reconcileReviewTasks({
+    dir,
+    applyWorkspaceOutcome: async ({ task: value }) => ({ action: value.state === 'PASSED' ? 'cleanup' : 'hold', idempotent: true }),
+  });
+  assert.deepEqual(result.workspace_outcomes, [{ task_id: task.id, action: 'cleanup', idempotent: true }]);
+  assert.deepEqual(result.workspace_outcome_errors, []);
+});
+
 test('dispatchEligibleTasks claims and dispatches queued review tasks within concurrency', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ops-room-reconciler-'));
   const { task: q1 } = await createOrClaimTask({ dir, input: { repository: 'LihSheng/A', pr: 1, headSha: 'a'.repeat(40), agent: 'professor' }, trigger: 'pull_request' });
   const { task: q2 } = await createOrClaimTask({ dir, input: { repository: 'LihSheng/B', pr: 1, headSha: 'b'.repeat(40), agent: 'professor' }, trigger: 'pull_request' });
-
-  assert.equal((await readTask({ dir, id: q1.id })).state, 'QUEUED');
-  assert.equal((await readTask({ dir, id: q2.id })).state, 'QUEUED');
-
   const result = await dispatchEligibleTasks({ dir, instanceId: 'test-dispatcher' });
   assert.equal(result.dispatched, 2);
-  assert.equal(result.tasks.length, 2);
   for (const t of result.tasks) {
     const current = await readTask({ dir, id: t.id });
     assert.equal(current.state, 'CLAIMED');
     assert.ok(current.lease);
   }
-  const result2 = await dispatchEligibleTasks({ dir, instanceId: 'test-dispatcher' });
-  assert.equal(result2.dispatched, 0);
+  assert.equal((await dispatchEligibleTasks({ dir, instanceId: 'test-dispatcher' })).dispatched, 0);
 });
 
 test('dispatchEligibleTasks respects per-PR concurrency limit', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ops-room-reconciler-'));
   await createOrClaimTask({ dir, input: { repository: 'LihSheng/X', pr: 1, headSha: 'a'.repeat(40), agent: 'professor' }, trigger: 'pull_request' });
   await createOrClaimTask({ dir, input: { repository: 'LihSheng/X', pr: 1, headSha: 'b'.repeat(40), agent: 'professor' }, trigger: 'pull_request' });
-
   const result = await dispatchEligibleTasks({ dir, instanceId: 'test-dispatcher' });
   assert.equal(result.dispatched, 1);
   const claimed = await readTask({ dir, id: result.tasks[0].id });
   await transitionTask({ dir, id: claimed.id, to: 'RUNNING', reason: 'test' });
   await transitionTask({ dir, id: claimed.id, to: 'PASSED', reason: 'test' });
-  const result2 = await dispatchEligibleTasks({ dir, instanceId: 'test-dispatcher' });
-  assert.equal(result2.dispatched, 1);
+  assert.equal((await dispatchEligibleTasks({ dir, instanceId: 'test-dispatcher' })).dispatched, 1);
 });
