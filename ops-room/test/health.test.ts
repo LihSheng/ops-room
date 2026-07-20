@@ -35,7 +35,7 @@ function options(overrides = {}) {
   };
 }
 
-test('health reports bounded skill and memory registry status without making compatibility unknown non-ready', async () => {
+test('health reports bounded registries and workflow-store readiness', async () => {
   const health = await handleHealth(options());
 
   assert.equal(health.status, 'ok');
@@ -45,12 +45,14 @@ test('health reports bounded skill and memory registry status without making com
   assert.equal(health.skill_registry.unknown_assignments, 1);
   assert.equal(health.memory_registry.manifest_count, 12);
   assert.equal(health.memory_registry.write_assignments, 8);
+  assert.equal(health.dependencies.workflow_store.status, 'ok');
+  assert.equal(typeof health.paths.workflow_runs_dir, 'string');
   assert.equal('sources' in health.skill_registry, false);
   assert.equal('manifests' in health.skill_registry, false);
   assert.equal('sources' in health.memory_registry, false);
   assert.equal('manifests' in health.memory_registry, false);
   assert.deepEqual(Object.keys(health.dependencies), [
-    'task_store', 'review_task_store', 'state_store', 'log_store', 'audit_store', 'idempotency_store',
+    'task_store', 'review_task_store', 'workflow_store', 'state_store', 'log_store', 'audit_store', 'idempotency_store',
     'lifecycle_store', 'workspace_store', 'agent_profiles', 'skill_registry', 'memory_registry', 'release_identity',
     'command_git', 'command_gh',
   ]);
@@ -69,6 +71,20 @@ test('health becomes non-ready while draining or when a critical store fails', a
   assert.equal(health.ready, false);
   assert.equal(health.dependencies.task_store.status, 'error');
   assert.equal(health.dependencies.command_git.status, 'error');
+});
+
+test('workflow-store failure makes health non-ready', async () => {
+  const health = await handleHealth(options({
+    directoryCheckFn: async (path) => ({
+      status: path.includes('workflow-runs') ? 'error' : 'ok',
+      required: true,
+      error: path.includes('workflow-runs') ? 'EACCES' : undefined,
+    }),
+  }));
+
+  assert.equal(health.ready, false);
+  assert.equal(health.dependencies.workflow_store.status, 'error');
+  assert.equal(health.dependencies.workflow_store.error, 'EACCES');
 });
 
 test('structurally invalid profile, skill, or memory registry makes health non-ready', async () => {
