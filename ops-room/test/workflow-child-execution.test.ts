@@ -137,7 +137,15 @@ test('explicit writable child execution persists completion before cleanup reque
     },
     applyWorkspaceOutcome: async ({ outcome }: any) => {
       calls.push(`policy:${outcome}`);
-      return { action: 'cleanup', workspace: { ...pendingChild.workspace, state: 'cleanup_requested' } };
+      return {
+        action: 'cleanup',
+        workspace: {
+          ...binding(pendingChild).record,
+          state: 'cleanup_requested',
+          remote: 'https://token@example.invalid/repo.git',
+          cache_path: '/secret/cache/repo.git',
+        },
+      };
     },
   }));
 
@@ -152,6 +160,9 @@ test('explicit writable child execution persists completion before cleanup reque
   assert.equal(result.child.output_sha, OUTPUT_SHA);
   assert.equal(result.workspace_action, 'cleanup');
   assert.equal(Object.hasOwn(result, 'workspace_path'), false);
+  assert.equal(Object.hasOwn(result.workspace, 'relative_path'), false);
+  assert.equal(Object.hasOwn(result.workspace, 'remote'), false);
+  assert.equal(Object.hasOwn(result.workspace, 'cache_path'), false);
 });
 
 test('review children require immutable output SHA and do not use a workspace-head inspector', async () => {
@@ -245,9 +256,10 @@ test('unsafe runner errors are not persisted verbatim', async () => {
   assert.equal(storedReason, 'workflow_child_runner_failed');
 });
 
-test('completed and needs-human children deduplicate without invoking the runner', async () => {
+test('completed and needs-human children deduplicate, reconcile policy, and do not invoke the runner', async () => {
   for (const state of ['completed', 'needs_human']) {
-    let calls = 0;
+    let runnerCalls = 0;
+    let policyCalls = 0;
     const terminal = child({
       state,
       output_sha: state === 'completed' ? OUTPUT_SHA : null,
@@ -257,10 +269,23 @@ test('completed and needs-human children deduplicate without invoking the runner
     const result = await executeWorkflowChild(baseInput({
       executionLockDir: await lockDir(),
       readRun: async () => run(terminal, { state: state === 'needs_human' ? 'needs_human' : 'active' }),
-      runStage: async () => { calls += 1; return { outcome: 'completed', output_sha: OUTPUT_SHA }; },
+      runStage: async () => { runnerCalls += 1; return { outcome: 'completed', output_sha: OUTPUT_SHA }; },
+      applyWorkspaceOutcome: async ({ outcome }: any) => {
+        policyCalls += 1;
+        assert.equal(outcome, state === 'completed' ? 'completed' : 'needs_human');
+        return {
+          action: state === 'completed' ? 'cleanup' : 'hold',
+          workspace: {
+            ...binding(terminal).record,
+            state: state === 'completed' ? 'cleanup_requested' : 'held_for_investigation',
+          },
+        };
+      },
     }));
     assert.equal(result.deduplicated, true);
-    assert.equal(calls, 0);
+    assert.equal(runnerCalls, 0);
+    assert.equal(policyCalls, 1);
+    assert.equal(result.workspace_action, state === 'completed' ? 'cleanup' : 'hold');
   }
 });
 
