@@ -1,7 +1,7 @@
 # Ops Room Architecture
 
 Status: **Accepted — canonical**
-Updated: 2026-07-19
+Updated: 2026-07-20
 
 This is the single authoritative product and runtime architecture for Ops Room. Obsidian notes and implementation plans are supporting history unless this document links them as an active decision.
 
@@ -52,6 +52,17 @@ Completion requires:
 | Task, effect, lease, audit, and idempotency state | Persistent paths under `data/ops-room/` |
 | Release identity | `RELEASE.json` plus external SHA-256 checksum |
 | Secrets | Protected environment/secret files outside Git and release directories |
+| Shared bare repository caches | `repository-cache.ts` under `OPS_ROOM_REPOSITORY_CACHE_ROOT` |
+| Isolated task worktrees | `workspace-manager.ts` under `OPS_ROOM_TASK_WORKSPACE_ROOT` |
+| Durable workspace records | `workspace-store.ts` under `OPS_ROOM_WORKSPACE_RECORDS_DIR` |
+| Task-to-workspace bindings | Additive bounded fields on review and fix task records |
+| Workspace cleanup and investigation-hold state | Durable workspace record state under `OPS_ROOM_WORKSPACE_RECORDS_DIR` |
+
+Clearly distinguish:
+
+- **Repository cache** = shared read-only Git object storage. Never an execution working directory.
+- **Task workspace** = isolated execution directory owned by one task.
+- **Workspace record** = durable ownership and lifecycle evidence.
 
 PostgreSQL is not currently authoritative. Introducing it requires a separate migration decision with dual-read/cutover/rollback semantics that preserve existing lease and effect guarantees.
 
@@ -158,6 +169,176 @@ Review and fix task mutations use one operator contract for `cancel`, `retry`, `
 - Compatibility aliases under `/api/review-tasks/:taskId/<action>` use the same contract; they do not bypass audit or idempotency.
 
 These task actions do not provide agent process start/stop/restart, unrestricted workflow execution, browser controls, or Docker mutation.
+
+## Task Workspace Ownership Model
+
+OPS-009 gives every new executable review or fix task one durable isolated Git worktree backed by a shared bare repository cache.
+
+### Cardinality
+
+- Every new executable task owns exactly one durable workspace.
+- One workspace belongs to exactly one task.
+- One workspace has one owner agent.
+- One workspace belongs to one canonical repository identity.
+- Retries and restart recovery reuse the same workspace.
+- A second workspace must not be allocated when a valid binding already exists.
+- Ownership or repository mismatches fail closed.
+
+### Workspace data model
+
+Each bound task carries:
+
+```text
+Task
+ ├── workspace_id
+ ├── owner agent
+ ├── repository identity
+ ├── workspace mode (branch | detached)
+ ├── branch (writable mode only)
+ └── workspace lifecycle state
+```
+
+### Writable branch workspace
+
+Implementation and fix tasks use writable branch worktrees.
+
+- The task has exclusive ownership of the repository branch while active.
+- Another active task attempting to own the same writable branch is rejected before worktree creation.
+- File edits, approved verification commands, commits, and pushes execute from the managed worktree.
+- Execution never happens from the shared bare cache.
+- Writable dependencies, generated files, or uncommitted changes are never shared with another task.
+
+### Detached exact-SHA workspace
+
+Review tasks use detached worktrees.
+
+- The workspace requires an exact immutable 40-character commit SHA before allocation.
+- Workspace HEAD must equal the recorded reviewed SHA before any review effect is posted.
+- Review tasks do not mutate the reviewed branch.
+- Separate review workspaces may inspect the same SHA without sharing a writable checkout.
+- Berlin reviews the recorded immutable SHA.
+
+### Durable binding metadata
+
+The following bounded metadata is persisted on a task and its workspace record:
+
+- workspace ID;
+- mode (branch | detached);
+- repository ID;
+- branch (writable mode only);
+- resolved SHA;
+- workspace lifecycle state;
+- cleanup-request status;
+- investigation-hold status.
+
+**Public APIs and task serialization must not expose:**
+
+- absolute host paths;
+- repository cache paths;
+- authenticated remotes;
+- credentials or tokens;
+- environment values;
+- raw Git errors or command output.
+
+### Workspace lifecycle states
+
+```text
+allocating
+    ↓
+ active
+    ↓
+ cleanup_requested
+    ↓
+ cleaning
+    ↓
+ released
+```
+
+`failed` is reachable from `allocating`, `active`, and `cleanup_requested`. `held_for_investigation` is reachable from `active`, `failed`, and `cleanup_requested`.
+
+| State | Meaning |
+|---|---|
+| `allocating` | Worktree creation or cache fetch in progress |
+| `active` | Worktree is usable and bound to an executable task |
+| `cleanup_requested` | Terminal success recorded; cleanup is pending |
+| `cleaning` | Worktree removal or record finalization in progress |
+| `released` | Worktree successfully removed; record retained for audit |
+| `failed` | Allocation or cleanup failed with a bounded reason |
+| `held_for_investigation` | Workspace preserved after a terminal failure outcome |
+
+### Terminal-task workspace policy
+
+- `PASSED` and `FIX_PUSHED` request cleanup only after the terminal task transition is durable.
+- `ERROR`, `NEEDS_HUMAN`, `CANCELLED`, `CANCEL_REQUESTED`, and `SUPERSEDED` preserve the workspace for investigation.
+- Cleanup and hold transitions are idempotent.
+- Active, queued, or investigation-held workspaces cannot be deleted automatically.
+- Cleanup is not complete merely because cleanup was requested — the workspace record must transition through `cleaning` to `released`.
+- The workspace reconciler applies terminal outcomes at startup and on its recurring cycle to recover from interrupted cleanup requests.
+
+### Restart recovery
+
+Restart reconciliation:
+
+1. Reads the task workspace ID from the durable task.
+2. Reads the durable workspace record.
+3. Validates task ID, owner agent, and repository identity.
+4. Validates that the relative path remains below the configured workspace root.
+5. Verifies the worktree directory exists.
+6. Verifies that the workspace lifecycle state is executable (`active` or `held_for_investigation`).
+7. Reconnects the task without allocating a duplicate workspace.
+
+**Fail-closed handling:**
+
+| Condition | Behaviour |
+|---|---|
+| Missing workspace record | Blocked — `workspace_record_unavailable` |
+| Task ID mismatch | Blocked — `workspace_task_mismatch` |
+| Agent owner mismatch | Blocked — `workspace_owner_mismatch` |
+| Repository identity mismatch | Blocked — `workspace_repository_mismatch` |
+| Worktree directory missing or path escape | Blocked — `workspace_directory_missing` |
+| Stale or ambiguous workspace state | Blocked — `workspace_state_not_executable` |
+| Incompatible lifecycle state | Blocked — `workspace_state_not_executable` |
+
+**Legacy unbound tasks:** Active tasks without workspace metadata remain readable and are classified as `legacy_unbound`. They are not silently migrated while running.
+
+### Persistence and release separation
+
+Repository caches, worktrees, workspace records, and workspace locks are persistent runtime data. They live outside immutable release directories.
+
+Immutable release artifacts exclude:
+
+- repository caches (`OPS_ROOM_REPOSITORY_CACHE_ROOT`);
+- task workspaces (`OPS_ROOM_TASK_WORKSPACE_ROOT`);
+- workspace records (`OPS_ROOM_WORKSPACE_RECORDS_DIR`);
+- workspace locks (`OPS_ROOM_WORKSPACE_LOCK_DIR`);
+- task-generated dependencies and build output.
+
+Application rollback must not delete or recreate these persistent paths.
+
+### Security and capacity controls
+
+- Git administration and managed push operations use fixed executable and argument arrays — never a shell.
+- Repository IDs, branches, SHAs, agent IDs, task IDs, workspace IDs, and relative paths are validated against safe patterns.
+- Filesystem locking (`withWorkspaceLock`) guards cache fetch and worktree administration.
+- Exclusive writable branch ownership prevents concurrent branch mutation.
+- Maximum-active-workspace admission control (`OPS_ROOM_WORKSPACE_MAX_ACTIVE`) caps concurrent allocations.
+- Minimum-free-disk admission control (`OPS_ROOM_WORKSPACE_MIN_FREE_BYTES`) prevents allocation below a threshold.
+- Verification commands are selected from an explicit approved set.
+- Errors are normalized; raw Git output, credentials, and authenticated remotes are never returned.
+
+### OPS-010 boundary
+
+OPS-009 provides workspace isolation and ownership only. It does not introduce:
+
+- parent and child workflow runs;
+- automatic Professor → Tokyo → Berlin handoffs;
+- a general workflow engine;
+- automatic pull request creation or merge;
+- browser workspace mutation;
+- lifecycle start or stop coupling;
+- PostgreSQL authority.
+
+OPS-010 may consume OPS-009 workspaces, but it must not redefine workspace ownership or bypass exact-SHA and writable-branch rules.
 
 ## Runtime Adapter Read Model
 
@@ -362,6 +543,8 @@ ops-room/dist/dashboard/**
 
 Forbidden: `.env`, secrets, `data/`, logs, workspaces, lifecycle records, audit/idempotency records, tests, source dashboard, non-JSON profile files, non-manifest registry files, provider homes, symlinks, and `node_modules`.
 
+Repository caches, task workspaces, workspace records, and workspace locks are persistent runtime data that must never be included in release archives. Rollback must not delete or recreate these persistent paths.
+
 The release builder validates the exact approved skill and memory-space manifest sets before copying them. The archive checksum is external; `RELEASE.json` never self-hashes its containing archive. Manual activation verifies the allowlist, checksum, manifest SHA, fixed release path, systemd restart, profile/skill/memory registry validation, lifecycle-store readiness, and SHA-aware readiness. Failure restores the previous symlink and verifies previous-release health.
 
 Production layout:
@@ -392,7 +575,7 @@ Automatic deployment remains deferred until manual activation, active-work drain
 8. Introduce a runtime adapter read model.
 9. Add one guarded graceful-stop action for a non-critical test agent.
 | 10. Add one guarded graceful-start action for Gemini (guarded-start & already-running adoption).
-| 11. Validate production evidence before considering broader lifecycle reconciliation, shared workspaces, or multi-agent orchestration.
+| 11. OPS-009 workspace foundation and execution integration — complete. OPS-010 collaboration workflow — next.
 
 ## Explicit Non-Goals Now
 
