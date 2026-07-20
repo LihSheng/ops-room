@@ -46,7 +46,7 @@ import { handleReadOnlyAgentProfileApi } from '../routes/agent-profiles.js';
 import { handleWorkflowRunDetail, handleWorkflowRunsList } from '../routes/workflow-runs.js';
 import { recoverInterruptedAgentLifecycleStates } from '../services/agent-lifecycle-store.js';
 import { resolveOperatorIdentity } from '../services/operator-identity.js';
-import { sendJSON, verifyAuth, verifyOperatorAuth, parseBody } from '../routes/helpers.js';
+import { sendJSON, verifyAuth, verifyDashboardReadRequest, verifyOperatorAuth, parseBody } from '../routes/helpers.js';
 import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.js';
 import { createFreshRuntimeInspector } from '../services/runtime-adapter/registry.js';
 
@@ -382,7 +382,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && pathname === '/api/workflows') {
-    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    if (!verifyDashboardReadRequest(req)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     try {
       const result = await handleWorkflowRunsList(searchParams, { workflowRunsDir: WORKFLOW_RUNS_DIR });
       sendJSON(res, result.status, result.body);
@@ -394,7 +394,7 @@ const server = createServer(async (req, res) => {
 
   const workflowDetailMatch = pathname.match(/^\/api\/workflows\/([A-Za-z0-9._:-]+)$/);
   if (req.method === 'GET' && workflowDetailMatch) {
-    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    if (!verifyDashboardReadRequest(req)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     try {
       const result = await handleWorkflowRunDetail(decodeURIComponent(workflowDetailMatch[1]), {
         workflowRunsDir: WORKFLOW_RUNS_DIR,
@@ -407,7 +407,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && pathname === '/api/review-tasks') {
-    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    if (!verifyDashboardReadRequest(req)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 100);
     sendJSON(res, 200, { tasks: await listReviewTasks({ dir: REVIEW_TASKS_DIR, limit }) });
     return;
@@ -415,7 +415,7 @@ const server = createServer(async (req, res) => {
 
   const reviewDetailMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)$/);
   if (req.method === 'GET' && reviewDetailMatch) {
-    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    if (!verifyDashboardReadRequest(req)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     const task = await readTask({ dir: REVIEW_TASKS_DIR, id: reviewDetailMatch[1] });
     if (!task) { sendJSON(res, 404, { error: 'Review task not found' }); return; }
     sendJSON(res, 200, { task });
@@ -524,7 +524,7 @@ const server = createServer(async (req, res) => {
 
   const reviewEffectsMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/effects$/);
   if (req.method === 'GET' && reviewEffectsMatch) {
-    if (!verifyAuth(req.headers.authorization)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
+    if (!verifyDashboardReadRequest(req)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     try {
       const kind = url.searchParams.get('kind');
       const state = url.searchParams.get('state') || 'CLAIMED';
