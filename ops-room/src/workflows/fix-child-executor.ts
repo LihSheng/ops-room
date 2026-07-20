@@ -20,11 +20,6 @@ function stateForFixOutcome(outcome) {
   return 'ERROR';
 }
 
-/**
- * Execute a fix child task. Accepts an optional pre-claimed lease so the
- * durable dispatcher can atomically claim within concurrency limits and pass
- * ownership to this executor without a second claim+transition cycle.
- */
 export async function executeFixChildTask({ dir, id, instanceId, runWorker, preClaimedLease }) {
   let task = await readTask({ dir, id });
   if (!task) throw new Error(`Fix task not found: ${id}`);
@@ -40,18 +35,14 @@ export async function executeFixChildTask({ dir, id, instanceId, runWorker, preC
       return { state: task.state, deduplicated: true };
     }
     const claimed = await claimTask({
-      dir, id, instanceId, leaseId: randomUUID(),
-      leaseEpoch: (task.lease?.lease_epoch || 0) + 1,
+      dir, id, instanceId, leaseId: randomUUID(), leaseEpoch: (task.lease?.lease_epoch || 0) + 1,
     });
     if (!claimed.claimed) {
       return { state: (await readTask({ dir, id }))?.state || 'CLAIMED', deduplicated: true };
     }
     lease = claimed.claim;
     task = await transitionTask({
-      dir,
-      id,
-      to: 'CLAIMED',
-      reason: 'fix_child_claimed',
+      dir, id, to: 'CLAIMED', reason: 'fix_child_claimed',
       patch: { lease, started_at: new Date().toISOString() },
     });
   }
@@ -69,9 +60,7 @@ export async function executeFixChildTask({ dir, id, instanceId, runWorker, preC
 
   if (task.state !== 'FIXING') {
     task = await transitionTask({
-      dir,
-      id,
-      to: 'FIXING',
+      dir, id, to: 'FIXING',
       reason: binding.reused ? 'fix_workspace_recovered' : 'fix_workspace_allocated',
       patch: { heartbeat_at: new Date().toISOString(), ...taskWorkspacePatch(binding) },
       leaseEpoch: lease.lease_epoch,
@@ -82,12 +71,15 @@ export async function executeFixChildTask({ dir, id, instanceId, runWorker, preC
 
   let terminal;
   try {
-    const result = await runWorker({ task: await readTask({ dir, id }), lease, workspace: binding });
+    const persistedTask = await readTask({ dir, id });
+    const result = await runWorker({
+      task: { ...persistedTask, __workspace_binding: binding },
+      lease,
+      workspace: binding,
+    });
     const state = stateForFixOutcome(result?.outcome);
     terminal = await transitionTask({
-      dir,
-      id,
-      to: state,
+      dir, id, to: state,
       reason: `fix_${String(result?.outcome || 'error').toLowerCase()}`,
       patch: { completed_at: new Date().toISOString(), result },
       leaseEpoch: lease.lease_epoch,
@@ -95,9 +87,7 @@ export async function executeFixChildTask({ dir, id, instanceId, runWorker, preC
   } catch (error) {
     const state = error?.name === 'FixSupersededError' ? 'SUPERSEDED' : 'ERROR';
     terminal = await transitionTask({
-      dir,
-      id,
-      to: state,
+      dir, id, to: state,
       reason: state === 'SUPERSEDED' ? 'fix_stale_sha' : 'fix_worker_error',
       patch: { completed_at: new Date().toISOString(), error: error?.message || String(error) },
       leaseEpoch: lease.lease_epoch,
