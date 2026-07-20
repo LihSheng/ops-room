@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import { writeAtomic } from './review-task-store.js';
+import { serializeTaskWorkspace } from './task-workspace-binding.js';
 import { ensureWorkflowChildWorkspace } from './workflow-child-workspace.js';
 import { requestWorkspaceCleanup } from './workspace-manager.js';
 import { readWorkspaceRecord, updateWorkspaceRecord } from './workspace-store.js';
@@ -193,6 +194,9 @@ async function applyWorkflowWorkspaceOutcome({
 }
 
 function terminalResult({ run, child, workspacePolicy, deduplicated = false }: any) {
+  const workspace = workspacePolicy?.workspace
+    ? serializeTaskWorkspace(workspacePolicy.workspace)
+    : child.workspace || null;
   return {
     run: boundedRun(run),
     child: {
@@ -203,7 +207,7 @@ function terminalResult({ run, child, workspacePolicy, deduplicated = false }: a
       workspace: child.workspace || null,
     },
     workspace_action: workspacePolicy?.action || 'none',
-    workspace: workspacePolicy?.workspace || child.workspace || null,
+    workspace,
     deduplicated,
   };
 }
@@ -247,11 +251,18 @@ export async function executeWorkflowChild({
       let run = await readRun({ dir: workflowRunsDir, workflowId });
       let child = findChild(run, childId);
 
-      if (child.state === 'completed') {
-        return terminalResult({ run, child, workspacePolicy: null, deduplicated: true });
-      }
-      if (child.state === 'needs_human') {
-        return terminalResult({ run, child, workspacePolicy: null, deduplicated: true });
+      if (child.state === 'completed' || child.state === 'needs_human') {
+        const workspacePolicy = child.workspace?.workspace_id
+          ? await applyWorkspaceOutcome({
+            run,
+            child,
+            recordRoot,
+            outcome: child.state === 'completed' ? 'completed' : 'needs_human',
+            reason: child.last_error || undefined,
+            now,
+          })
+          : null;
+        return terminalResult({ run, child, workspacePolicy, deduplicated: true });
       }
       if (!EXECUTABLE_RUN_STATES.has(run.state)) throw new Error(`workflow_run_not_executable:${run.state}`);
       if (child.state === 'active') throw new Error('workflow_child_execution_in_progress');
