@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import { withAgentLifecycleGate } from './agent-lifecycle-store.js';
+import { reconcileTaskWorkspace } from './task-workspace-reconciliation.js';
+import { TASK_WORKSPACE_ROOT, WORKSPACE_RECORDS_DIR } from './runtime-paths.js';
 import {
   countActiveTasks,
   checkConcurrency,
@@ -15,33 +17,63 @@ import {
 const ACTIVE_STATES = new Set(['CLAIMED', 'RUNNING', 'FIXING']);
 const DISPATCHABLE_STATES = new Set(['QUEUED', 'FIX_QUEUED']);
 
-export async function reconcileReviewTasks({ dir, now, staleMinutes = 30, retryLimit = 3 }) {
+export async function reconcileReviewTasks({
+  dir,
+  now,
+  staleMinutes = 30,
+  retryLimit = 3,
+  workspaceRoot = TASK_WORKSPACE_ROOT,
+  workspaceRecordRoot = WORKSPACE_RECORDS_DIR,
+  reconcileWorkspace = reconcileTaskWorkspace,
+}) {
   const { scanned, tasks, corrupt } = await scanReviewTasks({ dir });
   const recovered = [];
   const reDispatched = [];
+  const workspaceBlocked = [];
+  const legacyUnbound = [];
   for (const task of tasks) {
     if (!ACTIVE_STATES.has(task.state)) continue;
+
+    const workspace = await reconcileWorkspace({
+      task,
+      workspaceRoot,
+      recordRoot: workspaceRecordRoot,
+    });
+    if (workspace.status === 'blocked') {
+      await transitionTask({
+        dir,
+        id: task.id,
+        to: 'NEEDS_HUMAN',
+        reason: `workspace_reconciliation_blocked:${workspace.reason_code}`,
+        patch: { workspace_reconciliation: { status: workspace.status, reason_code: workspace.reason_code } },
+        leaseEpoch: task.lease?.lease_epoch,
+      });
+      workspaceBlocked.push({ task_id: task.id, reason_code: workspace.reason_code });
+      continue;
+    }
+    if (workspace.status === 'legacy_unbound') legacyUnbound.push(task.id);
+
     const result = await recoverStaleTask({ dir, id: task.id, now, staleMinutes, retryLimit });
     if (result.recovered) {
       recovered.push(task.id);
       if (result.re_dispatched) reDispatched.push(task.id);
     }
   }
-  return { scanned, recovered, re_dispatched: reDispatched, corrupt };
+  return {
+    scanned,
+    recovered,
+    re_dispatched: reDispatched,
+    corrupt,
+    workspace_blocked: workspaceBlocked,
+    legacy_unbound: legacyUnbound,
+  };
 }
 
-/**
- * Acquire a short-lived concurrency reservation lock.  To prevent two
- * processes from both seeing available capacity and exceeding limits, we
- * acquire locks in hierarchy: global → repository → PR.  Each lock includes
- * metadata (PID + timestamp) so a crashed process's lock can be recovered.
- */
 async function acquireSlotLock(dir, repository, pr) {
   const locksDir = join(dir, '.locks');
   await mkdir(locksDir, { recursive: true });
   const now = Date.now();
   const meta = JSON.stringify({ pid: process.pid, at: now });
-
   const levels = [
     { key: 'global', path: join(locksDir, 'global.lock') },
     { key: `repo:${repository.replace(/\//g, '_')}`, path: join(locksDir, `repo_${repository.replace(/\//g, '_')}.lock`) },
@@ -69,9 +101,9 @@ async function acquireSlotLock(dir, repository, pr) {
               await handle.close();
               acquired.push(level.path);
               continue;
-            } catch { }
+            } catch {}
           }
-        } catch { }
+        } catch {}
         await releaseSlotLocks(acquired);
         return { acquired: false };
       }
@@ -83,7 +115,7 @@ async function acquireSlotLock(dir, repository, pr) {
 
 async function releaseSlotLocks(paths) {
   for (const path of paths) {
-    try { await rm(path, { force: true }); } catch { }
+    try { await rm(path, { force: true }); } catch {}
   }
 }
 
@@ -99,11 +131,6 @@ async function dispatchAllowed(canDispatchAgent, agent) {
   }
 }
 
-/**
- * Scan QUEUED and FIX_QUEUED tasks, atomically claim them within
- * concurrency limits using both the task slot locks and the per-agent
- * lifecycle gate. Tasks are left in CLAIMED state with the lease attached.
- */
 export async function dispatchEligibleTasks({
   dir,
   instanceId,
@@ -117,26 +144,18 @@ export async function dispatchEligibleTasks({
 
     const claimedTask = await withAgentDispatchGate(task.agent, async () => {
       if (!(await dispatchAllowed(canDispatchAgent, task.agent))) return null;
-
       const lock = await acquireSlotLock(dir, task.repository, task.pr);
       if (!lock.acquired) return null;
-
       try {
         if (!(await dispatchAllowed(canDispatchAgent, task.agent))) return null;
         const counts = await countActiveTasks({ dir, repository: task.repository, pr: task.pr });
         const concurrency = checkConcurrency({ counts, limits: task.policy?.concurrency || {} });
         if (!concurrency.allowed) return null;
-
         const leaseEpoch = (task.lease?.lease_epoch || 0) + 1;
         const claimed = await claimTask({
-          dir,
-          id: task.id,
-          instanceId,
-          leaseId: randomUUID(),
-          leaseEpoch,
+          dir, id: task.id, instanceId, leaseId: randomUUID(), leaseEpoch,
         });
         if (!claimed.claimed) return null;
-
         const transitioned = await transitionTask({
           dir,
           id: task.id,
@@ -154,7 +173,6 @@ export async function dispatchEligibleTasks({
         await releaseSlotLock(lock);
       }
     });
-
     if (claimedTask) dispatched.push(claimedTask);
   }
   return { dispatched: dispatched.length, tasks: dispatched };
