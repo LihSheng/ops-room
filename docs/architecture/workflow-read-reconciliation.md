@@ -1,16 +1,32 @@
-# OPS-010B Workflow Read and Restart Reconciliation
+# OPS-010 Workflow Read and Restart Reconciliation
 
-Status: initial implementation slice
+Status: integrated runtime contract
 
 ## Purpose
 
-OPS-010B makes the durable `feature-development` workflow model observable and recoverable without granting automatic execution authority.
+OPS-010B and OPS-010C make the durable `feature-development` workflow model observable and restart-recoverable without granting automatic execution authority.
 
-It introduces reusable bounded read handlers and startup reconciliation for interrupted active child records. It does not dispatch agents, execute Git, allocate workspaces, mutate GitHub, or advance workflow stages.
+The implementation provides bounded authenticated reads, startup reconciliation for interrupted active child records, persistent runtime-path configuration, and workflow-store health readiness. It does not dispatch agents, execute Git, allocate workspaces, mutate GitHub, or advance workflow stages.
 
-## Read contract
+## Runtime authority
 
-Planned authenticated routes:
+Workflow records are persistent runtime data stored under:
+
+```text
+OPS_ROOM_WORKFLOW_RUNS_DIR
+```
+
+When the environment override is absent, the default is:
+
+```text
+<OPS_ROOM_DATA_DIR>/workflow-runs
+```
+
+The workflow directory remains outside immutable release artifacts. Application activation and rollback must preserve it.
+
+## Authenticated read contract
+
+The existing dashboard bearer authentication protects:
 
 ```text
 GET /api/workflows
@@ -45,7 +61,7 @@ A corrupt or structurally ambiguous record is represented by a bounded `workflow
 
 ## Restart reconciliation
 
-Startup reconciliation scans durable workflow records before later HTTP integration begins serving workflow reads.
+The webhook entrypoint initializes profile, skill, and memory registries, then reconciles workflow records before importing the HTTP server. Workflow reads therefore cannot observe an unreconciled active child left by a previous process.
 
 For every valid workflow:
 
@@ -64,10 +80,19 @@ Each reconciliation write is serialized by a filesystem lock derived from the wo
 
 Workflow records and reconciliation locks remain persistent runtime data outside immutable releases.
 
+## Health contract
+
+`GET /api/health` reports `workflow_store` as a required dependency and exposes the configured workflow directory in the existing bounded paths section.
+
+- A readable and writable workflow store reports `ok`.
+- An unavailable workflow directory makes readiness false.
+- Individual corrupt records do not expose parse details and remain visible only as unavailable workflow summaries.
+
 ## Failure behavior
 
 - Missing or corrupt records are reported as unavailable and are not repaired silently.
 - A failed reconciliation does not create a replacement workflow.
+- An unavailable workflow store fails startup or health readiness rather than silently dropping durable state.
 - No child, branch, commit, review, workspace, or external effect is replayed.
 - Ambiguity remains visible for human investigation.
 
@@ -81,12 +106,6 @@ Workflow records and reconciliation locks remain persistent runtime data outside
 - PostgreSQL authority;
 - any change to OPS-009 workspace ownership rules.
 
-## Next integration gate
+## Next orchestration gate
 
-After the handler and reconciler contracts pass Linux and Windows CI:
-
-- add `OPS_ROOM_WORKFLOW_RUNS_DIR` to runtime paths;
-- wire authenticated GET routes into the HTTP server;
-- run reconciliation once during startup before serving workflow requests;
-- expose workflow-store readiness in health;
-- preserve all existing review/fix API and reconciliation behavior.
+The next OPS-010 slice may connect durable workflow children to OPS-009 workspaces and existing task executors. It must preserve exact-SHA handoffs, one-child-to-one-workspace ownership, immutable completed iterations, bounded concurrency, and human escalation. Automatic execution must not begin until that integration has focused recovery and idempotency coverage.
