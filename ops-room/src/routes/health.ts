@@ -2,7 +2,7 @@ import { commandExists } from '../workflows/github-code.js';
 import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import {
-  TASKS_DIR, REVIEW_TASKS_DIR, STATE_DIR, LOG_DIR, WORKSPACE_BASE, AUDIT_DIR, IDEMPOTENCY_DIR,
+  TASKS_DIR, REVIEW_TASKS_DIR, WORKFLOW_RUNS_DIR, STATE_DIR, LOG_DIR, WORKSPACE_BASE, AUDIT_DIR, IDEMPOTENCY_DIR,
   LIFECYCLE_DIR, AGENT_PROFILES_DIR, MEMORY_SPACE_MANIFESTS_DIR, OPENAB_SERVER_VERSION, REQUIRED_COMMANDS,
 } from '../services/runtime-paths.js';
 import { processLifecycle } from '../services/process-lifecycle.js';
@@ -75,6 +75,7 @@ export async function handleHealth({
   const dependencyEntries = await Promise.all([
     ['task_store', directoryCheckFn(TASKS_DIR)],
     ['review_task_store', directoryCheckFn(REVIEW_TASKS_DIR)],
+    ['workflow_store', directoryCheckFn(WORKFLOW_RUNS_DIR)],
     ['state_store', directoryCheckFn(STATE_DIR)],
     ['log_store', directoryCheckFn(LOG_DIR)],
     ['audit_store', directoryCheckFn(AUDIT_DIR)],
@@ -109,6 +110,7 @@ export async function handleHealth({
     dependencies,
     paths: {
       tasks_dir: TASKS_DIR,
+      workflow_runs_dir: WORKFLOW_RUNS_DIR,
       state_dir: STATE_DIR,
       logs_dir: LOG_DIR,
       audit_dir: AUDIT_DIR,
