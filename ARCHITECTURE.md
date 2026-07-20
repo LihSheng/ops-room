@@ -57,6 +57,12 @@ Completion requires:
 | Durable workspace records | `workspace-store.ts` under `OPS_ROOM_WORKSPACE_RECORDS_DIR` |
 | Task-to-workspace bindings | Additive bounded fields on review and fix task records |
 | Workspace cleanup and investigation-hold state | Durable workspace record state under `OPS_ROOM_WORKSPACE_RECORDS_DIR` |
+| Durable workflow-run records | `workflow-run-store.ts` under `OPS_ROOM_WORKFLOW_RUNS_DIR` |
+| Workflow-run schema, transition, and event authority | `workflow-run-store.ts` — created, active, terminal transitions validated |
+| Workflow-child workspace bindings | `workflow-child-workspace.ts` — one deterministic workspace per workflow child |
+| Explicit workflow-child execution contract | `workflow-child-execution.ts` — durable activation, output-SHA verification, terminal deduplication |
+| Workspace ownership and lifecycle (workflow children) | OPS-009 workspace records remain authoritative |
+| Workflow API read contract | `src/routes/workflow-runs.ts` — authenticated read-only list and detail |
 
 Clearly distinguish:
 
@@ -342,6 +348,183 @@ OPS-009 provides workspace isolation and ownership only. It does not introduce:
 
 OPS-010 may consume OPS-009 workspaces, but it must not redefine workspace ownership or bypass exact-SHA and writable-branch rules.
 
+---
+
+## Workflow Architecture
+
+OPS-010 adds one bounded `feature-development` workflow record above the existing OPS-009 task-workspace ownership layer. The workflow layer records durable parent and child state, binds children to deterministic workspaces, and executes one explicit child safely — but does not automatically dispatch stages, invoke provider-specific runners, or mutate GitHub.
+
+### Stage model
+
+```
+Professor implementation
+        ↓  immutable checkpoint SHA
+Tokyo test development
+        ↓  immutable test SHA
+Professor integration
+        ↓  immutable combined SHA
+Berlin exact-SHA review
+```
+
+The stage graph is fixed. It is not a general workflow engine.
+
+### Stage ownership
+
+| Stage | Owner | Workspace mode | Starting branch |
+|---|---|---|---|
+| `implementation` | Professor | writable canonical feature branch | canonical feature branch for workflow + iteration |
+| `test` | Tokyo | writable deterministic test branch | deterministic Tokyo test branch |
+| `integration` | Professor | writable canonical feature branch | same canonical feature branch as implementation (after prior workspace released) |
+| `review` | Berlin | detached exact-SHA workspace | none |
+
+### Durable identity
+
+A parent workflow ID is deterministic from the canonical repository identity and a bounded request key. Restart recovery or an identical retry resolves to the same record.
+
+A child ID is deterministic from:
+
+- parent workflow ID;
+- iteration number;
+- fixed stage name.
+
+Recreating a child with the same immutable fields returns the existing child. A conflicting owner, dependency, iteration, stage, or input SHA fails closed.
+
+### State model
+
+Parent states:
+
+```
+planned | active | blocked | completed | needs_human | cancelled
+```
+
+Child states:
+
+```
+pending | active | completed | failed | cancelled | needs_human
+```
+
+### Accepted contracts
+
+1. **One deterministic parent workflow** — a bounded `feature-development` type with one fixed stage graph. Not a general workflow engine.
+2. **Deterministic child identities** — child IDs are reproducible from parent ID, iteration, and stage. Re-creation returns the existing record.
+3. **Exact 40-character SHA dependencies between stages** — every child input is an immutable full SHA. A downstream child may be created only after its dependency is durably completed. The dependency output SHA must exactly equal the downstream input SHA.
+4. **Durable workflow and child state** — records persist under `OPS_ROOM_WORKFLOW_RUNS_DIR`. Workflow directories remain outside immutable release artifacts. Activation and rollback preserve them.
+5. **Immutable completed-child evidence** — completing a child is idempotent for the same output SHA. A different output SHA for an already-completed child is rejected. Failed children retain history and increment their attempt when explicitly retried.
+6. **Authenticated read-only workflow list and detail APIs** — `GET /api/workflows` and `GET /api/workflows/:workflowId` require dashboard bearer authentication. Output is bounded to workflow and child identifiers, states, policy, ownership, dependency, attempt, timestamps, and immutable SHAs.
+7. **Startup reconciliation before HTTP readiness** — the webhook entrypoint reconciles workflow records before importing the HTTP server. Every child left in `active` is treated as interrupted and transitions to `needs_human` with `workflow_child_interrupted` evidence. No child, branch, commit, review, workspace, or external effect is replayed.
+8. **Interrupted active execution is never automatically replayed** — startup reconciliation converts interrupted active children to `needs_human`. It never replays provider, Git, or workspace effects.
+9. **Workflow-store readiness is included in `/api/health`** — a readable and writable workflow store reports `ok`. An unavailable workflow directory makes readiness false.
+10. **One child owns at most one workspace** — workspace ID is deterministic from child ID and owner agent. Workspace mode, repository, branch, requested SHA, and resolved SHA must match the fixed stage plan.
+11. **Existing OPS-009 ownership, capacity, branch-conflict, filesystem, and cleanup rules remain authoritative** — workspace allocation, branch-conflict detection, quota, disk safety, Git administration, managed push, and terminal workspace policy are not redefined.
+12. **Bounded workspace metadata only** — workflow children store only bounded workspace metadata (workspace ID, mode, repository identity, branch, resolved SHA, lifecycle state, cleanup-request, investigation-hold). Absolute host paths, repository-cache paths, authenticated remotes, credentials, environment values, and raw provider or Git output are excluded from workflow APIs.
+13. **No paths, remotes, credentials, environment values, or raw provider output in workflow APIs** — same redaction boundary as existing OPS-009 workspace and task APIs.
+
+### OPS-010E — Explicit child execution behavior
+
+The explicit workflow-child execution contract implemented in OPS-010E is an internal-only service that executes one already-created and already-bound pending child through a validated, lock-serialized, and durably recorded sequence.
+
+#### Required preconditions
+
+- A valid `feature-development` workflow in `planned` or `active` state.
+- One child in `pending` state.
+- A pre-existing bounded workspace binding on that child.
+- An OPS-009 workspace record matching the child task ID, owner agent, repository, mode, branch, requested SHA, resolved SHA, and `active` state.
+- A managed workspace directory that passes the existing path and directory checks.
+- An explicitly injected stage runner.
+- An explicitly injected workspace-HEAD inspector for writable stages.
+
+#### Execution ordering
+
+```
+acquire filesystem execution lock
+        ↓
+re-read workflow and child from durable state (holding lock)
+        ↓
+validate workflow, child, owner, repository, mode, branch, workspace state, input SHA, resolved SHA
+        ↓
+persist child state = active
+        ↓
+invoke one injected stage runner
+        ↓
+validate bounded terminal outcome
+        ↓
+persist completed or needs_human
+        ↓
+request cleanup or investigation hold
+```
+
+External execution begins only after durable activation.
+
+The execution lock is derived from workflow and child IDs. It serializes concurrent explicit attempts across processes sharing the workflow data directory. Default stale threshold is six hours. Operators must investigate before removing a stale execution lock.
+
+#### Accepted terminal outcomes
+
+The stage runner may return only:
+
+- `{ outcome: "completed", output_sha: <exact 40-character SHA> }`
+- `{ outcome: "needs_human", reason: <bounded reason code> }`
+
+Unknown result shapes and unsafe free-form errors become the bounded reason `workflow_child_runner_failed`.
+
+#### Output SHA verification
+
+For writable stages (`implementation`, `test`, `integration`), the returned `output_sha` must equal the managed workspace HEAD as independently inspected by the injected inspector before completion can be persisted.
+
+For the `review` stage, the returned output SHA must equal the child's immutable `input_sha` — Berlin's detached review cannot claim a new source revision.
+
+Output mismatch, invalid SHA evidence, or missing inspection authority moves the child to `needs_human` and holds the workspace for investigation.
+
+#### Durable terminal behavior
+
+**Successful completion:**
+
+1. Persist child state `completed` and immutable `output_sha`.
+2. Request workspace cleanup through the OPS-009 lifecycle authority.
+3. If cleanup-request persistence fails after completion, the completion evidence remains authoritative. The child is not rewritten to `needs_human`.
+
+**Needs human or runner failure:**
+
+1. Persist child state `needs_human` with a bounded reason code.
+2. Persist parent workflow state `needs_human`.
+3. Place the workspace in `held_for_investigation`.
+4. Raw exception text from the untrusted runner is never stored.
+
+#### Idempotency and restart behavior
+
+- Completed and `needs_human` children return a deduplicated terminal result without invoking the runner again.
+- An already-active child returns `workflow_child_execution_in_progress` and is never replayed.
+- Concurrent explicit attempts serialize; after the first completes, the second observes the durable terminal state and skips the runner.
+- Startup reconciliation remains authoritative for a process interrupted after activation. It never replays provider or workspace effects.
+- Explicit retry remains a separate future operation.
+
+#### Workspace sequencing after success
+
+Successful child execution requests cleanup but does not execute cleanup automatically. The next stage may not bind a branch that remains actively owned by the prior child. For the canonical Professor → Tokyo → Professor → Berlin sequence, a later coordinator must verify the previous workspace has reached `released` before binding a conflicting writable branch.
+
+### Explicit non-goals
+
+OPS-010E does not introduce:
+
+- automatic Professor → Tokyo → Professor → Berlin stage dispatch;
+- provider-specific OpenAB or OpenCode stage-runner wiring;
+- automatic next-child creation after stage completion;
+- automatic iteration creation or advancement;
+- Berlin approval versus changes-requested semantics;
+- an HTTP workflow mutation endpoint;
+- browser workflow controls;
+- automatic Git push, PR creation, review posting, merge, or deployment;
+- automatic workspace cleanup execution or branch-ownership transfer;
+- PostgreSQL authority;
+- a general-purpose workflow engine.
+
+### Remaining future work
+
+The next planned slices after OPS-010E:
+
+1. **OPS-010F — Provider-specific stage runner and durable effect fencing:** Professor, Tokyo, and Berlin runtime integration; bounded prompts and outputs; timeouts and cancellation; durable effect claims before Git or GitHub side effects; duplicate-effect prevention; safe output parsing and redaction.
+2. **OPS-010G — Deterministic workflow advancement:** implementation → test → integration → review; Berlin approved outcome; Berlin changes-requested outcome; iteration creation and maximum iteration policy; exact-SHA propagation; workflow completion and `needs_human` escalation; workspace cleanup and branch-ownership sequencing.
+3. **Later gate:** Controlled end-to-end production workflow drill.
+
 ## Runtime Adapter Read Model
 
 `ops-room/src/services/runtime-adapter/` is the only approved control-plane boundary for runtime preparation and observed-state inspection.
@@ -576,8 +759,16 @@ Automatic deployment remains deferred until manual activation, active-work drain
 7. Expand the proven mutation contract to audited retry, pause, and resume task actions.
 8. Introduce a runtime adapter read model.
 9. Add one guarded graceful-stop action for a non-critical test agent.
-| 10. Add one guarded graceful-start action for Gemini (guarded-start & already-running adoption).
-| 11. OPS-009 workspace foundation and execution integration — complete. OPS-010 collaboration workflow — next.
+10. Add one guarded graceful-start action for Gemini (guarded-start & already-running adoption).
+11. OPS-009 workspace foundation and execution integration — complete.
+12. OPS-010A parent/child workflow foundation — complete.
+13. OPS-010B read and restart contracts — complete.
+14. OPS-010C API and health integration — complete.
+15. OPS-010D workflow-child workspace binding — complete.
+16. OPS-010E explicit child execution contract — complete.
+17. Next: provider-specific stage runner and durable effect fencing (OPS-010F).
+18. After that: deterministic stage advancement and Berlin review-decision semantics (OPS-010G).
+19. Then: controlled end-to-end production workflow drill.
 
 ## Explicit Non-Goals Now
 
