@@ -13,6 +13,8 @@ const DASHBOARD_READ_ROUTES = [
   /^\/api\/agents\/profiles(?:\/|$)/,
   /^\/api\/skills(?:\/|$)/,
   /^\/api\/memory-spaces(?:\/|$)/,
+  /^\/api\/workflows(?:\/|$)/,
+  /^\/api\/review-tasks(?:\/|$)/,
 ];
 
 export async function appendToMemory(entry) {
@@ -34,6 +36,10 @@ function requiresDashboardAuth(req) {
   if (req?.method !== 'GET') return false;
   const pathname = requestPath(req);
   return DASHBOARD_READ_ROUTES.some((pattern) => pattern.test(pathname));
+}
+
+export function verifyDashboardReadRequest(req) {
+  return requiresDashboardAuth(req) && verifyDashboardAuth(req?.headers?.authorization);
 }
 
 export function sendJSON(res, status, data) {
