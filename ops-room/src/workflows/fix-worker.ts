@@ -9,7 +9,8 @@ export class FixSupersededError extends Error {
   }
 }
 
-export async function runFixChildWorker({ task, deps, dir, lease, workspace: boundWorkspace = null }) {
+export async function runFixChildWorker({ task, deps, dir, lease, workspace: explicitWorkspace = null }) {
+  const boundWorkspace = explicitWorkspace || task?.__workspace_binding || null;
   const reviewedSha = task?.reviewed_sha;
   const currentAtStart = await deps.fetchCurrentHead(task);
   assertFixHeadCurrent({ reviewedSha, currentSha: currentAtStart });
@@ -17,9 +18,8 @@ export async function runFixChildWorker({ task, deps, dir, lease, workspace: bou
   let workspace;
   let heartbeatTimer;
   try {
-    workspace = boundWorkspace
-      ? await deps.prepareWorkspace(task, boundWorkspace)
-      : await deps.prepareWorkspace(task);
+    if (!boundWorkspace) throw new Error('fix_workspace_binding_missing');
+    workspace = await deps.prepareWorkspace(task, boundWorkspace);
     const heartbeatIntervalMs = deps.heartbeatIntervalMs || 60_000;
     if (typeof deps.renewLease === 'function' && lease) {
       heartbeatTimer = setInterval(() => {
@@ -80,7 +80,6 @@ export async function runFixChildWorker({ task, deps, dir, lease, workspace: bou
     return { outcome: 'FIX_PUSHED', new_sha: pushed.newSha };
   } finally {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
-    if (workspace && !boundWorkspace) await deps.cleanupWorkspace?.({ task, workspace });
   }
 }
 
