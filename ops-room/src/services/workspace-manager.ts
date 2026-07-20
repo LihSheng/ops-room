@@ -3,7 +3,14 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { assertPathWithinRoot, ensureRepositoryCache, resolveRepositoryRevision } from './repository-cache.js';
+import {
+  assertPathWithinRoot,
+  ensureRepositoryCache,
+  repositoryCacheKey,
+  repositoryCachePath,
+  resolveRepositoryRevision,
+  validateRepositoryId,
+} from './repository-cache.js';
 import { listWorkspaceRecords, writeWorkspaceRecord } from './workspace-store.js';
 import { withWorkspaceLock } from './workspace-locks.js';
 
@@ -58,7 +65,8 @@ export async function allocateWorkspace({
   execFile = execFileDefault,
   now = () => new Date().toISOString(),
 }) {
-  const repoId = safeValue(repositoryId, 'repository_id');
+  const repoId = validateRepositoryId(repositoryId);
+  const repoKey = repositoryCacheKey(repoId);
   const id = safeValue(workspaceId, 'workspace_id');
   const owner = safeValue(ownerAgent, 'owner_agent');
   const task = safeValue(taskId, 'task_id');
@@ -74,7 +82,7 @@ export async function allocateWorkspace({
 
   return withWorkspaceLock({
     dir: lockRoot,
-    name: `workspace-admin-${repoId}`,
+    name: `workspace-admin-${repoKey}`,
     execute: async () => {
       const records = await listWorkspaceRecords({ dir: recordRoot });
       if ((await countActive(records)) >= maxActiveWorkspaces) throw new Error('workspace_capacity_exceeded');
@@ -115,17 +123,10 @@ export async function allocateWorkspace({
       try {
         await mkdir(resolve(workspacePath, '..'), { recursive: true });
         const args = ['--git-dir', cache.cache_path, 'worktree', 'add'];
-        if (mode === 'detached') {
-          args.push('--detach', workspacePath, resolvedSha);
-        } else {
-          args.push('-B', branch, workspacePath, resolvedSha);
-        }
+        if (mode === 'detached') args.push('--detach', workspacePath, resolvedSha);
+        else args.push('-B', branch, workspacePath, resolvedSha);
         await runGit(execFile, args, { errorCode: 'workspace_allocation_failed' });
-        return writeWorkspaceRecord({
-          dir: recordRoot,
-          record: { ...baseRecord, state: 'active' },
-          now,
-        });
+        return writeWorkspaceRecord({ dir: recordRoot, record: { ...baseRecord, state: 'active' }, now });
       } catch (error) {
         await writeWorkspaceRecord({
           dir: recordRoot,
@@ -173,7 +174,7 @@ export async function cleanupWorkspace({
       if (current.state === 'released') return current;
       if (current.state !== 'cleanup_requested') throw new Error('workspace_cleanup_not_requested');
       const workspacePath = assertPathWithinRoot(workspaceRoot, join(workspaceRoot, current.relative_path));
-      const cachePath = assertPathWithinRoot(cacheRoot, join(cacheRoot, `${current.repository_id}.git`));
+      const cachePath = repositoryCachePath(cacheRoot, current.repository_id);
       await writeWorkspaceRecord({ dir: recordRoot, record: { ...current, state: 'cleaning' }, now });
       try {
         let exists = false;

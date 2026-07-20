@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { execFile as execFileCallback } from 'node:child_process';
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -6,9 +7,29 @@ import { promisify } from 'node:util';
 import { withWorkspaceLock } from './workspace-locks.js';
 
 const execFileDefault = promisify(execFileCallback);
-const SAFE_REPOSITORY_ID = /^[A-Za-z0-9._-]{1,120}$/;
+const SAFE_LEGACY_REPOSITORY_ID = /^[A-Za-z0-9._-]{1,120}$/;
+const SAFE_CANONICAL_REPOSITORY_ID = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
 const SAFE_REF = /^[A-Za-z0-9._\/-]{1,240}$/;
 const SAFE_SHA = /^[0-9a-f]{40}$/i;
+
+export function validateRepositoryId(value) {
+  const repositoryId = String(value || '').trim();
+  if (!(SAFE_LEGACY_REPOSITORY_ID.test(repositoryId) || SAFE_CANONICAL_REPOSITORY_ID.test(repositoryId))) {
+    throw new Error('invalid_repository_id');
+  }
+  // Reject path traversal sequences: '..', leading/trailing dots, or dot-separated '.' segments
+  if (repositoryId.includes('..') || repositoryId.startsWith('.') || repositoryId.endsWith('.')) {
+    throw new Error('invalid_repository_id');
+  }
+  return repositoryId;
+}
+
+export function repositoryCacheKey(repositoryId) {
+  const validated = validateRepositoryId(repositoryId);
+  const readable = validated.replace('/', '--').slice(0, 80);
+  const digest = createHash('sha256').update(validated).digest('hex').slice(0, 16);
+  return `${readable}-${digest}`;
+}
 
 export function assertPathWithinRoot(root, candidate) {
   const resolvedRoot = resolve(root);
@@ -20,8 +41,7 @@ export function assertPathWithinRoot(root, candidate) {
 }
 
 export function repositoryCachePath(cacheRoot, repositoryId) {
-  if (!SAFE_REPOSITORY_ID.test(repositoryId)) throw new Error('invalid_repository_id');
-  return assertPathWithinRoot(cacheRoot, join(cacheRoot, `${repositoryId}.git`));
+  return assertPathWithinRoot(cacheRoot, join(cacheRoot, `${repositoryCacheKey(repositoryId)}.git`));
 }
 
 async function runGit(execFile, args, options = {}) {
@@ -47,13 +67,15 @@ export async function ensureRepositoryCache({
   remote,
   execFile = execFileDefault,
 }) {
+  const canonicalRepositoryId = validateRepositoryId(repositoryId);
   if (!remote || /[\r\n]/.test(remote)) throw new Error('invalid_repository_remote');
   await mkdir(cacheRoot, { recursive: true });
-  const cachePath = repositoryCachePath(cacheRoot, repositoryId);
+  const cacheKey = repositoryCacheKey(canonicalRepositoryId);
+  const cachePath = repositoryCachePath(cacheRoot, canonicalRepositoryId);
 
   return withWorkspaceLock({
     dir: lockRoot,
-    name: `repository-${repositoryId}`,
+    name: `repository-${cacheKey}`,
     execute: async () => {
       let exists = false;
       try {
@@ -73,7 +95,7 @@ export async function ensureRepositoryCache({
         });
       }
 
-      return { repository_id: repositoryId, cache_path: cachePath };
+      return { repository_id: canonicalRepositoryId, cache_key: cacheKey, cache_path: cachePath };
     },
   });
 }

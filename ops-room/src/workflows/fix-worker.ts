@@ -9,7 +9,8 @@ export class FixSupersededError extends Error {
   }
 }
 
-export async function runFixChildWorker({ task, deps, dir, lease }) {
+export async function runFixChildWorker({ task, deps, dir, lease, workspace: explicitWorkspace = null }) {
+  const boundWorkspace = explicitWorkspace || task?.__workspace_binding || null;
   const reviewedSha = task?.reviewed_sha;
   const currentAtStart = await deps.fetchCurrentHead(task);
   assertFixHeadCurrent({ reviewedSha, currentSha: currentAtStart });
@@ -17,7 +18,8 @@ export async function runFixChildWorker({ task, deps, dir, lease }) {
   let workspace;
   let heartbeatTimer;
   try {
-    workspace = await deps.prepareWorkspace(task);
+    if (!boundWorkspace) throw new Error('fix_workspace_binding_missing');
+    workspace = await deps.prepareWorkspace(task, boundWorkspace);
     const heartbeatIntervalMs = deps.heartbeatIntervalMs || 60_000;
     if (typeof deps.renewLease === 'function' && lease) {
       heartbeatTimer = setInterval(() => {
@@ -37,9 +39,6 @@ export async function runFixChildWorker({ task, deps, dir, lease }) {
     if (lease) await deps.renewLease?.({ dir, id: task.id, leaseId: lease.lease_id, leaseEpoch: lease.lease_epoch });
     if (!applied?.changed) return { outcome: 'NEEDS_HUMAN', reason: 'no_source_changes' };
 
-    // Run repository verification commands (tests, lint, typecheck) before
-    // committing and pushing. Failures return NEEDS_HUMAN so an operator can
-    // inspect and decide whether to override.
     if (typeof deps.verifyWorkspace === 'function') {
       const verification = await deps.verifyWorkspace({ task, workspace });
       if (verification.outcome !== 'verified') {
@@ -53,7 +52,6 @@ export async function runFixChildWorker({ task, deps, dir, lease }) {
 
     const beforePush = await deps.fetchCurrentHead(task);
     assertFixHeadCurrent({ reviewedSha, currentSha: beforePush });
-    // Renew the lease immediately before push to ensure we still own it.
     if (lease) await deps.renewLease?.({ dir, id: task.id, leaseId: lease.lease_id, leaseEpoch: lease.lease_epoch });
     const beforePushTask = await deps.readTask?.(task);
     if (beforePushTask?.state === 'CANCEL_REQUESTED' || beforePushTask?.state === 'CANCELLED') {
@@ -82,7 +80,6 @@ export async function runFixChildWorker({ task, deps, dir, lease }) {
     return { outcome: 'FIX_PUSHED', new_sha: pushed.newSha };
   } finally {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
-    if (workspace) await deps.cleanupWorkspace?.({ task, workspace });
   }
 }
 

@@ -33,30 +33,10 @@ export const AGENT_LIFECYCLE_ALLOWED_AGENTS = Object.freeze(
     .map((value) => value.trim())
     .filter(Boolean),
 );
-export const AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS = boundedInteger(
-  process.env.OPS_ROOM_AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS,
-  20_000,
-  0,
-  300_000,
-);
-export const AGENT_LIFECYCLE_DRAIN_POLL_MS = boundedInteger(
-  process.env.OPS_ROOM_AGENT_LIFECYCLE_DRAIN_POLL_MS,
-  500,
-  50,
-  5_000,
-);
-export const AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS = boundedInteger(
-  process.env.OPS_ROOM_AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS,
-  20,
-  1,
-  120,
-);
-export const AGENT_LIFECYCLE_START_TIMEOUT_SECONDS = boundedInteger(
-  process.env.OPS_ROOM_AGENT_LIFECYCLE_START_TIMEOUT_SECONDS,
-  30,
-  1,
-  120,
-);
+export const AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS = boundedInteger(process.env.OPS_ROOM_AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS, 20_000, 0, 300_000);
+export const AGENT_LIFECYCLE_DRAIN_POLL_MS = boundedInteger(process.env.OPS_ROOM_AGENT_LIFECYCLE_DRAIN_POLL_MS, 500, 50, 5_000);
+export const AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS = boundedInteger(process.env.OPS_ROOM_AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS, 20, 1, 120);
+export const AGENT_LIFECYCLE_START_TIMEOUT_SECONDS = boundedInteger(process.env.OPS_ROOM_AGENT_LIFECYCLE_START_TIMEOUT_SECONDS, 30, 1, 120);
 export const ISSUE_POLLING_ENABLED = process.env.OPS_ROOM_ISSUE_POLLING_ENABLED !== 'false';
 export const REQUIRED_COMMANDS = _requiredCommands.split(',').map((value) => value.trim()).filter(Boolean);
 export const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.OPS_ROOM_SHUTDOWN_TIMEOUT_MS || '55000', 10);
@@ -74,6 +54,12 @@ export const AUDIT_DIR = process.env.OPS_ROOM_AUDIT_DIR || join(_opsRoomDataDir,
 export const IDEMPOTENCY_DIR = process.env.OPS_ROOM_IDEMPOTENCY_DIR || join(_opsRoomDataDir, 'idempotency');
 export const LIFECYCLE_DIR = process.env.OPS_ROOM_LIFECYCLE_DIR || join(_opsRoomDataDir, 'lifecycle');
 export const WORKSPACE_BASE = process.env.OPENAB_WORKSPACES_DIR || process.env.OPENAB_WORKSPACE_BASE || join(_dataDir, 'workspaces');
+export const REPOSITORY_CACHE_ROOT = process.env.OPS_ROOM_REPOSITORY_CACHE_ROOT || join(_dataDir, 'repositories');
+export const TASK_WORKSPACE_ROOT = process.env.OPS_ROOM_TASK_WORKSPACE_ROOT || WORKSPACE_BASE;
+export const WORKSPACE_RECORDS_DIR = process.env.OPS_ROOM_WORKSPACE_RECORDS_DIR || join(_opsRoomDataDir, 'workspaces');
+export const WORKSPACE_LOCK_DIR = process.env.OPS_ROOM_WORKSPACE_LOCK_DIR || join(_opsRoomDataDir, 'workspace-locks');
+export const WORKSPACE_MAX_ACTIVE = boundedInteger(process.env.OPS_ROOM_WORKSPACE_MAX_ACTIVE, 8, 1, 64);
+export const WORKSPACE_MIN_FREE_BYTES = boundedInteger(process.env.OPS_ROOM_WORKSPACE_MIN_FREE_BYTES, 1024 * 1024 * 1024, 0, Number.MAX_SAFE_INTEGER);
 export const SHARED_MEMORY = process.env.OPENAB_SHARED_DIR ? join(process.env.OPENAB_SHARED_DIR, 'memory.md') : join(_dataDir, 'shared', 'memory.md');
 export const LOCK_DIR = '/tmp/openab-locks';
 export const PROCESSED_TASKS_FILE = join(STATE_DIR, 'processed-tasks.json');
@@ -86,13 +72,7 @@ export const OPENCODE_MODEL = process.env.OPENCODE_MODEL || 'deepseek-v4-flash';
 export const OPENCODE_MAX_TOKEN = parseInt(process.env.OPENCODE_MAX_TOKEN || process.env.OPENCODE_MAX_TOKENS || '16384', 10);
 export const REPO = process.env.OPENAB_REPO || 'LihSheng/LinkUp';
 
-export const FORBIDDEN_FILE_PATTERNS = [
-  /^\.env/,
-  /^\.openab(\/|$)/,
-  /private-key/i,
-  /secret/i,
-  /credential/i,
-];
+export const FORBIDDEN_FILE_PATTERNS = [/^\.env/, /^\.openab(\/|$)/, /private-key/i, /secret/i, /credential/i];
 
 export const OPENAB_SERVER_VERSION = packageJson.version;
 
@@ -101,10 +81,7 @@ export function utcTimestamp() {
 }
 
 export function compactUtcTimestamp() {
-  return new Date()
-    .toISOString()
-    .replace(/[-:T.Z]/g, '')
-    .slice(0, 14);
+  return new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
 }
 
 export function randomSuffix(length = 6) {
