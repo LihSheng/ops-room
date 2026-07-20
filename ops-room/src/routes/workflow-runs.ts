@@ -13,7 +13,19 @@ const WORKFLOW_STATES = new Set([
   'needs_human',
   'cancelled',
 ]);
+const WORKSPACE_STATES = new Set([
+  'allocating',
+  'active',
+  'cleanup_requested',
+  'cleaning',
+  'released',
+  'failed',
+  'held_for_investigation',
+]);
 const SAFE_PUBLIC_ID = /^[A-Za-z0-9._:-]{1,180}$/;
+const SAFE_REPOSITORY_ID = /^(?:[A-Za-z0-9._-]{1,120}|[A-Za-z0-9._-]{1,100}\/([A-Za-z0-9._-]{1,100}))$/;
+const SAFE_BRANCH = /^(?!\/|.*(?:\.\.|\/\.|\.\/|\/\/|@\{|\\))[A-Za-z0-9._\/-]{1,240}(?<![./])$/;
+const SAFE_SHA = /^[0-9a-f]{40}$/i;
 
 function boundedLimit(value) {
   const parsed = Number(value);
@@ -41,9 +53,55 @@ function boundedUnavailableSummary(record, workflowId = null) {
   };
 }
 
+function boundedWorkspaceShape(workspace) {
+  if (!workspace) return null;
+  try {
+    const workspaceId = String(workspace.workspace_id || '');
+    const repositoryId = String(workspace.repository_id || '');
+    const mode = String(workspace.mode || '');
+    const branch = workspace.branch === null ? null : String(workspace.branch || '');
+    const resolvedSha = String(workspace.resolved_sha || '').toLowerCase();
+    const state = String(workspace.state || '');
+
+    if (!SAFE_PUBLIC_ID.test(workspaceId)) throw new Error('invalid_workspace_id');
+    if (!SAFE_REPOSITORY_ID.test(repositoryId) || repositoryId.includes('..')) {
+      throw new Error('invalid_repository_id');
+    }
+    if (!['branch', 'detached'].includes(mode)) throw new Error('invalid_workspace_mode');
+    if (mode === 'branch' && !SAFE_BRANCH.test(branch || '')) throw new Error('invalid_workspace_branch');
+    if (mode === 'detached' && branch !== null) throw new Error('invalid_workspace_branch');
+    if (!SAFE_SHA.test(resolvedSha)) throw new Error('invalid_workspace_sha');
+    if (!WORKSPACE_STATES.has(state)) throw new Error('invalid_workspace_state');
+
+    return {
+      workspace_id: workspaceId,
+      mode,
+      repository_id: repositoryId,
+      branch,
+      resolved_sha: resolvedSha,
+      state,
+      held_for_investigation: state === 'held_for_investigation',
+      cleanup_requested: state === 'cleanup_requested',
+    };
+  } catch {
+    return {
+      unavailable: true,
+      last_error: 'workflow_workspace_unavailable',
+    };
+  }
+}
+
 function serializeForRead(record) {
   try {
-    return serializeWorkflowRun(record);
+    const serialized = serializeWorkflowRun(record);
+    const rawChildren = new Map((record.children || []).map((child) => [child.child_id, child]));
+    return {
+      ...serialized,
+      children: serialized.children.map((child) => ({
+        ...child,
+        workspace: boundedWorkspaceShape(rawChildren.get(child.child_id)?.workspace),
+      })),
+    };
   } catch {
     return boundedUnavailableSummary(record);
   }
