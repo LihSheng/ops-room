@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { withAgentLifecycleGate } from './agent-lifecycle-store.js';
 import { reconcileTaskWorkspace } from './task-workspace-reconciliation.js';
+import { applyTaskWorkspaceOutcome } from './task-workspace-lifecycle.js';
 import { TASK_WORKSPACE_ROOT, WORKSPACE_RECORDS_DIR } from './runtime-paths.js';
 import {
   countActiveTasks,
@@ -16,6 +17,9 @@ import {
 
 const ACTIVE_STATES = new Set(['CLAIMED', 'RUNNING', 'FIXING']);
 const DISPATCHABLE_STATES = new Set(['QUEUED', 'FIX_QUEUED']);
+const TERMINAL_WORKSPACE_STATES = new Set([
+  'PASSED', 'FIX_PUSHED', 'ERROR', 'NEEDS_HUMAN', 'CANCELLED', 'CANCEL_REQUESTED', 'SUPERSEDED',
+]);
 
 export async function reconcileReviewTasks({
   dir,
@@ -25,20 +29,29 @@ export async function reconcileReviewTasks({
   workspaceRoot = TASK_WORKSPACE_ROOT,
   workspaceRecordRoot = WORKSPACE_RECORDS_DIR,
   reconcileWorkspace = reconcileTaskWorkspace,
+  applyWorkspaceOutcome = applyTaskWorkspaceOutcome,
 }) {
   const { scanned, tasks, corrupt } = await scanReviewTasks({ dir });
   const recovered = [];
   const reDispatched = [];
   const workspaceBlocked = [];
   const legacyUnbound = [];
-  for (const task of tasks) {
-    if (!ACTIVE_STATES.has(task.state)) continue;
+  const workspaceOutcomes = [];
+  const workspaceOutcomeErrors = [];
 
-    const workspace = await reconcileWorkspace({
-      task,
-      workspaceRoot,
-      recordRoot: workspaceRecordRoot,
-    });
+  for (const task of tasks) {
+    if (task.workspace_id && TERMINAL_WORKSPACE_STATES.has(task.state)) {
+      try {
+        const outcome = await applyWorkspaceOutcome({ task, recordRoot: workspaceRecordRoot });
+        workspaceOutcomes.push({ task_id: task.id, action: outcome.action, idempotent: outcome.idempotent === true });
+      } catch (error) {
+        workspaceOutcomeErrors.push({ task_id: task.id, reason_code: String(error?.message || 'workspace_outcome_failed').slice(0, 120) });
+      }
+      continue;
+    }
+
+    if (!ACTIVE_STATES.has(task.state)) continue;
+    const workspace = await reconcileWorkspace({ task, workspaceRoot, recordRoot: workspaceRecordRoot });
     if (workspace.status === 'blocked') {
       await transitionTask({
         dir,
@@ -66,6 +79,8 @@ export async function reconcileReviewTasks({
     corrupt,
     workspace_blocked: workspaceBlocked,
     legacy_unbound: legacyUnbound,
+    workspace_outcomes: workspaceOutcomes,
+    workspace_outcome_errors: workspaceOutcomeErrors,
   };
 }
 
@@ -152,9 +167,7 @@ export async function dispatchEligibleTasks({
         const concurrency = checkConcurrency({ counts, limits: task.policy?.concurrency || {} });
         if (!concurrency.allowed) return null;
         const leaseEpoch = (task.lease?.lease_epoch || 0) + 1;
-        const claimed = await claimTask({
-          dir, id: task.id, instanceId, leaseId: randomUUID(), leaseEpoch,
-        });
+        const claimed = await claimTask({ dir, id: task.id, instanceId, leaseId: randomUUID(), leaseEpoch });
         if (!claimed.claimed) return null;
         const transitioned = await transitionTask({
           dir,
