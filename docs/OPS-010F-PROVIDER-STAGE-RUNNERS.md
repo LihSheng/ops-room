@@ -67,14 +67,15 @@ The concrete profile-backed adapter:
 11. disables system/global Git configuration, credential prompting, and Git Credential Manager interaction;
 12. assigns a disposable HOME, XDG directories, and empty `GH_CONFIG_DIR` for each provider invocation;
 13. bounds stdout and discards raw stderr;
-14. terminates the subprocess on cancellation or timeout, escalating from SIGTERM to SIGKILL when required.
+14. aborts the provider on cancellation or timeout and waits for subprocess closure before recording terminal workflow evidence;
+15. escalates shutdown from SIGTERM to SIGKILL and reports `workflow_provider_termination_failed` when the adapter does not settle within the bounded termination grace period.
 
 The disposable provider home is removed after the provider exits. The provider does not receive the host HOME or USERPROFILE and cannot read host `gh`, Git credential, SSH, or provider-session files through normal home-directory discovery.
 
 Provider output must be exactly one bounded JSON object:
 
 ```json
-{"outcome":"completed","output_sha":"<40-character SHA>"}
+{"outcome":"completed","output_sha":"<exact 40-character SHA>"}
 ```
 
 or:
@@ -82,6 +83,8 @@ or:
 ```json
 {"outcome":"needs_human","reason":"<bounded_reason_code>"}
 ```
+
+The output SHA is validated without truncation or normalization beyond trimming and lowercasing. A longer or shorter value is rejected.
 
 Raw provider errors, stderr, prompts, environment values, credentials, and host paths are never persisted in workflow-effect records.
 
@@ -128,8 +131,11 @@ The implementation includes focused tests for:
 - interrupted-effect startup reconciliation;
 - stage/agent authorization;
 - duplicate provider suppression;
+- exact 40-character output-SHA validation without truncation;
 - malformed output and redaction;
 - timeout and cancellation;
+- subprocess-shutdown acknowledgement before terminal effect persistence;
+- explicit termination-grace failure;
 - profile and repository authorization;
 - credential-bearing, SSH, query, and fragment remote rejection;
 - subprocess environment allowlisting;
@@ -164,11 +170,12 @@ After OPS-010F is merged, deploy one immutable release to the VPS and validate:
 3. rejection of a stage/agent mismatch;
 4. duplicate invocation suppression;
 5. timeout and cancellation behavior;
-6. restart with a deliberately interrupted claimed effect;
-7. rejection of credential-bearing or SSH workspace origins;
-8. provider operation with a disposable home and only the configured provider API credential;
-9. inability to use host `gh`, Git credential helpers, SSH keys, or persisted user configuration;
-10. absence of raw provider output, secrets, or host paths in durable records and APIs;
-11. preservation of OPS-010E exact-SHA and workspace lifecycle guarantees.
+6. provider-process shutdown before terminal workflow evidence is written;
+7. restart with a deliberately interrupted claimed effect;
+8. rejection of credential-bearing or SSH workspace origins;
+9. provider operation with a disposable home and only the configured provider API credential;
+10. inability to use host `gh`, Git credential helpers, SSH keys, or persisted user configuration;
+11. absence of raw provider output, secrets, or host paths in durable records and APIs;
+12. preservation of OPS-010E exact-SHA and workspace lifecycle guarantees.
 
 Do not begin OPS-010G production orchestration until this focused validation passes.
