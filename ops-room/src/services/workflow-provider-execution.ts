@@ -1,9 +1,10 @@
 import { executeWorkflowChild } from './workflow-child-execution.js';
+import { createProfileWorkflowProviderAdapters } from './workflow-provider-adapters.js';
 import { createWorkflowStageRunner } from './workflow-stage-runner.js';
 
 export async function executeWorkflowChildWithProviders({
   effectsDir,
-  providerAdapters,
+  providerAdapters = createProfileWorkflowProviderAdapters(),
   resolveStageInstruction,
   providerTimeoutMs,
   signal,
