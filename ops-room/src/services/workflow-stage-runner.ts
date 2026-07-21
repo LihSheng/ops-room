@@ -9,6 +9,7 @@ const SAFE_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_REASON = /^[a-z0-9][a-z0-9._:-]{0,119}$/;
 const MAX_STAGE_INSTRUCTION_LENGTH = 12_000;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_PROVIDER_TERMINATION_GRACE_MS = 10_000;
 
 const STAGE_AUTHORITY = Object.freeze({
   implementation: Object.freeze({ owner_agent: 'professor', workspace_mode: 'branch' }),
@@ -105,7 +106,7 @@ function parseProviderResult(value: any) {
     };
   }
   if (parsed.outcome !== 'completed') throw new Error('workflow_provider_output_invalid');
-  const outputSha = boundedText(parsed.output_sha, 40).toLowerCase();
+  const outputSha = String(parsed.output_sha ?? '').trim().toLowerCase();
   if (!SAFE_SHA.test(outputSha)) throw new Error('workflow_provider_output_invalid');
   return { outcome: 'completed' as const, output_sha: outputSha };
 }
@@ -123,36 +124,62 @@ function replayEffect(effect: any) {
   };
 }
 
-async function invokeWithDeadline({ invoke, timeoutMs, signal }: any) {
+async function invokeWithDeadline({ invoke, timeoutMs, terminationGraceMs, signal }: any) {
   if (signal?.aborted) throw new Error('workflow_provider_cancelled');
 
   const controller = new AbortController();
   let timeout: NodeJS.Timeout | null = null;
+  let terminationTimer: NodeJS.Timeout | null = null;
   let onAbort: (() => void) | null = null;
 
-  const deadline = new Promise((_, reject) => {
+  const provider = Promise.resolve()
+    .then(() => invoke(controller.signal))
+    .then(
+      (value) => ({ source: 'provider' as const, status: 'resolved' as const, value }),
+      (error) => ({ source: 'provider' as const, status: 'rejected' as const, error }),
+    );
+
+  const interruption = new Promise<{ source: 'interruption'; reason: string }>((resolve) => {
     timeout = setTimeout(() => {
-      controller.abort('timeout');
-      reject(new Error('workflow_provider_timeout'));
+      resolve({ source: 'interruption', reason: 'workflow_provider_timeout' });
     }, timeoutMs);
 
     if (signal) {
-      onAbort = () => {
-        controller.abort('cancelled');
-        reject(new Error('workflow_provider_cancelled'));
-      };
+      onAbort = () => resolve({ source: 'interruption', reason: 'workflow_provider_cancelled' });
       signal.addEventListener('abort', onAbort, { once: true });
     }
   });
 
-  try {
-    return await Promise.race([
-      Promise.resolve().then(() => invoke(controller.signal)),
-      deadline,
-    ]);
-  } finally {
+  const cleanup = () => {
     if (timeout) clearTimeout(timeout);
+    if (terminationTimer) clearTimeout(terminationTimer);
     if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+  };
+
+  try {
+    const first = await Promise.race([provider, interruption]);
+    if (first.source === 'provider') {
+      if (first.status === 'rejected') throw first.error;
+      return first.value;
+    }
+
+    controller.abort(first.reason);
+    const stopped = await Promise.race([
+      provider,
+      new Promise<{ source: 'termination_grace' }>((resolve) => {
+        terminationTimer = setTimeout(
+          () => resolve({ source: 'termination_grace' }),
+          terminationGraceMs,
+        );
+      }),
+    ]);
+
+    if (stopped.source === 'termination_grace') {
+      throw new Error('workflow_provider_termination_failed');
+    }
+    throw new Error(first.reason);
+  } finally {
+    cleanup();
   }
 }
 
@@ -161,6 +188,7 @@ export function createWorkflowStageRunner({
   providerAdapters,
   resolveStageInstruction,
   providerTimeoutMs = DEFAULT_PROVIDER_TIMEOUT_MS,
+  providerTerminationGraceMs = DEFAULT_PROVIDER_TERMINATION_GRACE_MS,
   signal = null,
   claimEffect = claimWorkflowEffect,
   completeEffect = completeWorkflowEffect,
@@ -173,6 +201,10 @@ export function createWorkflowStageRunner({
     throw new Error('workflow_stage_instruction_resolver_required');
   }
   const boundedTimeoutMs = Math.max(1_000, Math.min(Number(providerTimeoutMs) || DEFAULT_PROVIDER_TIMEOUT_MS, 60 * 60 * 1000));
+  const boundedTerminationGraceMs = Math.max(
+    100,
+    Math.min(Number(providerTerminationGraceMs) || DEFAULT_PROVIDER_TERMINATION_GRACE_MS, 60_000),
+  );
 
   return async function runWorkflowStage({ run, child, workspace_path, workspace }: any) {
     const authority = stageAuthority({ ...child, workspace });
@@ -215,6 +247,7 @@ export function createWorkflowStageRunner({
     try {
       const providerResult = await invokeWithDeadline({
         timeoutMs: boundedTimeoutMs,
+        terminationGraceMs: boundedTerminationGraceMs,
         signal,
         invoke: (providerSignal: AbortSignal) => adapter({
           prompt,
