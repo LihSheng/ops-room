@@ -2,10 +2,14 @@ import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
 import { listWorkflowEffects } from '../src/services/workflow-effect-store.js';
-import { createWorkflowStageRunner } from '../src/services/workflow-stage-runner.js';
+import {
+  createWorkflowStageRunner,
+  parseProviderResult,
+} from '../src/services/workflow-stage-runner.js';
 
 const INPUT_SHA = 'a'.repeat(40);
 const OUTPUT_SHA = 'b'.repeat(40);
@@ -61,6 +65,21 @@ function runnerInput(stage: string, ownerAgent: string, overrides: any = {}) {
     ...overrides,
   };
 }
+
+test('provider output requires an exact 40-character SHA without truncation', () => {
+  assert.deepEqual(
+    parseProviderResult({ outcome: 'completed', output_sha: OUTPUT_SHA }),
+    { outcome: 'completed', output_sha: OUTPUT_SHA },
+  );
+  assert.throws(
+    () => parseProviderResult({ outcome: 'completed', output_sha: `${OUTPUT_SHA}0` }),
+    /workflow_provider_output_invalid/,
+  );
+  assert.throws(
+    () => parseProviderResult({ outcome: 'completed', output_sha: OUTPUT_SHA.slice(1) }),
+    /workflow_provider_output_invalid/,
+  );
+});
 
 test('each workflow stage invokes only its authorized provider adapter', async () => {
   const cases = [
@@ -196,17 +215,54 @@ test('pre-cancelled provider execution records a safe cancellation outcome', asy
   assert.equal(calls, 0);
 });
 
-test('provider timeout aborts the adapter and records bounded needs-human evidence', async () => {
+test('provider timeout waits for adapter shutdown before recording terminal evidence', async () => {
   const effectsDir = await effectDir();
   let providerSignal: AbortSignal | null = null;
+  let acknowledgeShutdown: (() => void) | null = null;
   const execute = createWorkflowStageRunner({
     effectsDir,
     providerTimeoutMs: 1_000,
+    providerTerminationGraceMs: 1_000,
     providerAdapters: {
-      professor: async ({ signal }: any) => {
+      professor: async ({ signal }: any) => new Promise((_, reject) => {
         providerSignal = signal;
-        return new Promise(() => {});
-      },
+        signal.addEventListener('abort', () => {
+          acknowledgeShutdown = () => reject(new Error('workflow_provider_cancelled'));
+        }, { once: true });
+      }),
+    },
+    resolveStageInstruction: async () => 'Implement the requested change',
+  });
+
+  const execution = execute(runnerInput('implementation', 'professor'));
+  await delay(1_050);
+
+  assert.equal(providerSignal?.aborted, true);
+  assert.equal(typeof acknowledgeShutdown, 'function');
+  assert.equal((await listWorkflowEffects({ dir: effectsDir }))[0].state, 'claimed');
+  const beforeShutdown = await Promise.race([
+    execution.then(() => 'settled'),
+    delay(25, 'pending'),
+  ]);
+  assert.equal(beforeShutdown, 'pending');
+
+  acknowledgeShutdown?.();
+  const result = await execution;
+  const effects = await listWorkflowEffects({ dir: effectsDir });
+
+  assert.deepEqual(result, { outcome: 'needs_human', reason: 'workflow_provider_timeout' });
+  assert.equal(effects[0].state, 'needs_human');
+  assert.equal(effects[0].result_code, 'workflow_provider_timeout');
+});
+
+test('provider termination failure is explicit and bounded', async () => {
+  const effectsDir = await effectDir();
+  const execute = createWorkflowStageRunner({
+    effectsDir,
+    providerTimeoutMs: 1_000,
+    providerTerminationGraceMs: 100,
+    providerAdapters: {
+      professor: async () => new Promise(() => {}),
     },
     resolveStageInstruction: async () => 'Implement the requested change',
   });
@@ -214,8 +270,7 @@ test('provider timeout aborts the adapter and records bounded needs-human eviden
   const result = await execute(runnerInput('implementation', 'professor'));
   const effects = await listWorkflowEffects({ dir: effectsDir });
 
-  assert.deepEqual(result, { outcome: 'needs_human', reason: 'workflow_provider_timeout' });
-  assert.equal(providerSignal?.aborted, true);
+  assert.deepEqual(result, { outcome: 'needs_human', reason: 'workflow_provider_termination_failed' });
   assert.equal(effects[0].state, 'needs_human');
-  assert.equal(effects[0].result_code, 'workflow_provider_timeout');
+  assert.equal(effects[0].result_code, 'workflow_provider_termination_failed');
 });
