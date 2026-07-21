@@ -265,10 +265,12 @@ export function runWorkflowProviderProcess({
       finish(() => reject(new Error('workflow_provider_process_failed')));
     });
 
-    try {
-      child.stdin?.end(String(stdin ?? ''), 'utf-8');
-    } catch {
-      requestTermination('workflow_provider_process_failed');
+    if (!terminationReason) {
+      try {
+        child.stdin?.end(String(stdin ?? ''), 'utf-8');
+      } catch {
+        requestTermination('workflow_provider_process_failed');
+      }
     }
   });
 }
