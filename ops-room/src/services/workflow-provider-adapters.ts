@@ -191,7 +191,10 @@ export function runWorkflowProviderProcess({
       return;
     }
 
-    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    }
 
     child.stdout?.on('data', (chunk: unknown) => {
       if (settled || terminationReason) return;
