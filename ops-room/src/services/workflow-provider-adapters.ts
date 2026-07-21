@@ -1,9 +1,15 @@
-import { spawn } from 'node:child_process';
+import { execFile as execFileCallback, spawn } from 'node:child_process';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { getAgentProfile } from './agent-profile/registry.js';
 
+const execFileDefault = promisify(execFileCallback);
 const WORKFLOW_AGENTS = Object.freeze(['professor', 'tokyo', 'berlin']);
 const MAX_PROVIDER_OUTPUT_BYTES = 1024 * 1024;
+const MAX_REMOTE_LENGTH = 2_048;
 const PROVIDER_ENV_ALLOWLIST = new Set([
   'PATH',
   'HOME',
@@ -15,9 +21,7 @@ const PROVIDER_ENV_ALLOWLIST = new Set([
   'SHELL',
   'LANG',
   'LC_ALL',
-  'NODE_PATH',
   'NODE_ENV',
-  'NODE_OPTIONS',
   'OPENAI_API_KEY',
   'OPENAI_BASE_URL',
   'OPENAI_ORGANIZATION',
@@ -47,7 +51,62 @@ export function buildWorkflowProviderEnv(source: NodeJS.ProcessEnv = process.env
     const value = source[key];
     if (value != null && value !== '') env[key] = value;
   }
+  env.GIT_TERMINAL_PROMPT = '0';
+  env.GCM_INTERACTIVE = 'never';
+  env.GIT_CONFIG_NOSYSTEM = '1';
+  env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null';
+  env.GH_PROMPT_DISABLED = '1';
   return env;
+}
+
+export function validateWorkflowProviderRemote(value: unknown) {
+  const remote = String(value ?? '').trim();
+  if (!remote || remote.length > MAX_REMOTE_LENGTH || /[\r\n]/.test(remote)) {
+    throw new Error('workflow_provider_remote_invalid');
+  }
+  if (/^(?:git@|ssh:|git:)/i.test(remote)) {
+    throw new Error('workflow_provider_remote_credentials_unsafe');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(remote);
+  } catch {
+    throw new Error('workflow_provider_remote_invalid');
+  }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+    throw new Error('workflow_provider_remote_credentials_unsafe');
+  }
+  return remote;
+}
+
+export async function readWorkflowWorkspaceRemote({ cwd, execFile = execFileDefault }: any) {
+  try {
+    const result = await execFile('git', ['remote', 'get-url', 'origin'], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 10_000,
+      maxBuffer: 16 * 1024,
+      windowsHide: true,
+      env: buildWorkflowProviderEnv(process.env),
+    });
+    return validateWorkflowProviderRemote(result?.stdout);
+  } catch (error: any) {
+    if (String(error?.message || '').startsWith('workflow_provider_remote_')) throw error;
+    throw new Error('workflow_provider_remote_unavailable');
+  }
+}
+
+async function withIsolatedGitHubConfig(envSource: NodeJS.ProcessEnv, execute: (env: NodeJS.ProcessEnv) => Promise<any>) {
+  const isolationRoot = await mkdtemp(join(tmpdir(), 'ops-room-provider-'));
+  const ghConfigDir = join(isolationRoot, 'gh');
+  await mkdir(ghConfigDir, { recursive: true });
+  const env = buildWorkflowProviderEnv(envSource);
+  env.GH_CONFIG_DIR = ghConfigDir;
+  try {
+    return await execute(env);
+  } finally {
+    await rm(isolationRoot, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 export function runWorkflowProviderProcess({
@@ -163,6 +222,7 @@ function validateProfileAuthority({ profile, agent, run, child }: any) {
 export function createProfileWorkflowProviderAdapters({
   profileLookup = getAgentProfile,
   processRunner = runWorkflowProviderProcess,
+  remoteInspector = readWorkflowWorkspaceRemote,
   envSource = process.env,
 }: any = {}) {
   const adapters: Record<string, Function> = {};
@@ -174,14 +234,15 @@ export function createProfileWorkflowProviderAdapters({
         run,
         child,
       });
-      return processRunner({
+      validateWorkflowProviderRemote(await remoteInspector({ cwd, run, child }));
+      return withIsolatedGitHubConfig(envSource, (env) => processRunner({
         command: profile.runtime.backend,
         args: ['run', '-'],
         cwd,
         stdin: prompt,
-        env: buildWorkflowProviderEnv(envSource),
+        env,
         signal,
-      });
+      }));
     };
   }
   return Object.freeze(adapters);
