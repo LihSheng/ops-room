@@ -18,12 +18,25 @@ ops-room.lihsheng.space {
 	encode zstd gzip
 
 	handle /webhook {
+<<<<<<< HEAD
 		# Preserve the incoming GitHub authorization header
+=======
+		# Preserve the incoming webhook authorization header
+>>>>>>> f1e69a9 (fix(deploy): restore Caddy dashboard-token injection for non-webhook routes)
 		reverse_proxy 127.0.0.1:7382
 	}
 
 	handle {
+<<<<<<< HEAD
 		reverse_proxy 127.0.0.1:7382
+=======
+		# Dashboard frontend does not send credentials; inject the dashboard
+		# token so the UI works. Webhook routes are handled separately above
+		# to preserve webhook-secret authentication at the backend.
+		reverse_proxy 127.0.0.1:7382 {
+			header_up Authorization "Bearer {$OPS_ROOM_DASHBOARD_TOKEN}"
+		}
+>>>>>>> f1e69a9 (fix(deploy): restore Caddy dashboard-token injection for non-webhook routes)
 	}
 }
 
@@ -34,6 +47,12 @@ ops-room.lihsheng.space {
 	}
 
 	handle {
+<<<<<<< HEAD
 		reverse_proxy 127.0.0.1:7382
+=======
+		reverse_proxy 127.0.0.1:7382 {
+			header_up Authorization "Bearer {$OPS_ROOM_DASHBOARD_TOKEN}"
+		}
+>>>>>>> f1e69a9 (fix(deploy): restore Caddy dashboard-token injection for non-webhook routes)
 	}
 }
