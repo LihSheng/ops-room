@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { PassThrough } from 'node:stream';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
 import { listWorkflowEffects } from '../src/services/workflow-effect-store.js';
+import { runWorkflowProviderProcess } from '../src/services/workflow-provider-adapters.js';
 import {
   createWorkflowStageRunner,
   parseProviderResult,
@@ -270,6 +273,50 @@ test('provider termination failure is explicit and bounded', async () => {
   const result = await execute(runnerInput('implementation', 'professor'));
   const effects = await listWorkflowEffects({ dir: effectsDir });
 
+  assert.deepEqual(result, { outcome: 'needs_human', reason: 'workflow_provider_termination_failed' });
+  assert.equal(effects[0].state, 'needs_human');
+  assert.equal(effects[0].result_code, 'workflow_provider_termination_failed');
+});
+
+test('provider that ignores SIGTERM and SIGKILL produces termination_failed through real subprocess wrapper', async () => {
+  const effectsDir = await effectDir();
+  let spawnCalls = 0;
+
+  const providerAdapters = {
+    professor: async ({ prompt, cwd, signal }: any) => {
+      spawnCalls += 1;
+      return runWorkflowProviderProcess({
+        command: 'opencode',
+        args: ['run', '-'],
+        cwd,
+        stdin: prompt,
+        env: { PATH: '/bin' },
+        signal,
+        spawnFn: () => {
+          const child: any = new EventEmitter();
+          child.stdout = new PassThrough();
+          child.stderr = new PassThrough();
+          child.stdin = { end() {}, on() {} };
+          // Child ignores all signals and never emits close/error
+          child.kill = () => {};
+          return child;
+        },
+      });
+    },
+  };
+
+  const execute = createWorkflowStageRunner({
+    effectsDir,
+    providerAdapters,
+    providerTimeoutMs: 1_000,
+    providerTerminationGraceMs: 100,
+    resolveStageInstruction: async () => 'Test stage',
+  });
+
+  const result = await execute(runnerInput('implementation', 'professor'));
+  const effects = await listWorkflowEffects({ dir: effectsDir });
+
+  assert.equal(spawnCalls, 1);
   assert.deepEqual(result, { outcome: 'needs_human', reason: 'workflow_provider_termination_failed' });
   assert.equal(effects[0].state, 'needs_human');
   assert.equal(effects[0].result_code, 'workflow_provider_termination_failed');

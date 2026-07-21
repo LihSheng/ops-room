@@ -11,6 +11,13 @@ const WORKFLOW_AGENTS = Object.freeze(['professor', 'tokyo', 'berlin']);
 const MAX_PROVIDER_OUTPUT_BYTES = 1024 * 1024;
 const MAX_REMOTE_LENGTH = 2_048;
 const PROVIDER_TERMINATION_ESCALATION_MS = 5_000;
+// settle_gap is intentionally unused — the stage runner's own
+// invokeWithDeadline terminationGraceMs is the authoritative
+// deadline for unconfirmed child termination. The subprocess
+// promise stays pending until the child emits close/error so
+// invokeWithDeadline can distinguish acknowledged shutdown
+// (rejected with terminationReason) from unconfirmed-zombie
+// shutdown (termination grace expiry).
 const PROVIDER_TERMINATION_SETTLE_MS = 7_000;
 const UNSAFE_GIT_CONFIG_KEY = /^(?:credential\.|http\.|url\.|include\.|includeif\.|core\.sshcommand$|remote\..*\.pushurl$)/i;
 const PROVIDER_ENV_ALLOWLIST = new Set([
@@ -189,14 +196,11 @@ export function runWorkflowProviderProcess({
     let settled = false;
     let terminationReason: string | null = null;
     let escalationTimer: NodeJS.Timeout | null = null;
-    let settleTimer: NodeJS.Timeout | null = null;
 
     const cleanup = () => {
       if (signal) signal.removeEventListener('abort', onAbort);
       if (escalationTimer) clearTimeout(escalationTimer);
-      if (settleTimer) clearTimeout(settleTimer);
       escalationTimer = null;
-      settleTimer = null;
     };
     const finish = (operation: () => void) => {
       if (settled) return;
@@ -212,9 +216,11 @@ export function runWorkflowProviderProcess({
         try { child?.kill('SIGKILL'); } catch {}
       }, PROVIDER_TERMINATION_ESCALATION_MS);
       escalationTimer.unref?.();
-      settleTimer = setTimeout(() => {
-        finish(() => reject(new Error(terminationReason || 'workflow_provider_termination_failed')));
-      }, PROVIDER_TERMINATION_SETTLE_MS);
+      // Intentionally do NOT settle here. The promise stays pending
+      // until the child emits close/error, so the stage runner's
+      // invokeWithDeadline can distinguish acknowledged shutdown
+      // (rejected with terminationReason) from an unconfirmed-zombie
+      // shutdown (termination_grace expiry → workflow_provider_termination_failed).
     };
     const onAbort = () => requestTermination('workflow_provider_cancelled');
 

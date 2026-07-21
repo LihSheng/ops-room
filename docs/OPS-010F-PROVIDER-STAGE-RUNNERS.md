@@ -1,6 +1,6 @@
 # OPS-010F — Provider Stage Runners and Durable Effect Fencing
 
-Status: **Implementation in progress — PR #49**
+Status: **Implemented — PR #49**
 
 Issue: #47
 
