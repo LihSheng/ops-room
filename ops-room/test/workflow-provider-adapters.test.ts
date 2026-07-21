@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
 import {
@@ -243,4 +244,33 @@ test('pre-cancelled subprocess execution never spawns a provider', async () => {
     /workflow_provider_cancelled/,
   );
   assert.equal(spawned, false);
+});
+
+test('subprocess cancellation waits for the child close event before settling', async () => {
+  const controller = new AbortController();
+  const child = fakeChild();
+  const promise = runWorkflowProviderProcess({
+    command: 'opencode',
+    args: ['run', '-'],
+    cwd: '/workspace',
+    stdin: 'prompt',
+    env: {},
+    signal: controller.signal,
+    spawnFn: () => child,
+  });
+  let settled = false;
+  const observed = promise.then(
+    () => new Error('unexpected provider success'),
+    (error) => error,
+  ).finally(() => { settled = true; });
+
+  controller.abort();
+  assert.deepEqual(child.kills, ['SIGTERM']);
+  await delay(10);
+  assert.equal(settled, false);
+
+  child.emit('close', null, 'SIGTERM');
+  const error = await observed;
+  assert.equal(error.message, 'workflow_provider_cancelled');
+  assert.equal(settled, true);
 });
