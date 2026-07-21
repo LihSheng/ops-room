@@ -175,7 +175,6 @@ export function runWorkflowProviderProcess({
       settleTimer = setTimeout(() => {
         finish(() => reject(new Error(terminationReason || 'workflow_provider_termination_failed')));
       }, PROVIDER_TERMINATION_SETTLE_MS);
-      settleTimer.unref?.();
     };
     const onAbort = () => requestTermination('workflow_provider_cancelled');
 
