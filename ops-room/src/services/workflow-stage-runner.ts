@@ -124,6 +124,8 @@ function replayEffect(effect: any) {
 }
 
 async function invokeWithDeadline({ invoke, timeoutMs, signal }: any) {
+  if (signal?.aborted) throw new Error('workflow_provider_cancelled');
+
   const controller = new AbortController();
   let timeout: NodeJS.Timeout | null = null;
   let onAbort: (() => void) | null = null;
@@ -139,8 +141,7 @@ async function invokeWithDeadline({ invoke, timeoutMs, signal }: any) {
         controller.abort('cancelled');
         reject(new Error('workflow_provider_cancelled'));
       };
-      if (signal.aborted) onAbort();
-      else signal.addEventListener('abort', onAbort, { once: true });
+      signal.addEventListener('abort', onAbort, { once: true });
     }
   });
 
