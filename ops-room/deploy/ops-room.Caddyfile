@@ -1,0 +1,39 @@
+{
+	email lihsheng1997@gmail.com
+	servers :443 {
+		protocols h1 h2 h3
+	}
+}
+
+# Reverse proxy for n8n (Docker) on localhost:5678 — behind Cloudflare proxy
+n8n.lihsheng.space {
+	tls internal
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:5678
+}
+
+# Ops Room dashboard + control plane — behind Cloudflare proxy
+ops-room.lihsheng.space {
+	tls internal
+	encode zstd gzip
+
+	handle /webhook {
+		# Preserve the incoming GitHub authorization header
+		reverse_proxy 127.0.0.1:7382
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:7382
+	}
+}
+
+# Tunnel ingress: cloudflared sends HTTP to port 7381
+:7381 {
+	handle /webhook {
+		reverse_proxy 127.0.0.1:7382
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:7382
+	}
+}
