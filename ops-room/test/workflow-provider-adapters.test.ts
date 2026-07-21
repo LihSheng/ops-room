@@ -7,9 +7,11 @@ import {
   buildWorkflowProviderEnv,
   createProfileWorkflowProviderAdapters,
   runWorkflowProviderProcess,
+  validateWorkflowProviderRemote,
 } from '../src/services/workflow-provider-adapters.js';
 
 const WORKFLOW_ID = 'workflow:LihSheng-ops-room:1234567890abcdef12345678';
+const SAFE_REMOTE = 'https://github.com/LihSheng/ops-room.git';
 
 function profile(id: string, overrides: any = {}) {
   return {
@@ -51,7 +53,7 @@ function fakeChild() {
   return child;
 }
 
-test('provider environment uses an explicit credential allowlist', () => {
+test('provider environment uses an explicit credential allowlist and disables ambient Git auth', () => {
   const env = buildWorkflowProviderEnv({
     PATH: '/bin',
     HOME: '/home/ops',
@@ -59,23 +61,45 @@ test('provider environment uses an explicit credential allowlist', () => {
     GH_TOKEN: 'github-secret',
     OPS_ROOM_OPERATOR_TOKEN: 'operator-secret',
     OPENAB_WEBHOOK_SECRET: 'webhook-secret',
+    NODE_OPTIONS: '--require unsafe-module',
+    NODE_PATH: '/unsafe/node/path',
     RANDOM_UNSAFE_VALUE: 'unsafe',
   });
 
-  assert.deepEqual(env, {
-    PATH: '/bin',
-    HOME: '/home/ops',
-    OPENCODE_API_KEY: 'provider-secret',
-  });
+  assert.equal(env.PATH, '/bin');
+  assert.equal(env.HOME, '/home/ops');
+  assert.equal(env.OPENCODE_API_KEY, 'provider-secret');
+  assert.equal(env.GIT_TERMINAL_PROMPT, '0');
+  assert.equal(env.GCM_INTERACTIVE, 'never');
+  assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
+  assert.equal(env.GIT_CONFIG_GLOBAL, process.platform === 'win32' ? 'NUL' : '/dev/null');
+  assert.equal(env.GH_PROMPT_DISABLED, '1');
   assert.equal(Object.hasOwn(env, 'GH_TOKEN'), false);
   assert.equal(Object.hasOwn(env, 'OPS_ROOM_OPERATOR_TOKEN'), false);
   assert.equal(Object.hasOwn(env, 'OPENAB_WEBHOOK_SECRET'), false);
+  assert.equal(Object.hasOwn(env, 'NODE_OPTIONS'), false);
+  assert.equal(Object.hasOwn(env, 'NODE_PATH'), false);
 });
 
-test('profile adapters authorize agent and repository before invoking opencode', async () => {
+test('provider remote preflight accepts only credential-free HTTPS origins', () => {
+  assert.equal(validateWorkflowProviderRemote(SAFE_REMOTE), SAFE_REMOTE);
+
+  for (const remote of [
+    'https://x-access-token:secret@github.com/LihSheng/ops-room.git',
+    'https://user:password@github.com/LihSheng/ops-room.git',
+    'git@github.com:LihSheng/ops-room.git',
+    'ssh://git@github.com/LihSheng/ops-room.git',
+    'http://github.com/LihSheng/ops-room.git',
+  ]) {
+    assert.throws(() => validateWorkflowProviderRemote(remote), /workflow_provider_remote_credentials_unsafe/);
+  }
+});
+
+test('profile adapters authorize agent, repository, and remote before invoking opencode', async () => {
   const calls: any[] = [];
   const adapters = createProfileWorkflowProviderAdapters({
     profileLookup: (id: string) => profile(id),
+    remoteInspector: async () => SAFE_REMOTE,
     envSource: { PATH: '/bin', OPENCODE_API_KEY: 'provider-secret', GH_TOKEN: 'must-not-leak' },
     processRunner: async (input: any) => {
       calls.push(input);
@@ -92,6 +116,10 @@ test('profile adapters authorize agent and repository before invoking opencode',
   assert.equal(calls[0].cwd, '/internal/workspace/path');
   assert.equal(calls[0].stdin, 'Return bounded JSON');
   assert.equal(calls[0].env.OPENCODE_API_KEY, 'provider-secret');
+  assert.equal(calls[0].env.GIT_CONFIG_NOSYSTEM, '1');
+  assert.equal(calls[0].env.GIT_TERMINAL_PROMPT, '0');
+  assert.equal(typeof calls[0].env.GH_CONFIG_DIR, 'string');
+  assert.match(calls[0].env.GH_CONFIG_DIR, /ops-room-provider-/);
   assert.equal(Object.hasOwn(calls[0].env, 'GH_TOKEN'), false);
 });
 
@@ -107,11 +135,27 @@ test('profile adapters fail closed for disabled, mismatched, unsupported, or una
     let calls = 0;
     const adapters = createProfileWorkflowProviderAdapters({
       profileLookup: () => profileValue,
+      remoteInspector: async () => SAFE_REMOTE,
       processRunner: async () => { calls += 1; return ''; },
     });
     await assert.rejects(adapters.professor(adapterInput()), expected);
     assert.equal(calls, 0);
   }
+});
+
+test('unsafe workspace remote blocks provider execution before subprocess creation', async () => {
+  let calls = 0;
+  const adapters = createProfileWorkflowProviderAdapters({
+    profileLookup: (id: string) => profile(id),
+    remoteInspector: async () => 'https://x-access-token:secret@github.com/LihSheng/ops-room.git',
+    processRunner: async () => { calls += 1; return ''; },
+  });
+
+  await assert.rejects(
+    adapters.professor(adapterInput()),
+    /workflow_provider_remote_credentials_unsafe/,
+  );
+  assert.equal(calls, 0);
 });
 
 test('subprocess runner uses shell-free stdin execution and returns bounded stdout', async () => {
