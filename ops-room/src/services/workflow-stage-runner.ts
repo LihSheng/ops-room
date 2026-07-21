@@ -147,6 +147,7 @@ async function invokeWithDeadline({ invoke, timeoutMs, terminationGraceMs, signa
     if (signal) {
       onAbort = () => resolve({ source: 'interruption', reason: 'workflow_provider_cancelled' });
       signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
     }
   });
 
@@ -171,6 +172,7 @@ async function invokeWithDeadline({ invoke, timeoutMs, terminationGraceMs, signa
           () => resolve({ source: 'termination_grace' }),
           terminationGraceMs,
         );
+        terminationTimer.unref?.();
       }),
     ]);
 
