@@ -7,6 +7,7 @@ export async function executeWorkflowChildWithProviders({
   providerAdapters = createProfileWorkflowProviderAdapters(),
   resolveStageInstruction,
   providerTimeoutMs,
+  providerTerminationGraceMs,
   signal,
   executeChild = executeWorkflowChild,
   ...executionInput
@@ -16,6 +17,7 @@ export async function executeWorkflowChildWithProviders({
     providerAdapters,
     resolveStageInstruction,
     providerTimeoutMs,
+    providerTerminationGraceMs,
     signal,
   });
 
