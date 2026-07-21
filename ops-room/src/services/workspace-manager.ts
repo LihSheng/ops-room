@@ -16,6 +16,7 @@ import { withWorkspaceLock } from './workspace-locks.js';
 
 const execFileDefault = promisify(execFileCallback);
 const SAFE_ID = /^[A-Za-z0-9._-]{1,120}$/;
+const SAFE_TASK_ID = /^[A-Za-z0-9._:-]{1,200}$/;
 const SAFE_BRANCH = /^(?!\/|.*(?:\.\.|\/\.|\.\/|\/\/|@\{|\\))[A-Za-z0-9._\/-]{1,240}(?<![./])$/;
 const SAFE_SHA = /^[0-9a-f]{40}$/i;
 const ACTIVE_STATES = new Set(['allocating', 'active', 'cleanup_requested', 'cleaning', 'held_for_investigation']);
@@ -23,6 +24,12 @@ const ACTIVE_STATES = new Set(['allocating', 'active', 'cleanup_requested', 'cle
 function safeValue(value, field) {
   const normalized = String(value || '').trim();
   if (!SAFE_ID.test(normalized)) throw new Error(`invalid_${field}`);
+  return normalized;
+}
+
+function safeTaskValue(value) {
+  const normalized = String(value || '').trim();
+  if (!SAFE_TASK_ID.test(normalized)) throw new Error('invalid_task_id');
   return normalized;
 }
 
@@ -69,7 +76,7 @@ export async function allocateWorkspace({
   const repoKey = repositoryCacheKey(repoId);
   const id = safeValue(workspaceId, 'workspace_id');
   const owner = safeValue(ownerAgent, 'owner_agent');
-  const task = safeValue(taskId, 'task_id');
+  const task = safeTaskValue(taskId);
   if (!['branch', 'detached'].includes(mode)) throw new Error('invalid_workspace_mode');
   if (mode === 'branch' && !SAFE_BRANCH.test(String(branch || ''))) throw new Error('invalid_workspace_branch');
   if (mode === 'detached' && !SAFE_SHA.test(String(revision || ''))) throw new Error('detached_workspace_requires_exact_sha');

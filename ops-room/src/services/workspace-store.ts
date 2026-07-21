@@ -14,14 +14,16 @@ export const WORKSPACE_STATES = Object.freeze([
 ]);
 
 const SAFE_ID = /^[A-Za-z0-9._-]{1,120}$/;
+const SAFE_TASK_ID = /^[A-Za-z0-9._:-]{1,200}$/;
 const SAFE_REPOSITORY_ID = /^(?:[A-Za-z0-9._-]{1,120}|[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100})$/;
 const SAFE_SHA = /^[0-9a-f]{40}$/i;
 
 export function validateWorkspaceRecord(record) {
   if (!record || record.version !== WORKSPACE_RECORD_VERSION) throw new Error('unsupported_workspace_record');
-  for (const field of ['workspace_id', 'owner_agent', 'task_id']) {
+  for (const field of ['workspace_id', 'owner_agent']) {
     if (!SAFE_ID.test(String(record[field] || ''))) throw new Error(`invalid_${field}`);
   }
+  if (!SAFE_TASK_ID.test(String(record.task_id || ''))) throw new Error('invalid_task_id');
   if (!SAFE_REPOSITORY_ID.test(String(record.repository_id || ''))) throw new Error('invalid_repository_id');
   if (!['branch', 'detached'].includes(record.mode)) throw new Error('invalid_workspace_mode');
   if (!WORKSPACE_STATES.includes(record.state)) throw new Error('invalid_workspace_state');
