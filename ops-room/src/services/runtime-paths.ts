@@ -49,6 +49,7 @@ export const MEMORY_SPACE_MANIFESTS_DIR = process.env.OPS_ROOM_MEMORY_SPACE_MANI
 export const TASKS_DIR = process.env.OPS_ROOM_TASKS_DIR || join(_opsRoomDataDir, 'tasks');
 export const REVIEW_TASKS_DIR = process.env.OPS_ROOM_REVIEW_TASKS_DIR || join(_opsRoomDataDir, 'review-tasks');
 export const WORKFLOW_RUNS_DIR = process.env.OPS_ROOM_WORKFLOW_RUNS_DIR || join(_opsRoomDataDir, 'workflow-runs');
+export const WORKFLOW_EFFECTS_DIR = process.env.OPS_ROOM_WORKFLOW_EFFECTS_DIR || join(_opsRoomDataDir, 'workflow-effects');
 export const LOG_DIR = process.env.OPS_ROOM_LOGS_DIR || join(_opsRoomDataDir, 'logs');
 export const STATE_DIR = process.env.OPS_ROOM_STATE_DIR || join(_opsRoomDataDir, 'state');
 export const AUDIT_DIR = process.env.OPS_ROOM_AUDIT_DIR || join(_opsRoomDataDir, 'audit');
