@@ -227,6 +227,7 @@ export async function reconcileInterruptedWorkflowEffects({
   dir,
   now = () => new Date().toISOString(),
 }: any) {
+  await mkdir(dir, { recursive: true });
   const { effects, corrupt } = await scanWorkflowEffects({ dir });
   const recovered = [];
   for (const effect of effects) {
