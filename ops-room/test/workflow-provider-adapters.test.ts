@@ -302,6 +302,28 @@ test('pre-cancelled subprocess execution never spawns a provider', async () => {
   assert.equal(spawned, false);
 });
 
+test('cancellation during spawn terminates the child without writing the prompt', async () => {
+  const controller = new AbortController();
+  const child = fakeChild();
+  const promise = runWorkflowProviderProcess({
+    command: 'opencode',
+    args: ['run', '-'],
+    cwd: '/workspace',
+    stdin: 'must-not-be-written',
+    env: {},
+    signal: controller.signal,
+    spawnFn: () => {
+      controller.abort();
+      queueMicrotask(() => child.emit('close', null, 'SIGTERM'));
+      return child;
+    },
+  });
+
+  await assert.rejects(promise, /workflow_provider_cancelled/);
+  assert.deepEqual(child.kills, ['SIGTERM']);
+  assert.equal(child.stdin.value, '');
+});
+
 test('subprocess cancellation waits for the child close event before settling', async () => {
   const controller = new AbortController();
   const child = fakeChild();
