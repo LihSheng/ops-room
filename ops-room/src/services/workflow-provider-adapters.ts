@@ -12,9 +12,7 @@ const MAX_PROVIDER_OUTPUT_BYTES = 1024 * 1024;
 const MAX_REMOTE_LENGTH = 2_048;
 const PROVIDER_ENV_ALLOWLIST = new Set([
   'PATH',
-  'HOME',
   'USER',
-  'USERPROFILE',
   'TMPDIR',
   'TEMP',
   'TMP',
@@ -73,7 +71,13 @@ export function validateWorkflowProviderRemote(value: unknown) {
   } catch {
     throw new Error('workflow_provider_remote_invalid');
   }
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+  if (
+    parsed.protocol !== 'https:'
+    || parsed.username
+    || parsed.password
+    || parsed.search
+    || parsed.hash
+  ) {
     throw new Error('workflow_provider_remote_credentials_unsafe');
   }
   return remote;
@@ -96,11 +100,24 @@ export async function readWorkflowWorkspaceRemote({ cwd, execFile = execFileDefa
   }
 }
 
-async function withIsolatedGitHubConfig(envSource: NodeJS.ProcessEnv, execute: (env: NodeJS.ProcessEnv) => Promise<any>) {
+async function withIsolatedProviderHome(envSource: NodeJS.ProcessEnv, execute: (env: NodeJS.ProcessEnv) => Promise<any>) {
   const isolationRoot = await mkdtemp(join(tmpdir(), 'ops-room-provider-'));
-  const ghConfigDir = join(isolationRoot, 'gh');
-  await mkdir(ghConfigDir, { recursive: true });
+  const providerHome = join(isolationRoot, 'home');
+  const configHome = join(providerHome, '.config');
+  const cacheHome = join(providerHome, '.cache');
+  const dataHome = join(providerHome, '.local', 'share');
+  const ghConfigDir = join(configHome, 'gh');
+  await Promise.all([
+    mkdir(ghConfigDir, { recursive: true }),
+    mkdir(cacheHome, { recursive: true }),
+    mkdir(dataHome, { recursive: true }),
+  ]);
   const env = buildWorkflowProviderEnv(envSource);
+  env.HOME = providerHome;
+  env.USERPROFILE = providerHome;
+  env.XDG_CONFIG_HOME = configHome;
+  env.XDG_CACHE_HOME = cacheHome;
+  env.XDG_DATA_HOME = dataHome;
   env.GH_CONFIG_DIR = ghConfigDir;
   try {
     return await execute(env);
@@ -235,7 +252,7 @@ export function createProfileWorkflowProviderAdapters({
         child,
       });
       validateWorkflowProviderRemote(await remoteInspector({ cwd, run, child }));
-      return withIsolatedGitHubConfig(envSource, (env) => processRunner({
+      return withIsolatedProviderHome(envSource, (env) => processRunner({
         command: profile.runtime.backend,
         args: ['run', '-'],
         cwd,
