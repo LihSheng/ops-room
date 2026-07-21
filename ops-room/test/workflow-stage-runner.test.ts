@@ -195,3 +195,27 @@ test('pre-cancelled provider execution records a safe cancellation outcome', asy
   assert.equal(effects[0].result_code, 'workflow_provider_cancelled');
   assert.equal(calls, 0);
 });
+
+test('provider timeout aborts the adapter and records bounded needs-human evidence', async () => {
+  const effectsDir = await effectDir();
+  let providerSignal: AbortSignal | null = null;
+  const execute = createWorkflowStageRunner({
+    effectsDir,
+    providerTimeoutMs: 1_000,
+    providerAdapters: {
+      professor: async ({ signal }: any) => {
+        providerSignal = signal;
+        return new Promise(() => {});
+      },
+    },
+    resolveStageInstruction: async () => 'Implement the requested change',
+  });
+
+  const result = await execute(runnerInput('implementation', 'professor'));
+  const effects = await listWorkflowEffects({ dir: effectsDir });
+
+  assert.deepEqual(result, { outcome: 'needs_human', reason: 'workflow_provider_timeout' });
+  assert.equal(providerSignal?.aborted, true);
+  assert.equal(effects[0].state, 'needs_human');
+  assert.equal(effects[0].result_code, 'workflow_provider_timeout');
+});
