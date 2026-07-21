@@ -71,14 +71,17 @@ export function runWorkflowProviderProcess({
     let settled = false;
     let escalationTimer: NodeJS.Timeout | null = null;
 
-    const cleanup = () => {
+    const cleanup = ({ keepEscalation = false } = {}) => {
       if (signal) signal.removeEventListener('abort', onAbort);
-      if (escalationTimer) clearTimeout(escalationTimer);
+      if (!keepEscalation && escalationTimer) {
+        clearTimeout(escalationTimer);
+        escalationTimer = null;
+      }
     };
-    const finish = (operation: () => void) => {
+    const finish = (operation: () => void, options: any = {}) => {
       if (settled) return;
       settled = true;
-      cleanup();
+      cleanup(options);
       operation();
     };
     const terminate = () => {
@@ -90,7 +93,7 @@ export function runWorkflowProviderProcess({
     };
     const onAbort = () => {
       terminate();
-      finish(() => reject(new Error('workflow_provider_cancelled')));
+      finish(() => reject(new Error('workflow_provider_cancelled')), { keepEscalation: true });
     };
 
     try {
@@ -113,7 +116,7 @@ export function runWorkflowProviderProcess({
         stdout = boundedOutputAppend(stdout, chunk, maximumOutputBytes);
       } catch {
         terminate();
-        finish(() => reject(new Error('workflow_provider_output_too_large')));
+        finish(() => reject(new Error('workflow_provider_output_too_large')), { keepEscalation: true });
       }
     });
     child.stderr?.on('data', () => {
@@ -123,6 +126,11 @@ export function runWorkflowProviderProcess({
       finish(() => reject(new Error('workflow_provider_process_unavailable')));
     });
     child.on('close', (code: number | null, signalName: string | null) => {
+      if (escalationTimer) {
+        clearTimeout(escalationTimer);
+        escalationTimer = null;
+      }
+      if (settled) return;
       if (code === 0 && !signalName) {
         finish(() => resolve(stdout));
         return;
@@ -134,7 +142,7 @@ export function runWorkflowProviderProcess({
       child.stdin?.end(String(stdin ?? ''), 'utf-8');
     } catch {
       terminate();
-      finish(() => reject(new Error('workflow_provider_process_failed')));
+      finish(() => reject(new Error('workflow_provider_process_failed')), { keepEscalation: true });
     }
   });
 }
