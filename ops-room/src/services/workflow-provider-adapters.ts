@@ -10,6 +10,8 @@ const execFileDefault = promisify(execFileCallback);
 const WORKFLOW_AGENTS = Object.freeze(['professor', 'tokyo', 'berlin']);
 const MAX_PROVIDER_OUTPUT_BYTES = 1024 * 1024;
 const MAX_REMOTE_LENGTH = 2_048;
+const PROVIDER_TERMINATION_ESCALATION_MS = 5_000;
+const PROVIDER_TERMINATION_SETTLE_MS = 7_000;
 const PROVIDER_ENV_ALLOWLIST = new Set([
   'PATH',
   'USER',
@@ -145,32 +147,37 @@ export function runWorkflowProviderProcess({
     let child: any;
     let stdout = '';
     let settled = false;
+    let terminationReason: string | null = null;
     let escalationTimer: NodeJS.Timeout | null = null;
+    let settleTimer: NodeJS.Timeout | null = null;
 
-    const cleanup = ({ keepEscalation = false } = {}) => {
+    const cleanup = () => {
       if (signal) signal.removeEventListener('abort', onAbort);
-      if (!keepEscalation && escalationTimer) {
-        clearTimeout(escalationTimer);
-        escalationTimer = null;
-      }
+      if (escalationTimer) clearTimeout(escalationTimer);
+      if (settleTimer) clearTimeout(settleTimer);
+      escalationTimer = null;
+      settleTimer = null;
     };
-    const finish = (operation: () => void, options: any = {}) => {
+    const finish = (operation: () => void) => {
       if (settled) return;
       settled = true;
-      cleanup(options);
+      cleanup();
       operation();
     };
-    const terminate = () => {
+    const requestTermination = (reason: string) => {
+      if (settled || terminationReason) return;
+      terminationReason = reason;
       try { child?.kill('SIGTERM'); } catch {}
       escalationTimer = setTimeout(() => {
         try { child?.kill('SIGKILL'); } catch {}
-      }, 5_000);
+      }, PROVIDER_TERMINATION_ESCALATION_MS);
       escalationTimer.unref?.();
+      settleTimer = setTimeout(() => {
+        finish(() => reject(new Error(terminationReason || 'workflow_provider_termination_failed')));
+      }, PROVIDER_TERMINATION_SETTLE_MS);
+      settleTimer.unref?.();
     };
-    const onAbort = () => {
-      terminate();
-      finish(() => reject(new Error('workflow_provider_cancelled')), { keepEscalation: true });
-    };
+    const onAbort = () => requestTermination('workflow_provider_cancelled');
 
     try {
       child = spawnFn(command, args, {
@@ -187,26 +194,28 @@ export function runWorkflowProviderProcess({
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
     child.stdout?.on('data', (chunk: unknown) => {
-      if (settled) return;
+      if (settled || terminationReason) return;
       try {
         stdout = boundedOutputAppend(stdout, chunk, maximumOutputBytes);
       } catch {
-        terminate();
-        finish(() => reject(new Error('workflow_provider_output_too_large')), { keepEscalation: true });
+        requestTermination('workflow_provider_output_too_large');
       }
     });
     child.stderr?.on('data', () => {
       // Intentionally discarded. Raw provider stderr may contain credentials or host details.
     });
+    child.stdin?.on?.('error', () => {
+      requestTermination('workflow_provider_process_failed');
+    });
     child.on('error', () => {
-      finish(() => reject(new Error('workflow_provider_process_unavailable')));
+      finish(() => reject(new Error(terminationReason || 'workflow_provider_process_unavailable')));
     });
     child.on('close', (code: number | null, signalName: string | null) => {
-      if (escalationTimer) {
-        clearTimeout(escalationTimer);
-        escalationTimer = null;
-      }
       if (settled) return;
+      if (terminationReason) {
+        finish(() => reject(new Error(terminationReason as string)));
+        return;
+      }
       if (code === 0 && !signalName) {
         finish(() => resolve(stdout));
         return;
@@ -217,8 +226,7 @@ export function runWorkflowProviderProcess({
     try {
       child.stdin?.end(String(stdin ?? ''), 'utf-8');
     } catch {
-      terminate();
-      finish(() => reject(new Error('workflow_provider_process_failed')), { keepEscalation: true });
+      requestTermination('workflow_provider_process_failed');
     }
   });
 }
@@ -252,12 +260,12 @@ export function createProfileWorkflowProviderAdapters({
         child,
       });
       validateWorkflowProviderRemote(await remoteInspector({ cwd, run, child }));
-      return withIsolatedProviderHome(envSource, (env) => processRunner({
+      return withIsolatedProviderHome(envSource, (isolatedEnv) => processRunner({
         command: profile.runtime.backend,
         args: ['run', '-'],
         cwd,
         stdin: prompt,
-        env,
+        env: isolatedEnv,
         signal,
       }));
     };
@@ -265,4 +273,10 @@ export function createProfileWorkflowProviderAdapters({
   return Object.freeze(adapters);
 }
 
-export { MAX_PROVIDER_OUTPUT_BYTES, PROVIDER_ENV_ALLOWLIST, WORKFLOW_AGENTS };
+export {
+  MAX_PROVIDER_OUTPUT_BYTES,
+  PROVIDER_ENV_ALLOWLIST,
+  PROVIDER_TERMINATION_ESCALATION_MS,
+  PROVIDER_TERMINATION_SETTLE_MS,
+  WORKFLOW_AGENTS,
+};
