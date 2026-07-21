@@ -172,7 +172,6 @@ async function invokeWithDeadline({ invoke, timeoutMs, terminationGraceMs, signa
           () => resolve({ source: 'termination_grace' }),
           terminationGraceMs,
         );
-        terminationTimer.unref?.();
       }),
     ]);
 
