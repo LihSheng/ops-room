@@ -12,6 +12,7 @@ const MAX_PROVIDER_OUTPUT_BYTES = 1024 * 1024;
 const MAX_REMOTE_LENGTH = 2_048;
 const PROVIDER_TERMINATION_ESCALATION_MS = 5_000;
 const PROVIDER_TERMINATION_SETTLE_MS = 7_000;
+const UNSAFE_GIT_CONFIG_KEY = /^(?:credential\.|http\.|url\.|include\.|includeif\.|core\.sshcommand$|remote\..*\.pushurl$)/i;
 const PROVIDER_ENV_ALLOWLIST = new Set([
   'PATH',
   'USER',
@@ -43,6 +44,20 @@ function boundedOutputAppend(current: string, value: unknown, maximum: number) {
     throw new Error('workflow_provider_output_too_large');
   }
   return next;
+}
+
+function splitLines(value: unknown) {
+  return String(value ?? '')
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function splitNulls(value: unknown) {
+  return String(value ?? '')
+    .split('\0')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 export function buildWorkflowProviderEnv(source: NodeJS.ProcessEnv = process.env) {
@@ -85,19 +100,44 @@ export function validateWorkflowProviderRemote(value: unknown) {
   return remote;
 }
 
+export function validateWorkflowProviderGitConfig(keys: unknown[]) {
+  for (const value of keys) {
+    const key = String(value ?? '').trim();
+    if (key && UNSAFE_GIT_CONFIG_KEY.test(key)) {
+      throw new Error('workflow_provider_git_config_unsafe');
+    }
+  }
+}
+
 export async function readWorkflowWorkspaceRemote({ cwd, execFile = execFileDefault }: any) {
+  const env = buildWorkflowProviderEnv(process.env);
+  const options = {
+    cwd,
+    encoding: 'utf-8',
+    timeout: 10_000,
+    maxBuffer: 32 * 1024,
+    windowsHide: true,
+    env,
+  };
+
   try {
-    const result = await execFile('git', ['remote', 'get-url', 'origin'], {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 10_000,
-      maxBuffer: 16 * 1024,
-      windowsHide: true,
-      env: buildWorkflowProviderEnv(process.env),
-    });
-    return validateWorkflowProviderRemote(result?.stdout);
+    const [fetchResult, pushResult, configResult] = await Promise.all([
+      execFile('git', ['remote', 'get-url', '--all', 'origin'], options),
+      execFile('git', ['remote', 'get-url', '--push', '--all', 'origin'], options),
+      execFile('git', ['config', '--name-only', '--null', '--list'], options),
+    ]);
+    const fetchRemotes = splitLines(fetchResult?.stdout);
+    const pushRemotes = splitLines(pushResult?.stdout);
+    if (fetchRemotes.length === 0 || pushRemotes.length === 0) {
+      throw new Error('workflow_provider_remote_unavailable');
+    }
+    for (const remote of [...fetchRemotes, ...pushRemotes]) {
+      validateWorkflowProviderRemote(remote);
+    }
+    validateWorkflowProviderGitConfig(splitNulls(configResult?.stdout));
+    return fetchRemotes[0];
   } catch (error: any) {
-    if (String(error?.message || '').startsWith('workflow_provider_remote_')) throw error;
+    if (String(error?.message || '').startsWith('workflow_provider_')) throw error;
     throw new Error('workflow_provider_remote_unavailable');
   }
 }
@@ -280,5 +320,6 @@ export {
   PROVIDER_ENV_ALLOWLIST,
   PROVIDER_TERMINATION_ESCALATION_MS,
   PROVIDER_TERMINATION_SETTLE_MS,
+  UNSAFE_GIT_CONFIG_KEY,
   WORKFLOW_AGENTS,
 };
