@@ -62,9 +62,14 @@ The concrete profile-backed adapter:
 6. invokes `opencode run -` with a fixed argument array and `shell: false`;
 7. sends the bounded prompt through stdin;
 8. exposes only an explicit provider environment allowlist;
-9. excludes GitHub, webhook, dashboard, operator, and unrelated host credentials;
-10. bounds stdout and discards raw stderr;
-11. terminates the subprocess on cancellation or timeout.
+9. excludes GitHub, webhook, dashboard, operator, Node injection, and unrelated host credentials;
+10. validates that the workspace origin is credential-free HTTPS and rejects SSH, embedded user information, query credentials, and fragments;
+11. disables system/global Git configuration, credential prompting, and Git Credential Manager interaction;
+12. assigns a disposable HOME, XDG directories, and empty `GH_CONFIG_DIR` for each provider invocation;
+13. bounds stdout and discards raw stderr;
+14. terminates the subprocess on cancellation or timeout, escalating from SIGTERM to SIGKILL when required.
+
+The disposable provider home is removed after the provider exits. The provider does not receive the host HOME or USERPROFILE and cannot read host `gh`, Git credential, SSH, or provider-session files through normal home-directory discovery.
 
 Provider output must be exactly one bounded JSON object:
 
@@ -126,7 +131,10 @@ The implementation includes focused tests for:
 - malformed output and redaction;
 - timeout and cancellation;
 - profile and repository authorization;
+- credential-bearing, SSH, query, and fragment remote rejection;
 - subprocess environment allowlisting;
+- disposable HOME and isolated Git/`gh` configuration;
+- Node injection variable exclusion;
 - shell-free stdin execution;
 - bounded stdout and discarded stderr;
 - composition with OPS-010E;
@@ -157,7 +165,10 @@ After OPS-010F is merged, deploy one immutable release to the VPS and validate:
 4. duplicate invocation suppression;
 5. timeout and cancellation behavior;
 6. restart with a deliberately interrupted claimed effect;
-7. absence of raw provider output, secrets, or host paths in durable records and APIs;
-8. preservation of OPS-010E exact-SHA and workspace lifecycle guarantees.
+7. rejection of credential-bearing or SSH workspace origins;
+8. provider operation with a disposable home and only the configured provider API credential;
+9. inability to use host `gh`, Git credential helpers, SSH keys, or persisted user configuration;
+10. absence of raw provider output, secrets, or host paths in durable records and APIs;
+11. preservation of OPS-010E exact-SHA and workspace lifecycle guarantees.
 
 Do not begin OPS-010G production orchestration until this focused validation passes.
