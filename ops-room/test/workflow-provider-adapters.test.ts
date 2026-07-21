@@ -57,6 +57,7 @@ test('provider environment uses an explicit credential allowlist and disables am
   const env = buildWorkflowProviderEnv({
     PATH: '/bin',
     HOME: '/home/ops',
+    USERPROFILE: 'C:\\Users\\ops',
     OPENCODE_API_KEY: 'provider-secret',
     GH_TOKEN: 'github-secret',
     OPS_ROOM_OPERATOR_TOKEN: 'operator-secret',
@@ -67,13 +68,14 @@ test('provider environment uses an explicit credential allowlist and disables am
   });
 
   assert.equal(env.PATH, '/bin');
-  assert.equal(env.HOME, '/home/ops');
   assert.equal(env.OPENCODE_API_KEY, 'provider-secret');
   assert.equal(env.GIT_TERMINAL_PROMPT, '0');
   assert.equal(env.GCM_INTERACTIVE, 'never');
   assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
   assert.equal(env.GIT_CONFIG_GLOBAL, process.platform === 'win32' ? 'NUL' : '/dev/null');
   assert.equal(env.GH_PROMPT_DISABLED, '1');
+  assert.equal(Object.hasOwn(env, 'HOME'), false);
+  assert.equal(Object.hasOwn(env, 'USERPROFILE'), false);
   assert.equal(Object.hasOwn(env, 'GH_TOKEN'), false);
   assert.equal(Object.hasOwn(env, 'OPS_ROOM_OPERATOR_TOKEN'), false);
   assert.equal(Object.hasOwn(env, 'OPENAB_WEBHOOK_SECRET'), false);
@@ -90,6 +92,8 @@ test('provider remote preflight accepts only credential-free HTTPS origins', () 
     'git@github.com:LihSheng/ops-room.git',
     'ssh://git@github.com/LihSheng/ops-room.git',
     'http://github.com/LihSheng/ops-room.git',
+    'https://github.com/LihSheng/ops-room.git?token=secret',
+    'https://github.com/LihSheng/ops-room.git#credential',
   ]) {
     assert.throws(() => validateWorkflowProviderRemote(remote), /workflow_provider_remote_credentials_unsafe/);
   }
@@ -100,7 +104,13 @@ test('profile adapters authorize agent, repository, and remote before invoking o
   const adapters = createProfileWorkflowProviderAdapters({
     profileLookup: (id: string) => profile(id),
     remoteInspector: async () => SAFE_REMOTE,
-    envSource: { PATH: '/bin', OPENCODE_API_KEY: 'provider-secret', GH_TOKEN: 'must-not-leak' },
+    envSource: {
+      PATH: '/bin',
+      HOME: '/host/home/must-not-leak',
+      USERPROFILE: 'C:\\host-home-must-not-leak',
+      OPENCODE_API_KEY: 'provider-secret',
+      GH_TOKEN: 'must-not-leak',
+    },
     processRunner: async (input: any) => {
       calls.push(input);
       return '{"outcome":"completed","output_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}';
@@ -118,8 +128,11 @@ test('profile adapters authorize agent, repository, and remote before invoking o
   assert.equal(calls[0].env.OPENCODE_API_KEY, 'provider-secret');
   assert.equal(calls[0].env.GIT_CONFIG_NOSYSTEM, '1');
   assert.equal(calls[0].env.GIT_TERMINAL_PROMPT, '0');
-  assert.equal(typeof calls[0].env.GH_CONFIG_DIR, 'string');
+  assert.match(calls[0].env.HOME, /ops-room-provider-/);
+  assert.match(calls[0].env.USERPROFILE, /ops-room-provider-/);
   assert.match(calls[0].env.GH_CONFIG_DIR, /ops-room-provider-/);
+  assert.notEqual(calls[0].env.HOME, '/host/home/must-not-leak');
+  assert.notEqual(calls[0].env.USERPROFILE, 'C:\\host-home-must-not-leak');
   assert.equal(Object.hasOwn(calls[0].env, 'GH_TOKEN'), false);
 });
 
