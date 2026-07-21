@@ -7,7 +7,9 @@ import test from 'node:test';
 import {
   buildWorkflowProviderEnv,
   createProfileWorkflowProviderAdapters,
+  readWorkflowWorkspaceRemote,
   runWorkflowProviderProcess,
+  validateWorkflowProviderGitConfig,
   validateWorkflowProviderRemote,
 } from '../src/services/workflow-provider-adapters.js';
 
@@ -54,6 +56,25 @@ function fakeChild() {
   return child;
 }
 
+function gitPreflightStub({
+  fetchRemote = SAFE_REMOTE,
+  pushRemote = SAFE_REMOTE,
+  configKeys = ['core.repositoryformatversion', 'remote.origin.url', 'remote.origin.fetch'],
+}: any = {}) {
+  return async (_command: string, args: string[]) => {
+    if (args[0] === 'remote' && args.includes('--push')) {
+      return { stdout: `${pushRemote}\n`, stderr: '' };
+    }
+    if (args[0] === 'remote') {
+      return { stdout: `${fetchRemote}\n`, stderr: '' };
+    }
+    if (args[0] === 'config') {
+      return { stdout: `${configKeys.join('\0')}\0`, stderr: '' };
+    }
+    throw new Error('unexpected_git_command');
+  };
+}
+
 test('provider environment uses an explicit credential allowlist and disables ambient Git auth', () => {
   const env = buildWorkflowProviderEnv({
     PATH: '/bin',
@@ -98,6 +119,41 @@ test('provider remote preflight accepts only credential-free HTTPS origins', () 
   ]) {
     assert.throws(() => validateWorkflowProviderRemote(remote), /workflow_provider_remote_credentials_unsafe/);
   }
+});
+
+test('workspace Git preflight validates fetch, push, and local configuration', async () => {
+  const remote = await readWorkflowWorkspaceRemote({
+    cwd: '/workspace',
+    execFile: gitPreflightStub(),
+  });
+  assert.equal(remote, SAFE_REMOTE);
+  assert.doesNotThrow(() => validateWorkflowProviderGitConfig([
+    'core.repositoryformatversion',
+    'remote.origin.url',
+    'remote.origin.fetch',
+  ]));
+});
+
+test('workspace Git preflight rejects credential config and unsafe push URLs', async () => {
+  await assert.rejects(
+    readWorkflowWorkspaceRemote({
+      cwd: '/workspace',
+      execFile: gitPreflightStub({
+        configKeys: ['core.repositoryformatversion', 'http.https://github.com/.extraheader'],
+      }),
+    }),
+    /workflow_provider_git_config_unsafe/,
+  );
+
+  await assert.rejects(
+    readWorkflowWorkspaceRemote({
+      cwd: '/workspace',
+      execFile: gitPreflightStub({
+        pushRemote: 'https://x-access-token:secret@github.com/LihSheng/ops-room.git',
+      }),
+    }),
+    /workflow_provider_remote_credentials_unsafe/,
+  );
 });
 
 test('profile adapters authorize agent, repository, and remote before invoking opencode', async () => {
