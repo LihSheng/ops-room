@@ -38,7 +38,7 @@ export async function appendAuditEvent({
       actor_id: boundedText(actor?.actor_id, 100),
       actor_display_name: boundedText(actor?.actor_display_name, 120),
       auth_method: boundedText(actor?.auth_method, 60),
-      session_id: actor?.session_id ? boundedText(actor.session_id, 100) : null,
+      ...(actor?.session_id ? { session_id: boundedText(actor.session_id, 100) } : {}),
     },
     target: {
       type: boundedText(target?.type, 80),
