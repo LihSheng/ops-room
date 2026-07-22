@@ -51,19 +51,19 @@ async function makeSource(root) {
   await writeFile(join(root, '.env'), 'SECRET=must-not-ship\n');
   await mkdir(join(root, 'data'), { recursive: true });
   await writeFile(join(root, 'data', 'task.json'), '{}');
-  await mkdir(join(root, '..', 'config', 'agent-profiles'), { recursive: true });
+  await mkdir(join(root, 'config', 'agent-profiles'), { recursive: true });
   for (const id of PROFILE_IDS) {
-    await writeFile(join(root, '..', 'config', 'agent-profiles', `${id}.json`), JSON.stringify({ id }));
+    await writeFile(join(root, 'config', 'agent-profiles', `${id}.json`), JSON.stringify({ id }));
   }
   for (const path of REQUIRED_SKILL_MANIFESTS) {
     const [, , key, version] = path.split('/');
-    const dir = join(root, '..', 'config', 'skills', key, version);
+    const dir = join(root, 'config', 'skills', key, version);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'manifest.json'), JSON.stringify(skillManifest(key)));
   }
   for (const path of REQUIRED_MEMORY_SPACE_MANIFESTS) {
     const [, , key, version] = path.split('/');
-    const dir = join(root, '..', 'config', 'memory-spaces', key, version);
+    const dir = join(root, 'config', 'memory-spaces', key, version);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'manifest.json'), JSON.stringify(memoryManifest(key)));
   }
@@ -116,8 +116,8 @@ test('release build rejects unauthorized files under registry roots', async () =
   const source = join(temp, 'source');
   try {
     await makeSource(source);
-    await writeFile(join(source, '..', 'config', 'skills', 'implementation', '1.0.0', 'README.md'), 'not approved');
-    await writeFile(join(source, '..', 'config', 'memory-spaces', 'ops-room-project', '1.0.0', 'README.md'), 'not approved');
+    await writeFile(join(source, 'config', 'skills', 'implementation', '1.0.0', 'README.md'), 'not approved');
+    await writeFile(join(source, 'config', 'memory-spaces', 'ops-room-project', '1.0.0', 'README.md'), 'not approved');
     await assert.rejects(() => buildReleaseArtifact({ sourceRoot: source, outputDir: join(temp, 'output'), commitSha: SHA }), /only a regular manifest\.json is allowed/);
   } finally {
     await rm(temp, { recursive: true, force: true });
@@ -130,7 +130,7 @@ test('release build rejects registry symlinks when supported by the platform', a
   try {
     await makeSource(source);
     try {
-      await symlink(join(source, '..', 'config', 'skills', 'implementation'), join(source, '..', 'config', 'skills', 'escape'), 'dir');
+      await symlink(join(source, 'config', 'skills', 'implementation'), join(source, 'config', 'skills', 'escape'), 'dir');
     } catch (error) {
       if (error?.code === 'EPERM' || error?.code === 'EACCES') {
         t.skip('symlink creation is unavailable on this platform');
