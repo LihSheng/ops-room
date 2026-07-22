@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { normalizeOperatorRoles, type OperatorRole } from './operator-rbac.js';
@@ -9,6 +9,10 @@ export const OPERATOR_SESSION_COOKIE_NAME = 'ops_room_session';
 const SESSION_SCHEMA = 'ops-room.operator-session.v1';
 const SESSION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const SAFE_ACTOR_ID = /^[A-Za-z0-9._:-]{2,100}$/;
+const SESSION_ID_PATTERN = /^session:[0-9a-f-]{36}$/i;
+const SESSION_FILENAME_PATTERN = /^session-([0-9a-f]{64})\.json$/i;
+const SAFE_IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,128}$/;
+const ADMIN_SESSION_STATES = new Set(['active', 'expired', 'revoked']);
 const MIN_TTL_SECONDS = 300;
 const MAX_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -57,7 +61,7 @@ function validateRecord(input: any) {
   if (!input || input.schema !== SESSION_SCHEMA || input.version !== 1) {
     throw new Error('operator_session_record_invalid');
   }
-  if (!/^session:[0-9a-f-]{36}$/i.test(String(input.session_id || ''))) {
+  if (!SESSION_ID_PATTERN.test(String(input.session_id || ''))) {
     throw new Error('operator_session_id_invalid');
   }
   if (!/^[0-9a-f]{64}$/i.test(String(input.token_hash || ''))) {
@@ -75,6 +79,27 @@ function validateRecord(input: any) {
     revokedAt = asDate(input.revoked_at, 'operator_session_revoked_at_invalid').toISOString();
   }
 
+  let revokedByActorId: string | null = null;
+  let revocationReason: string | null = null;
+  let revocationIdempotencyKey: string | null = null;
+  if (input.revoked_by_actor_id !== null && input.revoked_by_actor_id !== undefined) {
+    revokedByActorId = String(input.revoked_by_actor_id || '').trim();
+    if (!SAFE_ACTOR_ID.test(revokedByActorId)) throw new Error('operator_session_revoker_invalid');
+  }
+  if (input.revocation_reason !== null && input.revocation_reason !== undefined) {
+    revocationReason = String(input.revocation_reason || '').trim();
+    if (!revocationReason || revocationReason.length > 500) throw new Error('operator_session_revocation_reason_invalid');
+  }
+  if (input.revocation_idempotency_key !== null && input.revocation_idempotency_key !== undefined) {
+    revocationIdempotencyKey = String(input.revocation_idempotency_key || '').trim();
+    if (!SAFE_IDEMPOTENCY_KEY.test(revocationIdempotencyKey)) {
+      throw new Error('operator_session_revocation_idempotency_invalid');
+    }
+  }
+  if (!revokedAt && (revokedByActorId || revocationReason || revocationIdempotencyKey)) {
+    throw new Error('operator_session_revocation_metadata_invalid');
+  }
+
   return Object.freeze({
     schema: SESSION_SCHEMA,
     version: 1,
@@ -87,6 +112,9 @@ function validateRecord(input: any) {
     created_at: createdAt.toISOString(),
     expires_at: expiresAt.toISOString(),
     revoked_at: revokedAt,
+    revoked_by_actor_id: revokedByActorId,
+    revocation_reason: revocationReason,
+    revocation_idempotency_key: revocationIdempotencyKey,
   });
 }
 
@@ -141,6 +169,155 @@ export function publicOperatorSession(record: any) {
     roles: validated.roles,
     created_at: validated.created_at,
     expires_at: validated.expires_at,
+  });
+}
+
+export function validateOperatorSessionId(value: unknown): string {
+  const sessionId = String(value || '').trim();
+  if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('operator_session_id_invalid');
+  return sessionId;
+}
+
+function administrativeOperatorSession(record: any, now: () => string | Date = () => new Date()) {
+  const validated = validateRecord(record);
+  const currentTime = normalizeNow(now).getTime();
+  const status = validated.revoked_at
+    ? 'revoked'
+    : asDate(validated.expires_at, 'operator_session_expires_at_invalid').getTime() <= currentTime
+      ? 'expired'
+      : 'active';
+  return Object.freeze({
+    ...publicOperatorSession(validated),
+    status,
+    revoked_at: validated.revoked_at,
+    revocation: validated.revoked_at
+      ? Object.freeze({
+        actor_id: validated.revoked_by_actor_id,
+        reason: validated.revocation_reason,
+        idempotency_key: validated.revocation_idempotency_key,
+      })
+      : null,
+  });
+}
+
+async function readSessionRecords(dir: string) {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+
+  const records = [];
+  const sessionIds = new Set<string>();
+  for (const name of names.filter((entry) => SESSION_FILENAME_PATTERN.test(entry)).sort()) {
+    const match = name.match(SESSION_FILENAME_PATTERN);
+    if (!match) continue;
+    const parsed = JSON.parse(await readFile(join(dir, name), 'utf8'));
+    const record = validateRecord(parsed);
+    if (record.token_hash !== match[1].toLowerCase()) throw new Error('operator_session_filename_hash_mismatch');
+    if (sessionIds.has(record.session_id)) throw new Error('operator_session_duplicate_id');
+    sessionIds.add(record.session_id);
+    records.push({ path: join(dir, name), record });
+  }
+  return records;
+}
+
+async function findSessionRecordById({ dir, sessionId }: { dir: string; sessionId: unknown }) {
+  const normalizedSessionId = validateOperatorSessionId(sessionId);
+  const records = await readSessionRecords(dir);
+  return records.find((entry) => entry.record.session_id === normalizedSessionId) || null;
+}
+
+export async function listOperatorSessions({
+  dir,
+  limit = 100,
+  actorId,
+  status,
+  now = () => new Date(),
+}: {
+  dir: string;
+  limit?: unknown;
+  actorId?: unknown;
+  status?: unknown;
+  now?: () => string | Date;
+}) {
+  const parsedLimit = Number(limit);
+  if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+    throw new Error('operator_session_limit_filter_invalid');
+  }
+  const boundedLimit = parsedLimit;
+  const normalizedActorId = String(actorId || '').trim();
+  const normalizedStatus = String(status || '').trim();
+  if (normalizedActorId && !SAFE_ACTOR_ID.test(normalizedActorId)) throw new Error('operator_session_actor_filter_invalid');
+  if (normalizedStatus && !ADMIN_SESSION_STATES.has(normalizedStatus)) throw new Error('operator_session_status_filter_invalid');
+
+  const records = await readSessionRecords(dir);
+  return Object.freeze(records
+    .map(({ record }) => administrativeOperatorSession(record, now))
+    .filter((session) => !normalizedActorId || session.actor.actor_id === normalizedActorId)
+    .filter((session) => !normalizedStatus || session.status === normalizedStatus)
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+    .slice(0, boundedLimit));
+}
+
+export async function readOperatorSessionById({
+  dir,
+  sessionId,
+  now = () => new Date(),
+}: {
+  dir: string;
+  sessionId: unknown;
+  now?: () => string | Date;
+}) {
+  const found = await findSessionRecordById({ dir, sessionId });
+  return found ? administrativeOperatorSession(found.record, now) : null;
+}
+
+export async function revokeOperatorSessionById({
+  dir,
+  sessionId,
+  actor,
+  reason,
+  idempotencyKey,
+  now = () => new Date(),
+}: {
+  dir: string;
+  sessionId: unknown;
+  actor: any;
+  reason: unknown;
+  idempotencyKey: unknown;
+  now?: () => string | Date;
+}) {
+  const normalizedActor = normalizeActor(actor);
+  const normalizedReason = String(reason || '').trim();
+  const normalizedIdempotencyKey = String(idempotencyKey || '').trim();
+  if (!normalizedReason || normalizedReason.length > 500) throw new Error('operator_session_revocation_reason_invalid');
+  if (!SAFE_IDEMPOTENCY_KEY.test(normalizedIdempotencyKey)) {
+    throw new Error('operator_session_revocation_idempotency_invalid');
+  }
+
+  const found = await findSessionRecordById({ dir, sessionId });
+  if (!found) return null;
+  if (found.record.revoked_at) {
+    return Object.freeze({
+      session: administrativeOperatorSession(found.record, now),
+      already_revoked: true,
+    });
+  }
+
+  const revoked = validateRecord({
+    ...found.record,
+    revoked_at: normalizeNow(now).toISOString(),
+    revoked_by_actor_id: normalizedActor.actor_id,
+    revocation_reason: normalizedReason,
+    revocation_idempotency_key: normalizedIdempotencyKey,
+  });
+  await replaceRecord(found.path, revoked);
+  return Object.freeze({
+    session: administrativeOperatorSession(revoked, now),
+    already_revoked: false,
   });
 }
 
