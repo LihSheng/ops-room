@@ -1,6 +1,6 @@
 # OPS-012A — Human Authentication Foundation
 
-Status: **Session audit evidence slice**
+Status: **Administrative session management slice**
 
 Issue: #54
 
@@ -94,6 +94,7 @@ Current permission mappings are:
 | Agent lifecycle start and stop | `agent.lifecycle` |
 | Ambiguous workflow-effect resolution | `workflow.recover` |
 | Audit-event reads | `policy.manage` |
+| Administrative session listing and revocation | `session.manage` |
 
 `OPS_ROOM_OPERATOR_API_ENABLED=false` continues to hide all operator mutation and audit endpoints, including from valid sessions.
 
@@ -128,6 +129,8 @@ Only the `administrator` role receives `session.manage`.
 GET  /api/operator/sessions
 POST /api/operator/sessions/:session_id/revoke
 ```
+
+Both endpoints remain hidden while `OPS_ROOM_OPERATOR_API_ENABLED=false`. The dedicated operator bearer remains a supported V1-compatible authorization path even when human authentication is disabled. Cookie-session authorization additionally requires `OPS_ROOM_HUMAN_AUTH_ENABLED=true`, a valid administrator session, and CSRF evidence for revocation.
 
 The list endpoint exposes bounded public session metadata, status, expiry, and revocation attribution. It never exposes raw tokens, token hashes, cookies, CSRF values, file names, or storage paths. Optional filters are `actor_id`, `status`, and a validated `limit` from 1 to 100. Concurrent revocations of the same session are serialized within the running Ops Room process.
 
