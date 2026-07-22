@@ -5,7 +5,8 @@ import { POLL_AGENTS } from '../lib/config.js';
 import { pollAgentIssues, startIssuePoller } from '../lib/issue-poller.js';
 import {
   REPO, PORT, HOST, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR, WORKFLOW_RUNS_DIR, AUDIT_DIR, IDEMPOTENCY_DIR,
-  LIFECYCLE_DIR, OPENAB_SERVER_VERSION, OPERATOR_API_ENABLED, SHUTDOWN_TIMEOUT_MS, ISSUE_POLLING_ENABLED,
+  LIFECYCLE_DIR, OPENAB_SERVER_VERSION, SHUTDOWN_TIMEOUT_MS, ISSUE_POLLING_ENABLED,
+  HUMAN_AUTH_ENABLED,
   AGENT_LIFECYCLE_ENABLED, AGENT_LIFECYCLE_ALLOWED_AGENTS, AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS,
   AGENT_LIFECYCLE_DRAIN_POLL_MS, AGENT_LIFECYCLE_STOP_TIMEOUT_SECONDS,
   AGENT_LIFECYCLE_START_TIMEOUT_SECONDS,
@@ -44,11 +45,19 @@ import {
 import { handleAuditEventDetail, handleAuditEventsList } from '../routes/audit-events.js';
 import { handleReadOnlyAgentProfileApi } from '../routes/agent-profiles.js';
 import { handleWorkflowRunDetail, handleWorkflowRunsList } from '../routes/workflow-runs.js';
+import {
+  handleCreateOperatorSession,
+  handleReadOperatorSession,
+  handleRevokeOperatorSession,
+} from '../routes/operator-sessions.js';
 import { recoverInterruptedAgentLifecycleStates } from '../services/agent-lifecycle-store.js';
-import { resolveOperatorIdentity } from '../services/operator-identity.js';
-import { sendJSON, verifyAuth, verifyDashboardReadRequest, verifyOperatorAuth, parseBody } from '../routes/helpers.js';
+import { sendJSON, verifyAuth, verifyDashboardReadRequest, parseBody } from '../routes/helpers.js';
 import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.js';
 import { createFreshRuntimeInspector } from '../services/runtime-adapter/registry.js';
+import {
+  authorizeOperatorRequest,
+  OPERATOR_CSRF_HEADER_NAME,
+} from '../services/operator-request-auth.js';
 
 const freshRuntimeSnapshot = createFreshRuntimeInspector();
 
@@ -64,29 +73,24 @@ const reviewStatus = createGitHubReviewStatusService({
   }),
 });
 
-function requireOperatorMutation(req, res) {
-  if (!OPERATOR_API_ENABLED) {
-    sendJSON(res, 404, { error: 'Not found' });
+async function requireOperatorMutation(req, res, permission) {
+  const authorization = await authorizeOperatorRequest({ req, permission });
+  if (!authorization.ok) {
+    sendJSON(res, authorization.status, {
+      error: authorization.error,
+      error_code: authorization.error_code,
+    });
     return null;
   }
-  if (!verifyOperatorAuth(req.headers.authorization)) {
-    sendJSON(res, 401, { error: 'Unauthorized' });
-    return null;
-  }
-  try {
-    return resolveOperatorIdentity();
-  } catch {
-    sendJSON(res, 503, { error: 'Operator identity unavailable' });
-    return null;
-  }
+  return authorization.actor;
 }
 
-function requireAgentLifecycleMutation(req, res) {
+async function requireAgentLifecycleMutation(req, res) {
   if (!AGENT_LIFECYCLE_ENABLED) {
     sendJSON(res, 404, { error: 'Not found' });
     return null;
   }
-  return requireOperatorMutation(req, res);
+  return requireOperatorMutation(req, res, 'agent.lifecycle');
 }
 
 function scheduleTracked(label, operation, errorPrefix) {
@@ -346,6 +350,28 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/api/auth/session') {
+    let result = null;
+    if (req.method === 'POST') {
+      result = await handleCreateOperatorSession({
+        authorization: req.headers.authorization,
+      });
+    } else if (req.method === 'GET') {
+      result = await handleReadOperatorSession({
+        cookieHeader: req.headers.cookie,
+      });
+    } else if (req.method === 'DELETE') {
+      result = await handleRevokeOperatorSession({
+        cookieHeader: req.headers.cookie,
+        csrfHeader: req.headers[OPERATOR_CSRF_HEADER_NAME],
+      });
+    }
+    if (result) {
+      sendJSON(res, result.status, result.body, result.headers);
+      return;
+    }
+  }
+
   if (req.method === 'GET' && pathname === '/api/health') {
     try {
       const data = await handleHealth();
@@ -430,7 +456,7 @@ const server = createServer(async (req, res) => {
   );
   const taskActionMatch = operatorTaskActionMatch || legacyTaskActionMatch;
   if (req.method === 'POST' && taskActionMatch) {
-    const actor = requireOperatorMutation(req, res);
+    const actor = await requireOperatorMutation(req, res, 'task.manage');
     if (!actor) return;
     try {
       const body = await parseBody(req);
@@ -455,7 +481,7 @@ const server = createServer(async (req, res) => {
     /^\/api\/operator\/agents\/([A-Za-z0-9._-]+)\/stop$/,
   );
   if (req.method === 'POST' && operatorAgentStopMatch) {
-    const actor = requireAgentLifecycleMutation(req, res);
+    const actor = await requireAgentLifecycleMutation(req, res);
     if (!actor) return;
     try {
       const body = await parseBody(req);
@@ -483,7 +509,7 @@ const server = createServer(async (req, res) => {
     /^\/api\/operator\/agents\/([A-Za-z0-9._-]+)\/start$/,
   );
   if (req.method === 'POST' && operatorAgentStartMatch) {
-    const actor = requireAgentLifecycleMutation(req, res);
+    const actor = await requireAgentLifecycleMutation(req, res);
     if (!actor) return;
     try {
       const body = await parseBody(req);
@@ -507,7 +533,8 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && pathname === '/api/audit-events') {
-    if (!requireOperatorMutation(req, res)) return;
+    const actor = await requireOperatorMutation(req, res, 'policy.manage');
+    if (!actor) return;
     const data = await handleAuditEventsList(searchParams, { auditDir: AUDIT_DIR });
     sendJSON(res, 200, data);
     return;
@@ -515,7 +542,8 @@ const server = createServer(async (req, res) => {
 
   const auditDetailMatch = pathname.match(/^\/api\/audit-events\/([A-Fa-f0-9-]+)$/);
   if (req.method === 'GET' && auditDetailMatch) {
-    if (!requireOperatorMutation(req, res)) return;
+    const actor = await requireOperatorMutation(req, res, 'policy.manage');
+    if (!actor) return;
     const event = await handleAuditEventDetail(auditDetailMatch[1], { auditDir: AUDIT_DIR });
     if (!event) sendJSON(res, 404, { error: 'Audit event not found' });
     else sendJSON(res, 200, { event });
@@ -538,7 +566,8 @@ const server = createServer(async (req, res) => {
 
   const effectResolveMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/effects\/([a-f0-9]+)\/resolve$/);
   if (req.method === 'POST' && effectResolveMatch) {
-    if (!requireOperatorMutation(req, res)) return;
+    const actor = await requireOperatorMutation(req, res, 'workflow.recover');
+    if (!actor) return;
     try {
       const body = await parseBody(req);
       const effect = await resolveAmbiguousEffect({
@@ -736,6 +765,11 @@ server.listen(PORT, HOST, () => {
   console.log(`  GET  /api/logs    - List bounded redacted logs`);
   console.log(`  GET  /api/agents  - List agents`);
   console.log(`  GET  /api/openab/instances - OpenAB instance dashboard`);
+  if (HUMAN_AUTH_ENABLED) {
+    console.log(`  POST /api/auth/session - Bootstrap human operator session`);
+    console.log(`  GET  /api/auth/session - Read current human operator session`);
+    console.log(`  DELETE /api/auth/session - Revoke current human operator session`);
+  }
   if (AGENT_LIFECYCLE_ENABLED) console.log(`  POST /api/operator/agents/:agent/stop - Guarded graceful stop`);
   if (AGENT_LIFECYCLE_ENABLED) console.log(`  POST /api/operator/agents/:agent/start - Guarded graceful start`);
   console.log(`  WORKSPACE_BASE   - ${WORKSPACE_BASE}`);
