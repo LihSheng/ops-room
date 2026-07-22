@@ -56,19 +56,19 @@ async function makeSource(root) {
   await writeFile(join(root, 'src', 'server', 'webhook.js'), 'console.log("release");\n');
   await writeFile(join(root, 'dist', 'dashboard', 'index.html'), '<!doctype html>\n');
   await writeFile(join(root, 'package.json'), JSON.stringify({ version: '1.0.0', engines: { node: '>=20' } }));
-  await mkdir(join(root, '..', 'config', 'agent-profiles'), { recursive: true });
+  await mkdir(join(root, 'config', 'agent-profiles'), { recursive: true });
   for (const id of PROFILE_IDS) {
-    await writeFile(join(root, '..', 'config', 'agent-profiles', `${id}.json`), JSON.stringify({ id }));
+    await writeFile(join(root, 'config', 'agent-profiles', `${id}.json`), JSON.stringify({ id }));
   }
   for (const path of REQUIRED_SKILL_MANIFESTS) {
     const [, , key, version] = path.split('/');
-    const directory = join(root, '..', 'config', 'skills', key, version);
+    const directory = join(root, 'config', 'skills', key, version);
     await mkdir(directory, { recursive: true });
     await writeFile(join(directory, 'manifest.json'), JSON.stringify(skillManifestFor(key)));
   }
   for (const path of REQUIRED_MEMORY_SPACE_MANIFESTS) {
     const [, , key, version] = path.split('/');
-    const directory = join(root, '..', 'config', 'memory-spaces', key, version);
+    const directory = join(root, 'config', 'memory-spaces', key, version);
     await mkdir(directory, { recursive: true });
     await writeFile(join(directory, 'manifest.json'), JSON.stringify(memoryManifestFor(key)));
   }
