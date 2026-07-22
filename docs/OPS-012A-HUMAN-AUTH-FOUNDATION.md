@@ -1,6 +1,6 @@
 # OPS-012A — Human Authentication Foundation
 
-Status: **Emergency read-only and step-up confirmation slice**
+Status: **Dashboard session authentication slice**
 
 Issue: #54
 
@@ -77,6 +77,43 @@ The dashboard token and webhook secret are never accepted for bootstrap. The res
 
 `DELETE /api/auth/session` requires both the valid session cookie and its `X-Ops-Room-CSRF` token. Revocation is durable and the response clears the browser cookie.
 
+## Dashboard session experience
+
+The dashboard supports two explicit access modes.
+
+### Legacy dashboard-token mode
+
+When human authentication is disabled, the existing dedicated dashboard bearer remains the V1-compatible read authority. The browser UI displays `Dashboard token` and does not expose human mutation controls through this credential.
+
+### Human-session mode
+
+When human authentication is enabled:
+
+1. the dashboard checks `GET /api/auth/session`;
+2. an unauthenticated browser receives the minimal operator login screen;
+3. the operator enters the dedicated operator token;
+4. the browser sends it only to `POST /api/auth/session`;
+5. the returned opaque session is retained only in the `HttpOnly` cookie;
+6. dashboard reads use the cookie and require `dashboard.read`;
+7. the shell displays the authenticated operator name and roles;
+8. logout calls the CSRF-protected session-revocation endpoint and clears protected query data.
+
+The operator token is held only in the password input long enough to complete the exchange. It is not written to local storage, session storage, cookies, query caches, URLs, or audit records.
+
+Protected dashboard reads are authorized in this order:
+
+```text
+dedicated dashboard bearer
+        ↓ otherwise
+valid human session
+        ↓
+dashboard.read permission
+```
+
+Dashboard read authorization runs once before route handlers. The generic JSON response writer no longer performs authentication because durable session resolution is asynchronous.
+
+A session-store error returns `503`. Missing, expired, revoked, or invalid sessions return `401`. A valid session without `dashboard.read` returns `403` and writes actor-attributed denial evidence.
+
 ## Operator authorization boundary
 
 Existing operator actions accept either:
@@ -90,6 +127,7 @@ Current permission mappings are:
 
 | Operation | Session permission |
 |---|---|
+| Dashboard operational reads | `dashboard.read` |
 | Task cancel, retry, pause, resume | `task.manage` |
 | Agent lifecycle start and stop | `agent.lifecycle` |
 | Ambiguous workflow-effect resolution | `workflow.recover` |
@@ -157,7 +195,7 @@ The current event model includes:
 |---|---|
 | `operator.session.create` | A bootstrap credential created a browser session |
 | `operator.session.revoke` | The authenticated session logged out and was durably revoked |
-| `operator.authorization.denied` | Permission, CSRF, step-up, or emergency-mode authorization was rejected |
+| `operator.authorization.denied` | Permission, CSRF, step-up, emergency-mode, or dashboard-read authorization was rejected |
 | `operator.session.revoke.admin` | An administrator accepted or rejected cross-session revocation |
 
 Session-authenticated audit actors include:
@@ -223,8 +261,9 @@ This implementation does not:
 
 - accept the dashboard token as a human credential;
 - accept the webhook secret as a human credential;
+- store the operator bootstrap token in browser storage;
 - store raw session tokens;
-- persist session, CSRF, or confirmation values in audit events;
+- persist session, CSRF, confirmation, or login-token values in audit events;
 - permit cookie mutations without CSRF evidence;
 - permit sensitive cookie mutations without action-bound confirmation;
 - allow operator mutations while emergency read-only mode is active;
@@ -233,12 +272,14 @@ This implementation does not:
 - expose session hashes, storage paths, environment values, or credentials;
 - introduce password storage, account registration, MFA, or external identity-provider integration;
 - expose authentication material through administrative session APIs;
-- add the dashboard login/logout interface.
+- remove or repurpose the existing dashboard, webhook, or operator service credentials.
 
 ## Remaining OPS-012A order
 
-1. Add the minimal dashboard login/logout experience and session-backed dashboard reads.
-2. Run the production authentication and credential-separation drill.
+1. Run the production authentication and credential-separation drill.
+2. Record final acceptance and close OPS-012A if the drill passes.
+
+The production drill must verify that the reverse proxy preserves the browser-supplied operator bearer on `POST /api/auth/session` and does not overwrite it with legacy dashboard-read header injection.
 
 ## Tests
 
@@ -250,8 +291,13 @@ Coverage includes:
 - raw-token non-persistence;
 - strict session-cookie handling;
 - hidden endpoints while human authentication is disabled;
-- bootstrap rejection for non-operator credentials;
+- bootstrap rejection for dashboard and webhook credentials;
 - session read and revoke behavior;
+- dashboard bearer and human-session read authorization;
+- dashboard-read permission denial audit evidence;
+- dashboard session-store outage handling;
+- one central asynchronous read guard before route handlers;
+- minimal dashboard login, identity, legacy-mode, and logout TypeScript builds;
 - session creation and logout audit events;
 - session-attributed permission and CSRF denial events;
 - emergency read-only rejection for bearer and session mutations;
