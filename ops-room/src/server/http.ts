@@ -55,13 +55,14 @@ import {
   handleOperatorSessionsList,
 } from '../routes/operator-session-administration.js';
 import { recoverInterruptedAgentLifecycleStates } from '../services/agent-lifecycle-store.js';
-import { sendJSON, verifyAuth, verifyDashboardReadRequest, parseBody } from '../routes/helpers.js';
+import { sendJSON, verifyAuth, requiresDashboardReadAuth, parseBody } from '../routes/helpers.js';
 import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.js';
 import { createFreshRuntimeInspector } from '../services/runtime-adapter/registry.js';
 import {
   authorizeOperatorRequest,
   OPERATOR_CSRF_HEADER_NAME,
 } from '../services/operator-request-auth.js';
+import { authorizeDashboardReadRequest } from '../services/dashboard-request-auth.js';
 
 const freshRuntimeSnapshot = createFreshRuntimeInspector();
 
@@ -376,6 +377,17 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  if (requiresDashboardReadAuth(req)) {
+    const authorization = await authorizeDashboardReadRequest({ req });
+    if (!authorization.ok) {
+      sendJSON(res, authorization.status, {
+        error: authorization.error,
+        error_code: authorization.error_code,
+      });
+      return;
+    }
+  }
+
   if (req.method === 'GET' && pathname === '/api/operator/sessions') {
     const actor = await requireOperatorMutation(req, res, 'session.manage');
     if (!actor) return;
@@ -442,7 +454,6 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && pathname === '/api/workflows') {
-    if (!verifyDashboardReadRequest(req)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     try {
       const result = await handleWorkflowRunsList(searchParams, { workflowRunsDir: WORKFLOW_RUNS_DIR });
       sendJSON(res, result.status, result.body);
@@ -454,7 +465,6 @@ const server = createServer(async (req, res) => {
 
   const workflowDetailMatch = pathname.match(/^\/api\/workflows\/([A-Za-z0-9._:-]+)$/);
   if (req.method === 'GET' && workflowDetailMatch) {
-    if (!verifyDashboardReadRequest(req)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     try {
       const result = await handleWorkflowRunDetail(decodeURIComponent(workflowDetailMatch[1]), {
         workflowRunsDir: WORKFLOW_RUNS_DIR,
@@ -467,7 +477,6 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && pathname === '/api/review-tasks') {
-    if (!verifyDashboardReadRequest(req)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 100);
     sendJSON(res, 200, { tasks: await listReviewTasks({ dir: REVIEW_TASKS_DIR, limit }) });
     return;
@@ -475,7 +484,6 @@ const server = createServer(async (req, res) => {
 
   const reviewDetailMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)$/);
   if (req.method === 'GET' && reviewDetailMatch) {
-    if (!verifyDashboardReadRequest(req)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     const task = await readTask({ dir: REVIEW_TASKS_DIR, id: reviewDetailMatch[1] });
     if (!task) { sendJSON(res, 404, { error: 'Review task not found' }); return; }
     sendJSON(res, 200, { task });
@@ -586,7 +594,6 @@ const server = createServer(async (req, res) => {
 
   const reviewEffectsMatch = pathname.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/effects$/);
   if (req.method === 'GET' && reviewEffectsMatch) {
-    if (!verifyDashboardReadRequest(req)) { sendJSON(res, 401, { error: 'Unauthorized' }); return; }
     try {
       const kind = url.searchParams.get('kind');
       const state = url.searchParams.get('state') || 'CLAIMED';

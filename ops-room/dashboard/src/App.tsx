@@ -47,6 +47,7 @@ import {
   IconFileText,
   IconGitPullRequest,
   IconListCheck,
+  IconLogout,
   IconRefresh,
   IconRobot,
   IconRoute,
@@ -60,6 +61,7 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { opsApi } from './api';
+import { OperatorAuthBoundary, useOperatorAuth } from './operator-auth';
 import { useAgentProfiles } from './hooks/use-agent-profiles';
 import { joinProfileRuntime } from './lib/join-profile-runtime';
 import { ActivityPage, SettingsPage, WorkflowsPage } from './operational-pages';
@@ -590,25 +592,45 @@ function AppNavigation({ closeMobile }: { closeMobile: () => void }) {
   );
 }
 
-export default function App() {
+function OpsRoomApp() {
   const [mobileOpened, mobile] = useDisclosure(false);
   const [agentOpened, agentDrawer] = useDisclosure(false);
   const [logsOpened, logsModal] = useDisclosure(false);
   const [selectedAgent, setSelectedAgent] = useState<AgentInstance | null>(null);
   const queryClient = useQueryClient();
+  const auth = useOperatorAuth();
   const location = useLocation();
   const pageName = navigation.find((item) => item.path === location.pathname)?.label || 'Ops Room';
 
   const openAgent = (agent: AgentInstance) => { setSelectedAgent(agent); agentDrawer.open(); };
   const openLogs = (agent: AgentInstance) => { setSelectedAgent(agent); logsModal.open(); };
   const lastUpdated = useMemo(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), [queryClient.getQueryState(['ops-dashboard'])?.dataUpdatedAt]);
+  const operatorName = auth.session?.session.actor.actor_display_name || auth.session?.session.actor.actor_id || 'Operator';
+  const operatorRoles = auth.session?.session.roles.join(', ') || '';
 
   return (
     <AppShell header={{ height: 64 }} navbar={{ width: 248, breakpoint: 'md', collapsed: { mobile: !mobileOpened } }} padding={{ base: 'md', sm: 'xl' }}>
       <AppShell.Header className="app-header">
         <Group h="100%" px="lg" justify="space-between">
           <Group gap="sm"><Burger opened={mobileOpened} onClick={mobile.toggle} hiddenFrom="md" size="sm" /><ThemeIcon size={34} radius="md" variant="gradient" gradient={{ from: 'violet', to: 'indigo' }}><IconSparkles size={19} /></ThemeIcon><Box><Text fw={700} lh={1.1}>Ops Room</Text><Text size="xs" c="dimmed">Agent control plane</Text></Box></Group>
-          <Group gap="md"><Group gap={6} visibleFrom="sm"><Badge variant="dot" color="teal">Live</Badge><Text size="xs" c="dimmed">Updated {lastUpdated}</Text></Group><Tooltip label="Refresh all data"><ActionIcon variant="default" size="lg" onClick={() => { queryClient.invalidateQueries({ queryKey: ['ops-dashboard'] }); queryClient.invalidateQueries({ queryKey: ['agent-profiles'] }); queryClient.invalidateQueries({ queryKey: ['agent-profile'] }); queryClient.invalidateQueries({ queryKey: ['skills-catalog'] }); queryClient.invalidateQueries({ queryKey: ['memory-spaces'] }); queryClient.invalidateQueries({ queryKey: ['openab-instances'] }); }}><IconRefresh size={17} /></ActionIcon></Tooltip></Group>
+          <Group gap="md">
+            <Group gap={6} visibleFrom="sm"><Badge variant="dot" color="teal">Live</Badge><Text size="xs" c="dimmed">Updated {lastUpdated}</Text></Group>
+            {auth.mode === 'session' && auth.session ? (
+              <Group gap="xs" wrap="nowrap">
+                <Avatar size={30} radius="xl" color="violet">{operatorName.slice(0, 2).toUpperCase()}</Avatar>
+                <Box visibleFrom="sm">
+                  <Text size="sm" fw={600} lh={1.1}>{operatorName}</Text>
+                  <Text size="xs" c="dimmed" lineClamp={1}>{operatorRoles}</Text>
+                </Box>
+                <Tooltip label="Sign out">
+                  <ActionIcon variant="default" size="lg" disabled={auth.logoutPending} onClick={() => { void auth.logout(); }}>
+                    <IconLogout size={17} />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
+            ) : <Badge variant="light" color="gray">Dashboard token</Badge>}
+            <Tooltip label="Refresh all data"><ActionIcon variant="default" size="lg" onClick={() => { queryClient.invalidateQueries({ queryKey: ['ops-dashboard'] }); queryClient.invalidateQueries({ queryKey: ['agent-profiles'] }); queryClient.invalidateQueries({ queryKey: ['agent-profile'] }); queryClient.invalidateQueries({ queryKey: ['skills-catalog'] }); queryClient.invalidateQueries({ queryKey: ['memory-spaces'] }); queryClient.invalidateQueries({ queryKey: ['openab-instances'] }); }}><IconRefresh size={17} /></ActionIcon></Tooltip>
+          </Group>
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="md" className="app-navbar">
@@ -630,5 +652,13 @@ export default function App() {
       <AgentDrawer agent={selectedAgent} opened={agentOpened} close={agentDrawer.close} openLogs={(agent) => { agentDrawer.close(); openLogs(agent); }} />
       <LogsModal agent={selectedAgent} opened={logsOpened} close={logsModal.close} />
     </AppShell>
+  );
+}
+
+export default function App() {
+  return (
+    <OperatorAuthBoundary>
+      <OpsRoomApp />
+    </OperatorAuthBoundary>
   );
 }
