@@ -22,11 +22,20 @@ test('missing and unknown roles fail closed', () => {
 test('permissions are the union of configured roles', () => {
   const permissions = permissionsForOperatorRoles(['operator', 'reviewer']);
   assert.equal(permissions.includes('dashboard.read'), true);
+  assert.equal(permissions.includes('mission.create'), true);
   assert.equal(permissions.includes('task.manage'), true);
   assert.equal(permissions.includes('workflow.recover'), true);
   assert.equal(permissions.includes('workflow.approve'), true);
   assert.equal(permissions.includes('policy.manage'), false);
   assert.equal(permissions.includes('release.approve'), false);
+});
+
+test('mission creation is available to operators and administrators only', () => {
+  assert.equal(hasOperatorPermission(['operator'], 'mission.create'), true);
+  assert.equal(hasOperatorPermission(['administrator'], 'mission.create'), true);
+  assert.equal(hasOperatorPermission(['viewer'], 'mission.create'), false);
+  assert.equal(hasOperatorPermission(['reviewer'], 'mission.create'), false);
+  assert.equal(hasOperatorPermission(['deployer'], 'mission.create'), false);
 });
 
 test('administrator and deployer remain separate authorities', () => {
@@ -42,5 +51,10 @@ test('unknown permissions and denied actions fail closed', () => {
     () => requireOperatorPermission(['viewer'], 'task.manage'),
     /operator_permission_denied:task.manage/,
   );
+  assert.throws(
+    () => requireOperatorPermission(['viewer'], 'mission.create'),
+    /operator_permission_denied:mission.create/,
+  );
   assert.doesNotThrow(() => requireOperatorPermission(['operator'], 'task.manage'));
+  assert.doesNotThrow(() => requireOperatorPermission(['operator'], 'mission.create'));
 });
