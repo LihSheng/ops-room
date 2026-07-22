@@ -27,6 +27,7 @@ export const OPERATOR_TOKEN = process.env.OPS_ROOM_OPERATOR_TOKEN || '';
 export const OPERATOR_ID = process.env.OPS_ROOM_OPERATOR_ID || '';
 export const OPERATOR_DISPLAY_NAME = process.env.OPS_ROOM_OPERATOR_DISPLAY_NAME || '';
 export const HUMAN_AUTH_ENABLED = process.env.OPS_ROOM_HUMAN_AUTH_ENABLED === 'true';
+export const EMERGENCY_READ_ONLY_ENABLED = process.env.OPS_ROOM_EMERGENCY_READ_ONLY_ENABLED === 'true';
 export const OPERATOR_CONFIGURED_ROLES = Object.freeze(
   String(process.env.OPS_ROOM_OPERATOR_ROLES || '')
     .split(',')
