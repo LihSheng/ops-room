@@ -56,8 +56,12 @@ function LoginScreen({
     event.preventDefault();
     const value = token.trim();
     if (!value) return;
-    await login(value);
-    setToken('');
+    try {
+      await login(value);
+      setToken('');
+    } catch {
+      // The mutation error is rendered in the form.
+    }
   };
 
   return (
@@ -202,7 +206,17 @@ export function OperatorAuthBoundary({ children }: { children: ReactNode }) {
     <OperatorAuthContext.Provider value={{
       mode: 'session',
       session,
-      logout: async () => { await logoutMutation.mutateAsync(session); },
+      logout: async () => {
+        try {
+          await logoutMutation.mutateAsync(session);
+        } catch (error) {
+          notifications.show({
+            color: 'red',
+            title: 'Sign-out failed',
+            message: error instanceof Error ? error.message : 'The browser session could not be revoked.',
+          });
+        }
+      },
       logoutPending: logoutMutation.isPending,
     }}>
       {children}
