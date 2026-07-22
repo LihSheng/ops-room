@@ -34,6 +34,16 @@ function unauthorized(headers?: Record<string, string>): OperatorSessionRouteRes
   return { status: 401, body: { error: 'Unauthorized' }, headers };
 }
 
+function unavailable(): OperatorSessionRouteResult {
+  return {
+    status: 503,
+    body: {
+      error: 'Operator session unavailable',
+      error_code: 'operator_session_unavailable',
+    },
+  };
+}
+
 export async function handleCreateOperatorSession({
   authorization,
   enabled = HUMAN_AUTH_ENABLED,
@@ -83,13 +93,7 @@ export async function handleCreateOperatorSession({
       },
     };
   } catch {
-    return {
-      status: 503,
-      body: {
-        error: 'Operator session unavailable',
-        error_code: 'operator_session_unavailable',
-      },
-    };
+    return unavailable();
   }
 }
 
@@ -110,16 +114,21 @@ export async function handleReadOperatorSession({
 
   const token = extractOperatorSessionToken(cookieHeader);
   if (!token) return unauthorized();
-  const session = await readSession({ dir: sessionDir, token, now });
-  if (!session) return unauthorized();
 
-  return {
-    status: 200,
-    body: {
-      session,
-      csrf_token: deriveOperatorCsrfToken(token),
-    },
-  };
+  try {
+    const session = await readSession({ dir: sessionDir, token, now });
+    if (!session) return unauthorized();
+
+    return {
+      status: 200,
+      body: {
+        session,
+        csrf_token: deriveOperatorCsrfToken(token),
+      },
+    };
+  } catch {
+    return unavailable();
+  }
 }
 
 export async function handleRevokeOperatorSession({
@@ -149,19 +158,23 @@ export async function handleRevokeOperatorSession({
   const token = extractOperatorSessionToken(cookieHeader);
   if (!token) return unauthorized(clearHeader);
 
-  const session = await readSession({ dir: sessionDir, token, now });
-  if (!session) return unauthorized(clearHeader);
-  if (!verifyOperatorCsrfToken({ sessionToken: token, csrfToken: csrfHeader })) {
-    return {
-      status: 403,
-      body: { error: 'Forbidden', error_code: 'operator_csrf_invalid' },
-    };
-  }
+  try {
+    const session = await readSession({ dir: sessionDir, token, now });
+    if (!session) return unauthorized(clearHeader);
+    if (!verifyOperatorCsrfToken({ sessionToken: token, csrfToken: csrfHeader })) {
+      return {
+        status: 403,
+        body: { error: 'Forbidden', error_code: 'operator_csrf_invalid' },
+      };
+    }
 
-  await revokeSession({ dir: sessionDir, token, now });
-  return {
-    status: 200,
-    headers: clearHeader,
-    body: { ok: true, session_id: session.session_id },
-  };
+    await revokeSession({ dir: sessionDir, token, now });
+    return {
+      status: 200,
+      headers: clearHeader,
+      body: { ok: true, session_id: session.session_id },
+    };
+  } catch {
+    return unavailable();
+  }
 }
