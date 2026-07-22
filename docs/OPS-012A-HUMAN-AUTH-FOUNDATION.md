@@ -31,6 +31,7 @@ Roles resolve to bounded permissions rather than route-specific role-name checks
 - `agent.lifecycle`
 - `agent.configure`
 - `policy.manage`
+- `session.manage`
 - `repository.manage`
 - `release.approve`
 
@@ -119,6 +120,27 @@ Audit records never contain the raw session token, token hash, CSRF token, beare
 
 A newly created session is not disclosed to the browser unless its creation audit event is written successfully. If audit persistence fails, the undisclosed session is revoked. Permission and CSRF denials also fail closed with a bounded unavailable response if their required audit evidence cannot be persisted.
 
+## Administrative session management
+
+Only the `administrator` role receives `session.manage`.
+
+```text
+GET  /api/operator/sessions
+POST /api/operator/sessions/:session_id/revoke
+```
+
+The list endpoint exposes bounded public session metadata, status, expiry, and revocation attribution. It never exposes raw tokens, token hashes, cookies, CSRF values, file names, or storage paths. Optional filters are `actor_id`, `status`, and a validated `limit` from 1 to 100. Concurrent revocations of the same session are serialized within the running Ops Room process.
+
+Cross-session revocation requires:
+
+- an authenticated principal with `session.manage`;
+- a reason of 1-500 characters;
+- an 8-128 character idempotency key;
+- durable session-state metadata identifying the revoking actor, reason, and idempotency key;
+- an append-only `operator.session.revoke.admin` audit event.
+
+A replay with the same actor, target, payload, and idempotency key returns the stored response without creating another audit event. Reusing the key for a different request is rejected. When an administrator revokes their current session, the response also clears the browser cookie.
+
 ## Configuration
 
 ```text
@@ -150,15 +172,14 @@ This implementation does not:
 - enable operator APIs automatically;
 - expose session hashes, storage paths, environment values, or credentials;
 - introduce password storage, account registration, or external identity-provider integration;
-- add administrative session listing or cross-session revocation;
+- expose authentication material through administrative session APIs;
 - add the dashboard login/logout interface.
 
 ## Remaining OPS-012A order
 
-1. Add administrative session listing and cross-session revocation.
-2. Add emergency read-only mode and step-up confirmation for sensitive actions.
-3. Add the minimal dashboard login/logout experience.
-4. Run the production authentication and credential-separation drill.
+1. Add emergency read-only mode and step-up confirmation for sensitive actions.
+2. Add the minimal dashboard login/logout experience.
+3. Run the production authentication and credential-separation drill.
 
 ## Tests
 
@@ -175,5 +196,8 @@ Coverage includes:
 - session creation and logout audit events;
 - session-attributed permission and CSRF denial events;
 - audit failure rollback and fail-closed responses;
+- administrator-only session listing and filtering;
+- reason- and idempotency-guarded cross-session revocation;
+- self-revocation cookie clearing;
 - continued legacy operator-bearer authorization;
 - hidden operator endpoints while the operator API is disabled.

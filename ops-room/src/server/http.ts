@@ -50,6 +50,10 @@ import {
   handleReadOperatorSession,
   handleRevokeOperatorSession,
 } from '../routes/operator-sessions.js';
+import {
+  handleOperatorSessionAdministrativeRevoke,
+  handleOperatorSessionsList,
+} from '../routes/operator-session-administration.js';
 import { recoverInterruptedAgentLifecycleStates } from '../services/agent-lifecycle-store.js';
 import { sendJSON, verifyAuth, verifyDashboardReadRequest, parseBody } from '../routes/helpers.js';
 import { processLifecycle, trackAcceptedOperation } from '../services/process-lifecycle.js';
@@ -370,6 +374,36 @@ const server = createServer(async (req, res) => {
       sendJSON(res, result.status, result.body, result.headers);
       return;
     }
+  }
+
+  if (req.method === 'GET' && pathname === '/api/operator/sessions') {
+    const actor = await requireOperatorMutation(req, res, 'session.manage');
+    if (!actor) return;
+    try {
+      const result = await handleOperatorSessionsList({ searchParams });
+      sendJSON(res, result.status, result.body, result.headers);
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Failed to list operator sessions' });
+    }
+    return;
+  }
+
+  const operatorSessionRevokeMatch = pathname.match(/^\/api\/operator\/sessions\/([^/]+)\/revoke$/);
+  if (req.method === 'POST' && operatorSessionRevokeMatch) {
+    const actor = await requireOperatorMutation(req, res, 'session.manage');
+    if (!actor) return;
+    try {
+      const body = await parseBody(req);
+      const result = await handleOperatorSessionAdministrativeRevoke({
+        sessionId: decodeURIComponent(operatorSessionRevokeMatch[1]),
+        body,
+        actor,
+      });
+      sendJSON(res, result.status, result.body, result.headers);
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Session revocation failed' });
+    }
+    return;
   }
 
   if (req.method === 'GET' && pathname === '/api/health') {

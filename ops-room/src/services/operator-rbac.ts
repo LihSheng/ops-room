@@ -14,6 +14,7 @@ export const OPERATOR_PERMISSION_NAMES = Object.freeze([
   'agent.lifecycle',
   'agent.configure',
   'policy.manage',
+  'session.manage',
   'repository.manage',
   'release.approve',
 ] as const);
@@ -43,6 +44,7 @@ const ROLE_PERMISSIONS: Readonly<Record<OperatorRole, readonly OperatorPermissio
     'agent.lifecycle',
     'agent.configure',
     'policy.manage',
+    'session.manage',
     'repository.manage',
   ]),
   deployer: Object.freeze([
