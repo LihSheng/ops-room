@@ -197,6 +197,7 @@ export async function handleRevokeOperatorSession({
   const token = extractOperatorSessionToken(cookieHeader);
   if (!token) return unauthorized(clearHeader);
 
+  let revokedSuccessfully = false;
   try {
     const session = await readSession({ dir: sessionDir, token, now });
     if (!session) return unauthorized(clearHeader);
@@ -223,6 +224,7 @@ export async function handleRevokeOperatorSession({
 
     const revoked = await revokeSession({ dir: sessionDir, token, now });
     if (!revoked) return unauthorized(clearHeader);
+    revokedSuccessfully = true;
     await appendAudit({
       dir: auditDir,
       operation: 'operator.session.revoke',
@@ -239,6 +241,6 @@ export async function handleRevokeOperatorSession({
       body: { ok: true, session_id: session.session_id },
     };
   } catch {
-    return unavailable(clearHeader);
+    return unavailable(revokedSuccessfully ? clearHeader : undefined);
   }
 }
