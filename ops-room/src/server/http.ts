@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import { POLL_AGENTS } from '../lib/config.js';
 import { pollAgentIssues, startIssuePoller } from '../lib/issue-poller.js';
 import {
-  REPO, PORT, HOST, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR, WORKFLOW_RUNS_DIR, AUDIT_DIR, IDEMPOTENCY_DIR,
+  REPO, PORT, HOST, WEBHOOK_SECRET, WORKSPACE_BASE, REVIEW_TASKS_DIR, MISSIONS_DIR, WORKFLOW_RUNS_DIR, AUDIT_DIR, IDEMPOTENCY_DIR,
   LIFECYCLE_DIR, OPENAB_SERVER_VERSION, SHUTDOWN_TIMEOUT_MS, ISSUE_POLLING_ENABLED,
   HUMAN_AUTH_ENABLED,
   AGENT_LIFECYCLE_ENABLED, AGENT_LIFECYCLE_ALLOWED_AGENTS, AGENT_LIFECYCLE_DRAIN_TIMEOUT_MS,
@@ -31,6 +31,8 @@ import { runFixChildWorker } from '../workflows/fix-worker.js';
 import { createFixRuntimeDeps } from '../workflows/fix-runtime.js';
 import { handleHealth } from '../routes/health.js';
 import { handleTaskDetail, handleTasksList } from '../routes/tasks.js';
+import { handleMissionDetail, handleMissionsList } from '../routes/missions.js';
+import { handleCreateMission } from '../routes/operator-missions.js';
 import { handleLogsList } from '../routes/logs.js';
 import { configurePrReviewController, handleWebhook, isPrReviewWebhook } from '../routes/webhook-routes.js';
 import { handleAgentsList } from '../routes/agents.js';
@@ -453,6 +455,48 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/api/missions') {
+    try {
+      const result = await handleMissionsList(searchParams, { missionsDir: MISSIONS_DIR });
+      sendJSON(res, result.status, result.body);
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Failed to list missions' });
+    }
+    return;
+  }
+
+  const missionDetailMatch = pathname.match(/^\/api\/missions\/([A-Za-z0-9._:-]+)$/);
+  if (req.method === 'GET' && missionDetailMatch) {
+    try {
+      const result = await handleMissionDetail(decodeURIComponent(missionDetailMatch[1]), {
+        missionsDir: MISSIONS_DIR,
+      });
+      sendJSON(res, result.status, result.body);
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Failed to read mission' });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/operator/missions') {
+    const actor = await requireOperatorMutation(req, res, 'mission.create');
+    if (!actor) return;
+    try {
+      const body = await parseBody(req);
+      const result = await handleCreateMission({
+        body,
+        actor,
+        missionsDir: MISSIONS_DIR,
+        auditDir: AUDIT_DIR,
+        idempotencyDir: IDEMPOTENCY_DIR,
+      });
+      sendJSON(res, result.status, result.body);
+    } catch (error) {
+      sendJSON(res, 500, { error: error?.message || 'Mission creation failed' });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && pathname === '/api/workflows') {
     try {
       const result = await handleWorkflowRunsList(searchParams, { workflowRunsDir: WORKFLOW_RUNS_DIR });
@@ -801,6 +845,9 @@ server.listen(PORT, HOST, () => {
   console.log(`  GET  /health     - Health check`);
   console.log(`  GET  /api/health  - Detailed health`);
   console.log(`  GET  /api/tasks   - List tasks`);
+  console.log(`  GET  /api/missions - List durable missions`);
+  console.log(`  GET  /api/missions/:missionId - Mission detail`);
+  console.log(`  POST /api/operator/missions - Create planned mission`);
   console.log(`  GET  /api/workflows - List durable workflows`);
   console.log(`  GET  /api/workflows/:workflowId - Workflow detail`);
   console.log(`  GET  /api/logs    - List bounded redacted logs`);
