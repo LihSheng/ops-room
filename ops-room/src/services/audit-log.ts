@@ -38,6 +38,7 @@ export async function appendAuditEvent({
       actor_id: boundedText(actor?.actor_id, 100),
       actor_display_name: boundedText(actor?.actor_display_name, 120),
       auth_method: boundedText(actor?.auth_method, 60),
+      session_id: actor?.session_id ? boundedText(actor.session_id, 100) : null,
     },
     target: {
       type: boundedText(target?.type, 80),
@@ -75,6 +76,7 @@ export async function listAuditEvents({
   dir,
   limit = 50,
   actorId,
+  sessionId,
   operation,
   targetId,
   outcome,
@@ -94,6 +96,7 @@ export async function listAuditEvents({
     try {
       const event = JSON.parse(await readFile(join(dir, name), 'utf-8'));
       if (actorId && event.actor?.actor_id !== actorId) continue;
+      if (sessionId && event.actor?.session_id !== sessionId) continue;
       if (operation && event.operation !== operation) continue;
       if (targetId && event.target?.id !== targetId) continue;
       if (outcome && event.outcome !== outcome) continue;
