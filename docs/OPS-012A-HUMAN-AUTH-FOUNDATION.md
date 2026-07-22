@@ -1,6 +1,6 @@
 # OPS-012A — Human Authentication Foundation
 
-Status: **Session route and authorization slice**
+Status: **Session audit evidence slice**
 
 Issue: #54
 
@@ -96,6 +96,29 @@ Current permission mappings are:
 
 `OPS_ROOM_OPERATOR_API_ENABLED=false` continues to hide all operator mutation and audit endpoints, including from valid sessions.
 
+## Durable authentication audit evidence
+
+Session and authorization activity is recorded through the existing append-only audit store.
+
+The current event model includes:
+
+| Event | Outcome |
+|---|---|
+| `operator.session.create` | A bootstrap credential created a browser session |
+| `operator.session.revoke` | The authenticated session logged out and was durably revoked |
+| `operator.authorization.denied` | A valid session lacked a permission or valid CSRF evidence |
+
+Session-authenticated audit actors include:
+
+- human operator ID;
+- display name;
+- authentication method;
+- bounded session ID.
+
+Audit records never contain the raw session token, token hash, CSRF token, bearer credential, cookie value, environment values, or storage path.
+
+A newly created session is not disclosed to the browser unless its creation audit event is written successfully. If audit persistence fails, the undisclosed session is revoked. Permission and CSRF denials also fail closed with a bounded unavailable response if their required audit evidence cannot be persisted.
+
 ## Configuration
 
 ```text
@@ -121,6 +144,7 @@ This implementation does not:
 - accept the dashboard token as a human credential;
 - accept the webhook secret as a human credential;
 - store raw session tokens;
+- persist session or CSRF credentials in audit events;
 - permit cookie mutations without CSRF evidence;
 - grant unknown roles or permissions;
 - enable operator APIs automatically;
@@ -131,11 +155,10 @@ This implementation does not:
 
 ## Remaining OPS-012A order
 
-1. Add actor-attributed session creation, revocation, and authorization audit events.
-2. Add administrative session listing and cross-session revocation.
-3. Add emergency read-only mode and step-up confirmation for sensitive actions.
-4. Add the minimal dashboard login/logout experience.
-5. Run the production authentication and credential-separation drill.
+1. Add administrative session listing and cross-session revocation.
+2. Add emergency read-only mode and step-up confirmation for sensitive actions.
+3. Add the minimal dashboard login/logout experience.
+4. Run the production authentication and credential-separation drill.
 
 ## Tests
 
@@ -149,7 +172,8 @@ Coverage includes:
 - hidden endpoints while human authentication is disabled;
 - bootstrap rejection for non-operator credentials;
 - session read and revoke behavior;
-- CSRF rejection and success paths;
-- permission denial for insufficient session roles;
+- session creation and logout audit events;
+- session-attributed permission and CSRF denial events;
+- audit failure rollback and fail-closed responses;
 - continued legacy operator-bearer authorization;
 - hidden operator endpoints while the operator API is disabled.

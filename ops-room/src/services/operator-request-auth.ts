@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 import { verifyOperatorAuth } from '../routes/helpers.js';
+import { appendAuditEvent } from './audit-log.js';
 import { hasOperatorPermission, type OperatorPermission } from './operator-rbac.js';
 import { resolveOperatorIdentity } from './operator-identity.js';
 import {
@@ -8,6 +9,7 @@ import {
   readOperatorSession,
 } from './operator-session-store.js';
 import {
+  AUDIT_DIR,
   HUMAN_AUTH_ENABLED,
   OPERATOR_API_ENABLED,
   OPERATOR_SESSION_DIR,
@@ -26,6 +28,21 @@ function normalizeSessionToken(value: unknown): string {
   const token = String(value || '').trim();
   if (!SESSION_TOKEN_PATTERN.test(token)) throw new Error('operator_session_token_invalid');
   return token;
+}
+
+function requestPath(req: any): string {
+  try {
+    return new URL(req?.url || '/', 'http://localhost').pathname;
+  } catch {
+    return '/';
+  }
+}
+
+function actorFromSession(session: any) {
+  return Object.freeze({
+    ...session.actor,
+    session_id: session.session_id,
+  });
 }
 
 export function deriveOperatorCsrfToken(sessionToken: unknown): string {
@@ -67,6 +84,54 @@ export type OperatorAuthorizationResult =
     error_code: string;
   };
 
+async function auditedSessionDenial({
+  req,
+  permission,
+  session,
+  errorCode,
+  auditDir,
+  appendAudit,
+}: {
+  req: any;
+  permission: OperatorPermission;
+  session: any;
+  errorCode: 'operator_permission_denied' | 'operator_csrf_invalid';
+  auditDir: string;
+  appendAudit: typeof appendAuditEvent;
+}): Promise<OperatorAuthorizationResult> {
+  try {
+    await appendAudit({
+      dir: auditDir,
+      operation: 'operator.authorization.denied',
+      actor: actorFromSession(session),
+      target: { type: 'operator_permission', id: permission },
+      reason: errorCode,
+      previousState: 'authenticated',
+      resultingState: 'denied',
+      outcome: 'rejected',
+      errorCode,
+      metadata: {
+        method: String(req?.method || '').toUpperCase().slice(0, 16),
+        path: requestPath(req).slice(0, 300),
+      },
+    });
+  } catch {
+    return {
+      ok: false,
+      status: 503,
+      error: 'Operator audit unavailable',
+      error_code: 'operator_audit_unavailable',
+    };
+  }
+
+  return {
+    ok: false,
+    status: 403,
+    error: 'Forbidden',
+    error_code: errorCode,
+  };
+}
+
 export async function authorizeOperatorRequest({
   req,
   permission,
@@ -74,9 +139,11 @@ export async function authorizeOperatorRequest({
   operatorApiEnabled = OPERATOR_API_ENABLED,
   humanAuthEnabled = HUMAN_AUTH_ENABLED,
   sessionDir = OPERATOR_SESSION_DIR,
+  auditDir = AUDIT_DIR,
   verifyOperatorBearer = verifyOperatorAuth,
   resolveBearerActor = resolveOperatorIdentity,
   readSession = readOperatorSession,
+  appendAudit = appendAuditEvent,
   now,
 }: {
   req: any;
@@ -85,9 +152,11 @@ export async function authorizeOperatorRequest({
   operatorApiEnabled?: boolean;
   humanAuthEnabled?: boolean;
   sessionDir?: string;
+  auditDir?: string;
   verifyOperatorBearer?: (authorization: unknown) => boolean;
   resolveBearerActor?: () => Readonly<Record<string, any>>;
   readSession?: typeof readOperatorSession;
+  appendAudit?: typeof appendAuditEvent;
   now?: () => string | Date;
 }): Promise<OperatorAuthorizationResult> {
   if (!operatorApiEnabled) {
@@ -137,22 +206,33 @@ export async function authorizeOperatorRequest({
   }
 
   if (!hasOperatorPermission(session.roles, permission)) {
-    return { ok: false, status: 403, error: 'Forbidden', error_code: 'operator_permission_denied' };
+    return auditedSessionDenial({
+      req,
+      permission,
+      session,
+      errorCode: 'operator_permission_denied',
+      auditDir,
+      appendAudit,
+    });
   }
 
   if (requireCsrf && !verifyOperatorCsrfToken({
     sessionToken: token,
     csrfToken: req?.headers?.[OPERATOR_CSRF_HEADER_NAME],
   })) {
-    return { ok: false, status: 403, error: 'Forbidden', error_code: 'operator_csrf_invalid' };
+    return auditedSessionDenial({
+      req,
+      permission,
+      session,
+      errorCode: 'operator_csrf_invalid',
+      auditDir,
+      appendAudit,
+    });
   }
 
   return {
     ok: true,
-    actor: Object.freeze({
-      ...session.actor,
-      session_id: session.session_id,
-    }),
+    actor: actorFromSession(session),
     auth_method: 'operator_session',
     session,
   };

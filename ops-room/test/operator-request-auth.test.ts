@@ -9,6 +9,7 @@ import {
   deriveOperatorCsrfToken,
   OPERATOR_CSRF_HEADER_NAME,
 } from '../src/services/operator-request-auth.js';
+import { listAuditEvents } from '../src/services/audit-log.js';
 import { createOperatorSession } from '../src/services/operator-session-store.js';
 
 const ACTOR = Object.freeze({
@@ -20,16 +21,18 @@ const ACTOR = Object.freeze({
 
 async function sessionFixture(roles: string[]) {
   const root = await mkdtemp(join(tmpdir(), 'ops-room-request-auth-'));
+  const sessionDir = join(root, 'sessions');
+  const auditDir = join(root, 'audit');
   const token = roles.includes('viewer') ? 'v'.repeat(43) : 'o'.repeat(43);
   const created = await createOperatorSession({
-    dir: root,
+    dir: sessionDir,
     actor: ACTOR,
     roles,
     ttlSeconds: 3600,
     generateToken: () => token,
     now: () => '2026-07-22T00:00:00.000Z',
   });
-  return { root, token, session: created.session };
+  return { root, sessionDir, auditDir, token, session: created.session };
 }
 
 test('legacy operator bearer remains authorized without session CSRF', async () => {
@@ -53,6 +56,7 @@ test('cookie session requires permission and a valid CSRF token for mutation', a
   const result = await authorizeOperatorRequest({
     req: {
       method: 'POST',
+      url: '/api/operator/tasks/task-1/retry',
       headers: {
         cookie: `ops_room_session=${fixture.token}`,
         [OPERATOR_CSRF_HEADER_NAME]: deriveOperatorCsrfToken(fixture.token),
@@ -61,7 +65,8 @@ test('cookie session requires permission and a valid CSRF token for mutation', a
     permission: 'task.manage',
     operatorApiEnabled: true,
     humanAuthEnabled: true,
-    sessionDir: fixture.root,
+    sessionDir: fixture.sessionDir,
+    auditDir: fixture.auditDir,
     verifyOperatorBearer: () => false,
     now: () => '2026-07-22T00:10:00.000Z',
   });
@@ -73,17 +78,19 @@ test('cookie session requires permission and a valid CSRF token for mutation', a
   assert.equal(result.actor.session_id, fixture.session.session_id);
 });
 
-test('cookie mutation fails closed when CSRF evidence is missing', async () => {
+test('cookie mutation fails closed and records session-attributed CSRF denial', async () => {
   const fixture = await sessionFixture(['operator']);
   const result = await authorizeOperatorRequest({
     req: {
       method: 'POST',
+      url: '/api/operator/tasks/task-1/retry',
       headers: { cookie: `ops_room_session=${fixture.token}` },
     },
     permission: 'task.manage',
     operatorApiEnabled: true,
     humanAuthEnabled: true,
-    sessionDir: fixture.root,
+    sessionDir: fixture.sessionDir,
+    auditDir: fixture.auditDir,
     verifyOperatorBearer: () => false,
     now: () => '2026-07-22T00:10:00.000Z',
   });
@@ -94,19 +101,35 @@ test('cookie mutation fails closed when CSRF evidence is missing', async () => {
     error: 'Forbidden',
     error_code: 'operator_csrf_invalid',
   });
+
+  const events = await listAuditEvents({
+    dir: fixture.auditDir,
+    operation: 'operator.authorization.denied',
+  });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].actor.actor_id, ACTOR.actor_id);
+  assert.equal(events[0].actor.session_id, fixture.session.session_id);
+  assert.equal(events[0].target.id, 'task.manage');
+  assert.equal(events[0].error_code, 'operator_csrf_invalid');
+  assert.deepEqual(events[0].metadata, {
+    method: 'POST',
+    path: '/api/operator/tasks/task-1/retry',
+  });
 });
 
-test('session role without the required permission is forbidden', async () => {
+test('session role without the required permission is forbidden and audited', async () => {
   const fixture = await sessionFixture(['viewer']);
   const result = await authorizeOperatorRequest({
     req: {
       method: 'GET',
+      url: '/api/audit-events',
       headers: { cookie: `ops_room_session=${fixture.token}` },
     },
     permission: 'policy.manage',
     operatorApiEnabled: true,
     humanAuthEnabled: true,
-    sessionDir: fixture.root,
+    sessionDir: fixture.sessionDir,
+    auditDir: fixture.auditDir,
     verifyOperatorBearer: () => false,
     now: () => '2026-07-22T00:10:00.000Z',
   });
@@ -115,6 +138,40 @@ test('session role without the required permission is forbidden', async () => {
   if (result.ok) return;
   assert.equal(result.status, 403);
   assert.equal(result.error_code, 'operator_permission_denied');
+
+  const events = await listAuditEvents({
+    dir: fixture.auditDir,
+    operation: 'operator.authorization.denied',
+  });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].actor.session_id, fixture.session.session_id);
+  assert.equal(events[0].target.id, 'policy.manage');
+  assert.equal(events[0].error_code, 'operator_permission_denied');
+});
+
+test('authorization denial returns bounded unavailable when audit cannot persist', async () => {
+  const fixture = await sessionFixture(['viewer']);
+  const result = await authorizeOperatorRequest({
+    req: {
+      method: 'GET',
+      url: '/api/audit-events',
+      headers: { cookie: `ops_room_session=${fixture.token}` },
+    },
+    permission: 'policy.manage',
+    operatorApiEnabled: true,
+    humanAuthEnabled: true,
+    sessionDir: fixture.sessionDir,
+    verifyOperatorBearer: () => false,
+    appendAudit: async () => { throw new Error('audit unavailable'); },
+    now: () => '2026-07-22T00:10:00.000Z',
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    status: 503,
+    error: 'Operator audit unavailable',
+    error_code: 'operator_audit_unavailable',
+  });
 });
 
 test('operator API disabled remains hidden for bearer and session requests', async () => {
