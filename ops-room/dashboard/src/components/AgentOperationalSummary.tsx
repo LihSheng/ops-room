@@ -132,7 +132,7 @@ export function AgentOperationalSummary({
         </Alert>
       )}
 
-      <Grid gutter="md">
+      <Grid>
         <Grid.Col span={{ base: 12, sm: 6 }}>
           <Text size="xs" fw={700} c="dimmed">Current work</Text>
           <Text size="sm" fw={600} mt={4}>{task?.title || 'No current task'}</Text>
