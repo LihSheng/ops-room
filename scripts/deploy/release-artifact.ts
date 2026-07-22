@@ -187,7 +187,7 @@ async function writeChecksumOnce(checksumPath, checksum, archivePath) {
 }
 
 async function copyApprovedSkillManifests(sourceRoot, releaseRoot) {
-  const sourceSkills = join(sourceRoot, '..', 'config', 'skills');
+  const sourceSkills = join(sourceRoot, 'config', 'skills');
   const loaded = await loadSkillManifests(sourceSkills);
   const discovered = loaded.manifests.map((manifest) => `config/skills/${manifest.key}/${manifest.version}/manifest.json`).sort();
   if (JSON.stringify(discovered) !== JSON.stringify([...REQUIRED_SKILL_MANIFESTS].sort())) {
@@ -201,7 +201,7 @@ async function copyApprovedSkillManifests(sourceRoot, releaseRoot) {
 }
 
 async function copyApprovedMemorySpaceManifests(sourceRoot, releaseRoot) {
-  const sourceMemorySpaces = join(sourceRoot, '..', 'config', 'memory-spaces');
+  const sourceMemorySpaces = join(sourceRoot, 'config', 'memory-spaces');
   const loaded = await loadMemorySpaceManifests(sourceMemorySpaces);
   const discovered = loaded.manifests.map((manifest) => `config/memory-spaces/${manifest.key}/${manifest.version}/manifest.json`).sort();
   if (JSON.stringify(discovered) !== JSON.stringify([...REQUIRED_MEMORY_SPACE_MANIFESTS].sort())) {
@@ -229,7 +229,7 @@ export async function buildReleaseArtifact({ sourceRoot, outputDir, commitSha })
     await cp(join(root, 'src'), join(releaseOpsRoom, 'src'), { recursive: true });
     await cp(join(root, 'dist', 'dashboard'), join(releaseOpsRoom, 'dist', 'dashboard'), { recursive: true });
     await cp(join(root, 'package.json'), join(releaseOpsRoom, 'package.json'));
-    await cp(join(root, '..', 'config', 'agent-profiles'), join(releaseRoot, 'config', 'agent-profiles'), { recursive: true });
+    await cp(join(root, 'config', 'agent-profiles'), join(releaseRoot, 'config', 'agent-profiles'), { recursive: true });
     await copyApprovedSkillManifests(root, releaseRoot);
     await copyApprovedMemorySpaceManifests(root, releaseRoot);
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf-8'));
