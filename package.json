@@ -1,0 +1,50 @@
+{
+  "name": "@openab/ops-room",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/server/webhook.js",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "bootstrap": "npm run build:server && node scripts/bootstrap.js",
+    "start": "npm run build:server && node --env-file=.env src/server/webhook.js",
+    "server": "npm run build:server && node --env-file=.env src/server/webhook.js",
+    "poll": "npm run build:server && node --env-file=.env src/server/poller.js",
+    "claim": "npm run build:server && node --env-file=.env src/server/claim.js",
+    "dev": "tsx watch --env-file=.env src/server/webhook.ts",
+    "dev:dashboard": "vite --config dashboard/vite.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p dashboard/tsconfig.json --noEmit",
+    "build": "npm run build:server && npm run build:dashboard",
+    "build:agent-script": "tsc -p tsconfig.agent-scripts.json",
+    "build:server": "tsc -p tsconfig.json && npm run build:agent-script",
+    "build:dashboard": "tsc -p dashboard/tsconfig.json && vite build --config dashboard/vite.config.ts",
+    "preview:dashboard": "vite preview --config dashboard/vite.config.ts",
+    "prepare": "npm run build",
+    "test": "npm run build:server && node scripts/run-tests.js",
+    "smoke:instances": "npm run build:server && node scripts/smoke-openab-instances.js",
+    "deployment:preflight": "npm run build:server && node scripts/deploy/preflight-host.js",
+    "release:build": "npm run build && node scripts/deploy/build-release.js",
+    "release:verify": "npm run build:server && node scripts/deploy/verify-release.js"
+  },
+  "dependencies": {
+    "@mantine/core": "^9.4.1",
+    "@mantine/hooks": "^9.4.1",
+    "@mantine/notifications": "^9.4.1",
+    "@tabler/icons-react": "^3.35.0",
+    "@tanstack/react-query": "^5.83.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  }
+}

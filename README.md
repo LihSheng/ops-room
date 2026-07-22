@@ -1,129 +1,108 @@
 # Ops Room
 
-Ops Room is a secure control surface for observing and coordinating OpenAB-backed AI agents. It brings agent status, tasks, workflows, skills, governed memory spaces, and operational health into one dashboard while keeping secrets and runtime data outside Git.
+Control surface for OpenAB agents: webhook receiver, task poller, claim CLI, and
+GitHub automation with an automated PR review–repair loop.
 
-> **Current scope:** Ops Room is intentionally read-only by default. It helps operators understand the agent fleet without exposing unsafe restart, execution, secret, configuration, or Obsidian-write controls.
-
-## What It Does
-
-- Shows the current health and runtime state of each agent.
-- Displays agent profiles, missions, policies, and exact skill versions.
-- Tracks tasks, workflows, activity, and operational logs.
-- Reports skill requirements and compatibility without exposing credentials.
-- Validates curated memory-space keys, publication boundaries, ownership, and future write-review policy without browsing the Obsidian vault.
-- Supports GitHub-driven agent workflows while keeping the runtime provider-independent.
-
-## Built with Codex and GPT-5.6
-
-Ops Room was developed through a human-controlled engineering workflow using **Codex and GPT-5.6**.
-
-- **Codex** helped implement the Node.js control plane, React dashboard, APIs, validation, tests, release tooling, and documentation.
-- **GPT-5.6** helped plan architecture, break milestones into deliverables, evaluate trade-offs, diagnose CI and deployment failures, and review security boundaries.
-- Every change remained subject to pull-request review, CI, and explicit operator approval before deployment.
-
-Codex and GPT-5.6 assisted the development process; Ops Room itself can support different runtime model providers.
+---
 
 ## Quick Start
 
-### Requirements
-
-- Node.js **20.19 or newer**
-- npm
-- Git and GitHub CLI
-- Docker/OpenAB agent services when runtime inspection is required
-
-### 1. Clone the repository
-
 ```bash
 git clone https://github.com/LihSheng/ops-room.git openab-multi-agent
-cd openab-multi-agent
-```
-
-### 2. Configure the environment
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and replace the example paths with absolute paths for your checkout. At minimum, configure `OPENAB_WEBHOOK_SECRET` and the required GitHub App values.
-
-Never commit `.env`, private keys, tokens, or runtime data.
-
-### 3. Create local agent configurations
-
-```bash
-cp config/agents/gemini.example.toml config/agents/gemini.toml
-cp config/agents/opencode-1.example.toml config/agents/opencode-1.toml
-cp config/agents/opencode-2.example.toml config/agents/opencode-2.toml
-cp config/agents/opencode-professor.example.toml config/agents/opencode-professor.toml
-```
-
-Update only the local `.toml` files with your runtime configuration.
-
-### 4. Install and start Ops Room
-
-```bash
-cd ops-room
+cd openab-multi-agent/ops-room
 npm install
-npm run bootstrap
-npm start
+cp ../.env.example ./.env   # edit to match your setup
+sudo systemctl start openab-ops-room
 ```
 
-### 5. Open the dashboard
+> **Full setup guide**: [`docs/SETUP.md`](docs/SETUP.md) — covers GitHub App creation,
+> environment variables, Docker containers, systemd service, and GitHub Actions workflows.
 
-Visit:
+---
 
-```text
-http://127.0.0.1:7381/
+## What It Does
+
+1. **Routes `/openab` commands** from GitHub issues to coding agents (Berlin, Tokyo)
+2. **Auto-reviews PRs** created by coding agents using AI via the OpenCode API
+3. **Auto-fixes issues** found in reviews — generates fix code, pushes to the PR branch
+4. **Loops** review → fix → re-review until approval or max iterations
+5. **Serves a dashboard** at port 7381 showing agent status and task logs
+
+## Source Layout
+
+```
+ops-room/
+├── src/
+│   ├── server/           → webhook.ts (entry), http.ts (server + pollers)
+│   ├── workflows/        → github-code.ts, pr-review.ts, auto-fix.ts
+│   ├── services/         → github.ts, runtime-paths.ts, logs.ts
+│   └── lib/              → config.ts, task-routing.ts, github-ops.ts
+├── docs/
+│   └── SETUP.md          → Full deployment guide
+└── package.json
 ```
 
-From the dashboard, use:
+## Architecture
 
-- **Overview** for fleet health and operational status.
-- **Agents** for runtime state, profiles, exact skills, and resolved memory assignments.
-- **Tasks, Workflows, and Activity** for current and historical work.
-- **Skills** for immutable skill versions and compatibility results.
-- **Memory** for validated spaces, curated relative publication paths, readers, writers, ownership, and review policy.
-- **Settings** for safe runtime and deployment information.
+```
+Issue → /openab berlin --code "task"
+   │
+   ▼
+Ops Room detects label → runs coding agent → PR created
+   │
+   ▼
+PR Review Poller (60s) → Professor reviews via AI
+   │
+   ├── APPROVE    → openab/review-approved ✅
+   ├── COMMENT    → acknowledgment, loop ends
+   └── REQUEST_CHANGES
+        → Auto-fix: AI generates fix, Berlin pushes to PR branch
+        → Re-review (recursive, max 3 iterations)
+        → Exhausted → openab/needs-human ⚠️
+```
 
-## Local Development
+## API Endpoints
 
-Run the API and dashboard separately:
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /webhook` | Receive issue commands + metadata |
+| `GET /` | Dashboard UI |
+| `GET /health` | Health check |
+| `GET /api/health` | Detailed health |
+| `GET /api/tasks` | List tasks |
+| `GET /api/logs` | Task logs |
+| `GET /api/agents` | Agent list |
+| `GET /api/openab/instances` | OpenAB instance dashboard |
+
+## Labels
+
+| Label | Meaning |
+|-------|---------|
+| `openab/<agent>` | Route issue to agent |
+| `openab/pr-created` | Agent created a PR |
+| `openab/review-loop` | Review in progress |
+| `openab/review-approved` | PR passed review |
+| `openab/needs-human` | Escalated (loop exhausted) |
+
+Full reference: [`docs/SETUP.md#7-labels-reference`](docs/SETUP.md#7-labels-reference)
+
+## Running
 
 ```bash
-# Terminal 1
-cd ops-room
-npm run dev
+# Start
+sudo systemctl start openab-ops-room
 
-# Terminal 2
-cd ops-room
-npm run dev:dashboard
+# Logs
+sudo journalctl -u openab-ops-room -f
+
+# Health check
+curl http://localhost:7381/health
+
+# Dashboard
+open http://localhost:7381/
 ```
 
-Before opening a pull request:
+## Related
 
-```bash
-npm run typecheck
-npm test
-npm run build
-npm run smoke:instances
-```
-
-## Documentation
-
-- [Detailed setup and usage guide](docs/USAGE.md)
-- [Curated memory governance and publication runbook](docs/MEMORY_GOVERNANCE.md)
-- [Canonical architecture and security boundaries](ARCHITECTURE.md)
-- [Environment configuration reference](.env.example)
-- [Agent profile definitions](config/agent-profiles/)
-- [Versioned skill manifests](config/skills/)
-- [Versioned memory-space manifests](config/memory-spaces/)
-- [Deployment tooling](ops-room/deploy/)
-
-## Repository Safety
-
-Safe templates, source code, profile policy, skill manifests, memory-space manifests, and documentation are committed to Git. Real credentials, private keys, Obsidian note contents, generated agent homes, workspaces, logs, tasks, and mutable runtime state must remain local.
-
-## License
-
-MIT
+- [`docs/SETUP.md`](docs/SETUP.md) — Deployment guide from scratch
+- [github.com/LihSheng/ops-room](https://github.com/LihSheng/ops-room)
