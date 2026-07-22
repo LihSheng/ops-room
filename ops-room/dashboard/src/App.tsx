@@ -66,6 +66,7 @@ import { useAgentProfiles } from './hooks/use-agent-profiles';
 import { joinProfileRuntime } from './lib/join-profile-runtime';
 import { ActivityPage, SettingsPage, WorkflowsPage } from './operational-pages';
 import { AgentDetailPage } from './pages/AgentDetailPage';
+import { AgentFleetPage } from './pages/AgentFleetPage';
 import { SkillsPage } from './pages/SkillsPage';
 import { MemorySpacesPage } from './pages/MemorySpacesPage';
 import type { AgentInstance, OpsTask } from './types';
@@ -489,42 +490,6 @@ function TaskTable({ tasks, compact = false }: { tasks: OpsTask[]; compact?: boo
   );
 }
 
-function AgentsPage({ openAgent, openLogs }: { openAgent: (agent: AgentInstance) => void; openLogs: (agent: AgentInstance) => void }) {
-  const profilesQuery = useAgentProfiles();
-  const fleetInstancesQuery = useQuery({
-    queryKey: ['openab-instances'],
-    queryFn: () => opsApi.instances(),
-    refetchInterval: 10_000,
-  });
-  const tasksQuery = useQuery({
-    queryKey: ['ops-tasks'],
-    queryFn: () => opsApi.tasks(),
-    refetchInterval: 10_000,
-  });
-  return (
-    <Stack gap="lg">
-      <Box>
-        <Title order={1} className="page-title">Agents</Title>
-        <Text c="dimmed" mt={6}>The runtime fleet and each agent's operational responsibility, joined with Git-backed profile policy.</Text>
-      </Box>
-      <Paper withBorder p="lg">
-        {fleetInstancesQuery.isLoading && profilesQuery.isLoading ? <Skeleton height={360} /> : (
-          <AgentTable
-            agents={fleetInstancesQuery.data?.instances || []}
-            profiles={profilesQuery.data?.profiles || []}
-            tasks={tasksQuery.data?.tasks || []}
-            openAgent={openAgent}
-            openLogs={openLogs}
-            profilesLoading={profilesQuery.isLoading}
-            profilesError={profilesQuery.isError}
-            runtimeError={fleetInstancesQuery.isError}
-          />
-        )}
-      </Paper>
-    </Stack>
-  );
-}
-
 function TasksPage() {
   const query = useDashboardData();
   const [filter, setFilter] = useState('all');
@@ -629,7 +594,7 @@ function OpsRoomApp() {
                 </Tooltip>
               </Group>
             ) : <Badge variant="light" color="gray">Dashboard token</Badge>}
-            <Tooltip label="Refresh all data"><ActionIcon variant="default" size="lg" onClick={() => { queryClient.invalidateQueries({ queryKey: ['ops-dashboard'] }); queryClient.invalidateQueries({ queryKey: ['agent-profiles'] }); queryClient.invalidateQueries({ queryKey: ['agent-profile'] }); queryClient.invalidateQueries({ queryKey: ['skills-catalog'] }); queryClient.invalidateQueries({ queryKey: ['memory-spaces'] }); queryClient.invalidateQueries({ queryKey: ['openab-instances'] }); }}><IconRefresh size={17} /></ActionIcon></Tooltip>
+            <Tooltip label="Refresh all data"><ActionIcon variant="default" size="lg" onClick={() => { queryClient.invalidateQueries({ queryKey: ['ops-dashboard'] }); queryClient.invalidateQueries({ queryKey: ['agent-fleet'] }); queryClient.invalidateQueries({ queryKey: ['agent-profiles'] }); queryClient.invalidateQueries({ queryKey: ['agent-profile'] }); queryClient.invalidateQueries({ queryKey: ['skills-catalog'] }); queryClient.invalidateQueries({ queryKey: ['memory-spaces'] }); queryClient.invalidateQueries({ queryKey: ['openab-instances'] }); }}><IconRefresh size={17} /></ActionIcon></Tooltip>
           </Group>
         </Group>
       </AppShell.Header>
@@ -639,7 +604,7 @@ function OpsRoomApp() {
       </AppShell.Navbar>
       <AppShell.Main><Box maw={1480} mx="auto" className="main-content"><Text size="xs" c="dimmed" mb="md">Ops Room / {pageName}</Text><Routes>
         <Route path="/" element={<DashboardPage openAgent={openAgent} openLogs={openLogs} />} />
-        <Route path="/agents" element={<AgentsPage openAgent={openAgent} openLogs={openLogs} />} />
+        <Route path="/agents" element={<AgentFleetPage />} />
         <Route path="/agents/:id" element={<AgentDetailPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/workflows" element={<WorkflowsPage />} />
