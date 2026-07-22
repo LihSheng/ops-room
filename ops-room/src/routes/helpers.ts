@@ -29,7 +29,7 @@ export async function appendToMemory(entry) {
   } catch { }
 }
 
-function requestPath(req) {
+export function requestPath(req) {
   try {
     return new URL(req?.url || '/', 'http://localhost').pathname;
   } catch {
@@ -37,22 +37,17 @@ function requestPath(req) {
   }
 }
 
-function requiresDashboardAuth(req) {
+export function requiresDashboardReadAuth(req) {
   if (req?.method !== 'GET') return false;
   const pathname = requestPath(req);
   return DASHBOARD_READ_ROUTES.some((pattern) => pattern.test(pathname));
 }
 
 export function verifyDashboardReadRequest(req) {
-  return requiresDashboardAuth(req) && verifyDashboardAuth(req?.headers?.authorization);
+  return requiresDashboardReadAuth(req) && verifyDashboardAuth(req?.headers?.authorization);
 }
 
 export function sendJSON(res, status, data, additionalHeaders = {}) {
-  if (requiresDashboardAuth(res.req) && !verifyDashboardAuth(res.req?.headers?.authorization)) {
-    status = 401;
-    data = { error: 'Unauthorized' };
-  }
-
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',

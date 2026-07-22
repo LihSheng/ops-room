@@ -5,6 +5,7 @@ process.env.OPENAB_WEBHOOK_SECRET = 'security-test-webhook';
 process.env.OPS_ROOM_DASHBOARD_TOKEN = 'security-test-dashboard';
 
 const { sendJSON, verifyDashboardAuth, verifyAuth } = await import('../src/routes/helpers.js');
+const { authorizeDashboardReadRequest } = await import('../src/services/dashboard-request-auth.js');
 const { redactSecrets } = await import('../src/services/security-redaction.js');
 
 function captureJsonResponse({ url, authorization = '' }, payload = { ok: true }) {
@@ -28,6 +29,17 @@ function captureJsonResponse({ url, authorization = '' }, payload = { ok: true }
 
   sendJSON(res, 200, payload);
   return { statusCode, headers, body: JSON.parse(body) };
+}
+
+async function authorizeDashboard(url, authorization = '') {
+  return authorizeDashboardReadRequest({
+    req: {
+      method: 'GET',
+      url,
+      headers: authorization ? { authorization } : {},
+    },
+    humanAuthEnabled: false,
+  });
 }
 
 test('redacts common GitHub, AI, cloud, bearer, assignment, and private-key credentials', () => {
@@ -62,18 +74,25 @@ test('dashboard bearer comparison rejects missing and incorrect tokens', () => {
   assert.equal(verifyDashboardAuth('Bearer security-test-dashboard'), true);
 });
 
-test('operational API responses require dashboard authentication', () => {
-  const unauthorized = captureJsonResponse({ url: '/api/health' }, { paths: { tasks_dir: '/private/path' } });
-  assert.equal(unauthorized.statusCode, 401);
-  assert.deepEqual(unauthorized.body, { error: 'Unauthorized' });
+test('operational API requests require pre-route dashboard authorization', async () => {
+  const unauthorized = await authorizeDashboard('/api/health');
+  assert.equal(unauthorized.ok, false);
+  if (!unauthorized.ok) {
+    assert.equal(unauthorized.status, 401);
+    assert.equal(unauthorized.error_code, 'dashboard_auth_required');
+  }
 
-  const authorized = captureJsonResponse(
+  const authorized = await authorizeDashboard('/api/health', 'Bearer security-test-dashboard');
+  assert.equal(authorized.ok, true);
+  if (authorized.ok) assert.equal(authorized.auth_method, 'dashboard_token');
+
+  const response = captureJsonResponse(
     { url: '/api/health', authorization: 'Bearer security-test-dashboard' },
     { ready: true },
   );
-  assert.equal(authorized.statusCode, 200);
-  assert.deepEqual(authorized.body, { ready: true });
-  assert.equal(authorized.headers['Cache-Control'], 'no-store');
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body, { ready: true });
+  assert.equal(response.headers['Cache-Control'], 'no-store');
 });
 
 test('basic health check remains public', () => {
@@ -92,16 +111,17 @@ for (const route of [
   '/api/memory-spaces',
   '/api/memory-spaces/ops-room-project',
 ]) {
-  test(`${route} requires dashboard auth`, () => {
-    const noAuth = captureJsonResponse({ url: route }, { data: 'test' });
-    assert.equal(noAuth.statusCode, 401);
-    const wrong = captureJsonResponse({ url: route, authorization: 'Bearer wrong-token' }, { data: 'test' });
-    assert.equal(wrong.statusCode, 401);
-    const correct = captureJsonResponse(
-      { url: route, authorization: 'Bearer security-test-dashboard' },
-      { data: 'test-value' },
-    );
-    assert.equal(correct.statusCode, 200);
+  test(`${route} requires dashboard auth`, async () => {
+    const noAuth = await authorizeDashboard(route);
+    assert.equal(noAuth.ok, false);
+    if (!noAuth.ok) assert.equal(noAuth.status, 401);
+
+    const wrong = await authorizeDashboard(route, 'Bearer wrong-token');
+    assert.equal(wrong.ok, false);
+    if (!wrong.ok) assert.equal(wrong.status, 401);
+
+    const correct = await authorizeDashboard(route, 'Bearer security-test-dashboard');
+    assert.equal(correct.ok, true);
   });
 }
 
@@ -171,27 +191,27 @@ const PROTECTED_ROUTES = [
 ];
 
 for (const route of PROTECTED_ROUTES) {
-  test(`${route}: missing token returns 401`, () => {
-    const resp = captureJsonResponse({ url: route }, { data: 'test' });
-    assert.equal(resp.statusCode, 401, `${route} should return 401 without auth`);
-    assert.deepEqual(resp.body, { error: 'Unauthorized' });
+  test(`${route}: missing credentials are rejected`, async () => {
+    const result = await authorizeDashboard(route);
+    assert.equal(result.ok, false, `${route} should reject missing credentials`);
+    if (!result.ok) {
+      assert.equal(result.status, 401);
+      assert.equal(result.error, 'Unauthorized');
+    }
   });
 
-  test(`${route}: incorrect token returns 401`, () => {
-    const resp = captureJsonResponse(
-      { url: route, authorization: 'Bearer definitely-wrong-token' },
-      { data: 'test' },
-    );
-    assert.equal(resp.statusCode, 401, `${route} should return 401 with wrong token`);
-    assert.deepEqual(resp.body, { error: 'Unauthorized' });
+  test(`${route}: incorrect dashboard token is rejected`, async () => {
+    const result = await authorizeDashboard(route, 'Bearer definitely-wrong-token');
+    assert.equal(result.ok, false, `${route} should reject the wrong token`);
+    if (!result.ok) {
+      assert.equal(result.status, 401);
+      assert.equal(result.error, 'Unauthorized');
+    }
   });
 
-  test(`${route}: correct dashboard token returns normal response`, () => {
-    const resp = captureJsonResponse(
-      { url: route, authorization: 'Bearer security-test-dashboard' },
-      { data: 'test-value', count: 1 },
-    );
-    assert.equal(resp.statusCode, 200, `${route} should return 200 with correct token`);
-    assert.equal(resp.body.data, 'test-value');
+  test(`${route}: correct dashboard token authorizes the read`, async () => {
+    const result = await authorizeDashboard(route, 'Bearer security-test-dashboard');
+    assert.equal(result.ok, true, `${route} should accept the correct dashboard token`);
+    if (result.ok) assert.equal(result.auth_method, 'dashboard_token');
   });
 }
