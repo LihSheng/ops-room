@@ -2,7 +2,7 @@ import { readFile, writeFile, rm, mkdir, readdir, appendFile } from 'node:fs/pro
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  TASKS_DIR, REVIEW_TASKS_DIR, STATE_DIR, LOCK_DIR, WORKSPACE_BASE, LOG_DIR, PROMPT_DIR,
+  TASKS_DIR, REVIEW_TASKS_DIR, MISSIONS_DIR, STATE_DIR, LOCK_DIR, WORKSPACE_BASE, LOG_DIR, PROMPT_DIR,
   AUDIT_DIR, IDEMPOTENCY_DIR, LIFECYCLE_DIR,
 } from './runtime-paths.js';
 
@@ -104,6 +104,7 @@ export async function fileExists(path) {
 export async function initDirs() {
   await ensureDir(TASKS_DIR);
   await ensureDir(REVIEW_TASKS_DIR);
+  await ensureDir(MISSIONS_DIR);
   await ensureDir(WORKSPACE_BASE);
   await ensureDir(LOG_DIR);
   await ensureDir(STATE_DIR);
