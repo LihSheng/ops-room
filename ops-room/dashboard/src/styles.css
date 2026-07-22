@@ -49,6 +49,23 @@ body {
   box-shadow: 0 14px 38px rgba(28, 31, 42, 0.07);
 }
 
+.fleet-metric {
+  min-height: 126px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.fleet-card {
+  min-height: 390px;
+  background: rgba(255, 255, 255, 0.92);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.fleet-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--mantine-color-violet-2);
+  box-shadow: 0 16px 40px rgba(28, 31, 42, 0.08);
+}
+
 .attention-row {
   display: block;
   width: 100%;
@@ -83,5 +100,9 @@ body {
 @media (max-width: 48em) {
   .main-content {
     padding-bottom: 24px;
+  }
+
+  .fleet-card {
+    min-height: auto;
   }
 }

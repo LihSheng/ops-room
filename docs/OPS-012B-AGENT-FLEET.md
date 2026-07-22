@@ -16,7 +16,7 @@ This slice introduces the V2 read-only Agent Fleet contract without enabling lif
 
 ## Second implementation slice — Agent Detail operational summary
 
-The Agent Detail page now consumes the normalized fleet contract alongside the independently loaded profile and runtime authorities.
+The Agent Detail page consumes the normalized fleet contract alongside the independently loaded profile and runtime authorities.
 
 ### Visible evidence
 
@@ -31,6 +31,20 @@ The Agent Detail page now consumes the normalized fleet contract alongside the i
 
 Fleet-source failure remains isolated: profile policy and runtime observation continue to render independently.
 
+## Third implementation slice — Agent Fleet page presentation
+
+The authenticated `/agents` route now presents the normalized fleet contract as the primary V2 fleet workspace. The compact legacy table remains only on the command-center dashboard as a summary view.
+
+### Fleet workspace
+
+- summary metrics for registered, working, attention-required, and offline/unavailable agents;
+- search across agent identity, role, responsibility, task, and repository evidence;
+- bounded state filters for working, attention, and offline views;
+- responsive agent cards showing canonical state, current work, runtime health, repositories, workspace evidence, and last activity;
+- explicit degraded-source warning when profile, runtime, or task evidence is unavailable;
+- direct navigation to the existing Agent Detail page;
+- an explicit read-only marker and no browser mutation controls.
+
 ## Security boundaries
 
 - read-only APIs use the existing dashboard-read authorization boundary;
@@ -39,9 +53,8 @@ Fleet-source failure remains isolated: profile policy and runtime observation co
 - missing or conflicting evidence degrades to explicit bounded states rather than guessed operational authority;
 - no lifecycle, profile, workspace, or mission mutation authority is introduced.
 
-## Remaining OPS-012B work
+## Remaining boundaries
 
-- replace the legacy Agents table with the V2 Agent Fleet page presentation;
-- add broader operational tabs after the fleet page is stable;
-- integrate current mission evidence only after OPS-012C defines the mission model;
-- defer bounded agent controls to the later browser-control epic.
+- current mission evidence remains deferred until OPS-012C defines the mission model;
+- lifecycle, workspace, and profile controls remain deferred to the browser-control epic;
+- direct agent chat and capability-based routing remain outside OPS-012B.
