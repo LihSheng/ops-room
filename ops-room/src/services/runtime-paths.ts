@@ -26,6 +26,20 @@ export const OPERATOR_API_ENABLED = process.env.OPS_ROOM_OPERATOR_API_ENABLED ==
 export const OPERATOR_TOKEN = process.env.OPS_ROOM_OPERATOR_TOKEN || '';
 export const OPERATOR_ID = process.env.OPS_ROOM_OPERATOR_ID || '';
 export const OPERATOR_DISPLAY_NAME = process.env.OPS_ROOM_OPERATOR_DISPLAY_NAME || '';
+export const HUMAN_AUTH_ENABLED = process.env.OPS_ROOM_HUMAN_AUTH_ENABLED === 'true';
+export const OPERATOR_CONFIGURED_ROLES = Object.freeze(
+  String(process.env.OPS_ROOM_OPERATOR_ROLES || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+export const OPERATOR_SESSION_TTL_SECONDS = boundedInteger(
+  process.env.OPS_ROOM_OPERATOR_SESSION_TTL_SECONDS,
+  8 * 60 * 60,
+  300,
+  7 * 24 * 60 * 60,
+);
+export const OPERATOR_SESSION_COOKIE_SECURE = process.env.OPS_ROOM_OPERATOR_SESSION_COOKIE_SECURE !== 'false';
 export const AGENT_LIFECYCLE_ENABLED = process.env.OPS_ROOM_AGENT_LIFECYCLE_ENABLED === 'true';
 export const AGENT_LIFECYCLE_ALLOWED_AGENTS = Object.freeze(
   String(process.env.OPS_ROOM_AGENT_LIFECYCLE_ALLOWED_AGENTS || '')
@@ -55,6 +69,7 @@ export const STATE_DIR = process.env.OPS_ROOM_STATE_DIR || join(_opsRoomDataDir,
 export const AUDIT_DIR = process.env.OPS_ROOM_AUDIT_DIR || join(_opsRoomDataDir, 'audit');
 export const IDEMPOTENCY_DIR = process.env.OPS_ROOM_IDEMPOTENCY_DIR || join(_opsRoomDataDir, 'idempotency');
 export const LIFECYCLE_DIR = process.env.OPS_ROOM_LIFECYCLE_DIR || join(_opsRoomDataDir, 'lifecycle');
+export const OPERATOR_SESSION_DIR = process.env.OPS_ROOM_OPERATOR_SESSIONS_DIR || join(_opsRoomDataDir, 'operator-sessions');
 export const WORKSPACE_BASE = process.env.OPENAB_WORKSPACES_DIR || process.env.OPENAB_WORKSPACE_BASE || join(_dataDir, 'workspaces');
 export const REPOSITORY_CACHE_ROOT = process.env.OPS_ROOM_REPOSITORY_CACHE_ROOT || join(_dataDir, 'repositories');
 export const TASK_WORKSPACE_ROOT = process.env.OPS_ROOM_TASK_WORKSPACE_ROOT || WORKSPACE_BASE;
