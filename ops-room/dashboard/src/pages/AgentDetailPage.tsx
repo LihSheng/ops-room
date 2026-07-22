@@ -34,6 +34,8 @@ import { useParams } from 'react-router-dom';
 import { opsApi } from '../api';
 import type { ProfileMemoryAssignment, PublicAgentProfile } from '../api/agent-profiles';
 import type { CompatibilityStatus, RequirementStatus } from '../api/skills';
+import { AgentOperationalSummary } from '../components/AgentOperationalSummary';
+import { useAgentFleet } from '../hooks/use-agent-fleet';
 import { useAgentProfile } from '../hooks/use-agent-profile';
 import type { AgentInstance } from '../types';
 
@@ -191,18 +193,20 @@ function PolicyProfile({ profile }: { profile: PublicAgentProfile }) {
 export function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const profileQuery = useAgentProfile(id);
+  const fleetQuery = useAgentFleet();
   const instancesQuery = useQuery({ queryKey: ['openab-instances'], queryFn: () => opsApi.instances(), refetchInterval: 10_000 });
   const runtimeAgent: AgentInstance | null = (instancesQuery.data?.instances || []).find((instance) => instance.agent === id) || null;
+  const fleetAgent = fleetQuery.data?.fleet.find((agent) => agent.id === id) || null;
   const profile = profileQuery.data?.profile || null;
 
   if (profileQuery.isLoading) return <Stack gap="lg"><Skeleton height={48} radius="md" />{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} height={180} radius="lg" />)}</Stack>;
 
   if (profileQuery.isError) {
-    return <Stack gap="lg"><Box><Title order={1} className="page-title">{id || 'Agent data unavailable'}</Title><Text c="dimmed" mt={6}>Profile policy could not be loaded.</Text></Box><Alert color="red" icon={<IconAlertTriangle size={18} />} title="Profile API unavailable">Runtime information remains visible when available.</Alert>{runtimeAgent && <RuntimeSection agent={runtimeAgent} />}</Stack>;
+    return <Stack gap="lg"><Box><Title order={1} className="page-title">{id || 'Agent data unavailable'}</Title><Text c="dimmed" mt={6}>Profile policy could not be loaded.</Text></Box><AgentOperationalSummary fleet={fleetAgent} loading={fleetQuery.isLoading} error={fleetQuery.isError} /><Alert color="red" icon={<IconAlertTriangle size={18} />} title="Profile API unavailable">Runtime information remains visible when available.</Alert>{runtimeAgent && <RuntimeSection agent={runtimeAgent} />}</Stack>;
   }
 
   if (!profile) {
-    if (runtimeAgent) return <Stack gap="lg"><Box><Title order={1}>{id}</Title><Text c="dimmed">Runtime instance without matching profile.</Text></Box><Alert color="orange" title="Profile unavailable">No matching Git-backed policy profile was found.</Alert><RuntimeSection agent={runtimeAgent} /></Stack>;
+    if (runtimeAgent) return <Stack gap="lg"><Box><Title order={1}>{id}</Title><Text c="dimmed">Runtime instance without matching profile.</Text></Box><AgentOperationalSummary fleet={fleetAgent} loading={fleetQuery.isLoading} error={fleetQuery.isError} /><Alert color="orange" title="Profile unavailable">No matching Git-backed policy profile was found.</Alert><RuntimeSection agent={runtimeAgent} /></Stack>;
     if (instancesQuery.isLoading) return <Stack><Title order={1}>{id}</Title><Skeleton height={120} /></Stack>;
     if (instancesQuery.isError) return <Stack><Title order={1}>{id}</Title><Alert color="orange" title="Agent state unknown">The profile was not found and runtime inspection is unavailable.</Alert></Stack>;
     return <Center py={48}><Stack align="center" gap={8}><ThemeIcon size={48} radius="xl" variant="light" color="gray"><IconRobot size={24} /></ThemeIcon><Text fw={600}>Unknown agent</Text><Text size="sm" c="dimmed">No profile or runtime instance exists for “{id}”.</Text></Stack></Center>;
@@ -211,6 +215,7 @@ export function AgentDetailPage() {
   return (
     <Stack gap="lg">
       <Box><Group justify="space-between" align="flex-start"><Box><Title order={1} className="page-title">{profile.display_name}</Title><Text c="dimmed" mt={6}>{profile.mission}</Text></Box><Group gap="xs"><Badge color={profile.enabled ? 'teal' : 'red'} size="lg">{profile.enabled ? 'Enabled' : 'Disabled'}</Badge><Badge variant="light" color="violet" size="lg">Profile Policy</Badge></Group></Group></Box>
+      <AgentOperationalSummary fleet={fleetAgent} loading={fleetQuery.isLoading} error={fleetQuery.isError} />
       <Grid>
         <Grid.Col span={{ base: 12, lg: 7 }}><PolicyProfile profile={profile} /></Grid.Col>
         <Grid.Col span={{ base: 12, lg: 5 }}>
