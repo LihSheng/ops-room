@@ -1,0 +1,39 @@
+name: OPS-012A Dashboard Session Generator
+
+on:
+  push:
+    branches:
+      - feat/ops-012a-dashboard-session-auth
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: ${{ !contains(github.event.head_commit.message, '[generated]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: feat/ops-012a-dashboard-session-auth
+          fetch-depth: 0
+
+      - name: Apply dashboard session wiring
+        run: python3 scripts/ops-012a-dashboard-session-generator.py
+
+      - name: Remove one-shot generator
+        run: |
+          rm scripts/ops-012a-dashboard-session-generator.py
+          rm .github/workflows/ops-012a-dashboard-session-generator.yml
+
+      - name: Validate patch formatting
+        run: git diff --check
+
+      - name: Commit generated implementation
+        run: |
+          git config user.name "ops-room-generator"
+          git config user.email "ops-room-generator@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(dashboard): wire human session access [generated]"
+          git push origin HEAD:feat/ops-012a-dashboard-session-auth
