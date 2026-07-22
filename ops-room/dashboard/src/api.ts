@@ -1,7 +1,10 @@
 import type { HealthResponse, InstancesResponse, LogsResponse, TasksResponse } from './types';
 
 async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: { Accept: 'application/json' } });
+  const response = await fetch(url, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+  });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
   }
