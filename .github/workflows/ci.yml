@@ -150,23 +150,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Build dashboard
-        shell: bash
-        run: |
-          set +e
-          npm run build:dashboard > dashboard-build-output.txt 2>&1
-          build_status=$?
-          set -e
-          cat dashboard-build-output.txt
-          exit "$build_status"
-
-      - name: Upload dashboard build failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: dashboard-build-failure-${{ github.run_attempt }}
-          path: ops-room/dashboard-build-output.txt
-          if-no-files-found: error
-          retention-days: 3
+        run: npm run build:dashboard
 
       - name: Build and verify immutable artifact
         run: |
