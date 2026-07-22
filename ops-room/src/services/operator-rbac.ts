@@ -8,6 +8,7 @@ export const OPERATOR_ROLE_NAMES = Object.freeze([
 
 export const OPERATOR_PERMISSION_NAMES = Object.freeze([
   'dashboard.read',
+  'mission.create',
   'task.manage',
   'workflow.recover',
   'workflow.approve',
@@ -28,6 +29,7 @@ const ROLE_PERMISSIONS: Readonly<Record<OperatorRole, readonly OperatorPermissio
   ]),
   operator: Object.freeze([
     'dashboard.read',
+    'mission.create',
     'task.manage',
     'workflow.recover',
     'agent.lifecycle',
@@ -38,6 +40,7 @@ const ROLE_PERMISSIONS: Readonly<Record<OperatorRole, readonly OperatorPermissio
   ]),
   administrator: Object.freeze([
     'dashboard.read',
+    'mission.create',
     'task.manage',
     'workflow.recover',
     'workflow.approve',
