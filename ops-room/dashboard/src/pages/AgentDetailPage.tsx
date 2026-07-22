@@ -14,6 +14,7 @@ import {
   Title,
 } from '@mantine/core';
 import {
+  IconActivity,
   IconAlertTriangle,
   IconBan,
   IconBrain,
@@ -32,19 +33,25 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { opsApi } from '../api';
+import type { AgentFleetItem, AgentFleetState } from '../api/agent-fleet';
 import type { ProfileMemoryAssignment, PublicAgentProfile } from '../api/agent-profiles';
 import type { CompatibilityStatus, RequirementStatus } from '../api/skills';
+import { useAgentFleet } from '../hooks/use-agent-fleet';
 import { useAgentProfile } from '../hooks/use-agent-profile';
 import type { AgentInstance } from '../types';
 
 function statusColor(status?: string) {
-  if (status === 'running' || status === 'healthy' || status === 'compatible' || status === 'present' || status === 'resolved') return 'teal';
-  if (status === 'exited' || status === 'missing' || status === 'incompatible') return 'red';
-  return 'orange';
+  if (status === 'running' || status === 'healthy' || status === 'compatible' || status === 'present' || status === 'resolved' || status === 'idle') return 'teal';
+  if (status === 'working') return 'violet';
+  if (status === 'waiting') return 'blue';
+  if (status === 'paused') return 'yellow';
+  if (status === 'needs_human') return 'orange';
+  if (status === 'exited' || status === 'missing' || status === 'incompatible' || status === 'unavailable') return 'red';
+  return 'gray';
 }
 
 function StatusBadge({ status }: { status?: string }) {
-  return <Badge color={statusColor(status)} variant="light">{String(status || 'unknown')}</Badge>;
+  return <Badge color={statusColor(status)} variant="light">{String(status || 'unknown').replaceAll('_', ' ')}</Badge>;
 }
 
 function ProfileSection({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
@@ -66,6 +73,123 @@ function RuntimeSection({ agent }: { agent: AgentInstance }) {
         <Group justify="space-between" py="xs" className="detail-row"><Text size="sm" c="dimmed">Restarts</Text><Text size="sm">{agent.runtime?.restart_count ?? 0}</Text></Group>
         <Group justify="space-between" py="xs" className="detail-row"><Text size="sm" c="dimmed">GitHub polling</Text><Badge variant="dot" color={agent.github_polling_enabled ? 'teal' : 'gray'}>{agent.github_polling_enabled ? 'Enabled' : 'Disabled'}</Badge></Group>
       </Stack>
+    </Paper>
+  );
+}
+
+function relativeTime(value: string | null) {
+  if (!value) return 'No activity recorded';
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return value;
+  const seconds = Math.round((timestamp - Date.now()) / 1000);
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  const ranges: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ['year', 31_536_000],
+    ['month', 2_592_000],
+    ['week', 604_800],
+    ['day', 86_400],
+    ['hour', 3_600],
+    ['minute', 60],
+  ];
+  for (const [unit, amount] of ranges) {
+    if (Math.abs(seconds) >= amount) return formatter.format(Math.round(seconds / amount), unit);
+  }
+  return formatter.format(seconds, 'second');
+}
+
+function fleetStateLabel(state: AgentFleetState) {
+  return state.replaceAll('_', ' ');
+}
+
+function OperationalSummary({ fleet, loading, error }: { fleet: AgentFleetItem | null; loading: boolean; error: boolean }) {
+  if (loading) {
+    return <Paper withBorder p="lg"><Group mb="md"><Skeleton circle height={28} /><Skeleton height={22} width={180} /></Group><Skeleton height={130} /></Paper>;
+  }
+
+  if (error) {
+    return <Paper withBorder p="lg"><Alert color="red" icon={<IconAlertTriangle size={18} />} title="Fleet summary unavailable">Validated profile and runtime sections remain independently available.</Alert></Paper>;
+  }
+
+  if (!fleet) {
+    return <Paper withBorder p="lg"><Alert color="gray" icon={<IconActivity size={18} />} title="No normalized fleet evidence">This agent is not present in the current fleet snapshot.</Alert></Paper>;
+  }
+
+  const task = fleet.current_task;
+  const workspace = task?.workspace;
+  const repositories = task?.repository ? [task.repository] : fleet.repositories;
+
+  return (
+    <Paper withBorder p="lg">
+      <Group justify="space-between" align="flex-start" mb="md">
+        <Group gap="sm">
+          <ThemeIcon variant="light" color={statusColor(fleet.state)} size={30}><IconActivity size={17} /></ThemeIcon>
+          <Box>
+            <Title order={4}>Operational Summary</Title>
+            <Text size="xs" c="dimmed">Normalized profile, runtime, lifecycle, and current-work evidence.</Text>
+          </Box>
+        </Group>
+        <Badge color={statusColor(fleet.state)} size="lg" variant="light">{fleetStateLabel(fleet.state)}</Badge>
+      </Group>
+
+      {fleet.attention.required && (
+        <Alert color="orange" variant="light" mb="md" icon={<IconAlertTriangle size={17} />} title="Operator attention required">
+          {fleet.attention.summary || fleet.attention.reason_code || 'The fleet contract reports an unresolved condition.'}
+        </Alert>
+      )}
+
+      <Grid gutter="md">
+        <Grid.Col span={{ base: 12, sm: 6 }}>
+          <Text size="xs" fw={700} c="dimmed" tt="uppercase">Current work</Text>
+          <Text size="sm" fw={600} mt={4}>{task?.title || 'No current task'}</Text>
+          <Group gap={6} mt={6}>
+            {task ? <StatusBadge status={task.status.toLowerCase()} /> : <Badge variant="light" color="gray">idle</Badge>}
+            {task?.task_type && <Text size="xs" c="dimmed">{task.task_type}</Text>}
+          </Group>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, sm: 6 }}>
+          <Text size="xs" fw={700} c="dimmed" tt="uppercase">Runtime</Text>
+          <Group gap={6} mt={4}><StatusBadge status={fleet.runtime.status} />{fleet.runtime.health && <StatusBadge status={fleet.runtime.health} />}</Group>
+          <Text size="xs" c="dimmed" mt={6}>{fleet.runtime.restart_count} restart{fleet.runtime.restart_count === 1 ? '' : 's'} · {fleet.profile.runtime_backend || 'backend unknown'}</Text>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, sm: 6 }}>
+          <Text size="xs" fw={700} c="dimmed" tt="uppercase">Repository</Text>
+          {repositories.length ? <Stack gap={2} mt={4}>{repositories.slice(0, 3).map((repository) => <Text key={repository} size="sm" ff="monospace">{repository}</Text>)}</Stack> : <Text size="sm" c="dimmed" mt={4}>No repository assigned</Text>}
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, sm: 6 }}>
+          <Text size="xs" fw={700} c="dimmed" tt="uppercase">Last activity</Text>
+          <Text size="sm" fw={600} mt={4}>{relativeTime(fleet.last_activity_at)}</Text>
+          {fleet.last_activity_at && <Text size="xs" c="dimmed" mt={2}>{fleet.last_activity_at}</Text>}
+        </Grid.Col>
+      </Grid>
+
+      {workspace && (
+        <>
+          <Divider my="md" />
+          <Group align="flex-start" gap="sm" wrap="nowrap">
+            <ThemeIcon variant="light" color={workspace.held_for_investigation ? 'orange' : 'blue'} size={28}><IconGitBranch size={15} /></ThemeIcon>
+            <Box style={{ flex: 1 }}>
+              <Group justify="space-between" align="flex-start">
+                <Box>
+                  <Text size="sm" fw={600}>Workspace evidence</Text>
+                  <Text size="xs" c="dimmed" ff="monospace">{workspace.workspace_id}</Text>
+                </Box>
+                <StatusBadge status={workspace.state || 'unknown'} />
+              </Group>
+              <Group gap="lg" mt="sm">
+                <Box><Text size="xs" c="dimmed">Mode</Text><Text size="sm">{workspace.mode || 'unknown'}</Text></Box>
+                <Box><Text size="xs" c="dimmed">Branch</Text><Text size="sm" ff="monospace">{workspace.branch || 'detached'}</Text></Box>
+                <Box><Text size="xs" c="dimmed">SHA</Text><Text size="sm" ff="monospace">{workspace.resolved_sha?.slice(0, 12) || 'unknown'}</Text></Box>
+              </Group>
+              {(workspace.held_for_investigation || workspace.cleanup_requested) && (
+                <Group gap={6} mt="sm">
+                  {workspace.held_for_investigation && <Badge color="orange" variant="light">investigation hold</Badge>}
+                  {workspace.cleanup_requested && <Badge color="blue" variant="light">cleanup requested</Badge>}
+                </Group>
+              )}
+            </Box>
+          </Group>
+        </>
+      )}
     </Paper>
   );
 }
@@ -191,26 +315,29 @@ function PolicyProfile({ profile }: { profile: PublicAgentProfile }) {
 export function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const profileQuery = useAgentProfile(id);
+  const fleetQuery = useAgentFleet();
   const instancesQuery = useQuery({ queryKey: ['openab-instances'], queryFn: () => opsApi.instances(), refetchInterval: 10_000 });
   const runtimeAgent: AgentInstance | null = (instancesQuery.data?.instances || []).find((instance) => instance.agent === id) || null;
+  const fleetAgent = fleetQuery.data?.fleet.find((agent) => agent.id === id) || null;
   const profile = profileQuery.data?.profile || null;
 
   if (profileQuery.isLoading) return <Stack gap="lg"><Skeleton height={48} radius="md" />{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} height={180} radius="lg" />)}</Stack>;
 
   if (profileQuery.isError) {
-    return <Stack gap="lg"><Box><Title order={1} className="page-title">{id || 'Agent data unavailable'}</Title><Text c="dimmed" mt={6}>Profile policy could not be loaded.</Text></Box><Alert color="red" icon={<IconAlertTriangle size={18} />} title="Profile API unavailable">Runtime information remains visible when available.</Alert>{runtimeAgent && <RuntimeSection agent={runtimeAgent} />}</Stack>;
+    return <Stack gap="lg"><Box><Title order={1} className="page-title">{id || 'Agent data unavailable'}</Title><Text c="dimmed" mt={6}>Profile policy could not be loaded.</Text></Box><OperationalSummary fleet={fleetAgent} loading={fleetQuery.isLoading} error={fleetQuery.isError} /><Alert color="red" icon={<IconAlertTriangle size={18} />} title="Profile API unavailable">Runtime information remains visible when available.</Alert>{runtimeAgent && <RuntimeSection agent={runtimeAgent} />}</Stack>;
   }
 
   if (!profile) {
-    if (runtimeAgent) return <Stack gap="lg"><Box><Title order={1}>{id}</Title><Text c="dimmed">Runtime instance without matching profile.</Text></Box><Alert color="orange" title="Profile unavailable">No matching Git-backed policy profile was found.</Alert><RuntimeSection agent={runtimeAgent} /></Stack>;
-    if (instancesQuery.isLoading) return <Stack><Title order={1}>{id}</Title><Skeleton height={120} /></Stack>;
-    if (instancesQuery.isError) return <Stack><Title order={1}>{id}</Title><Alert color="orange" title="Agent state unknown">The profile was not found and runtime inspection is unavailable.</Alert></Stack>;
+    if (runtimeAgent) return <Stack gap="lg"><Box><Title order={1}>{id}</Title><Text c="dimmed">Runtime instance without matching profile.</Text></Box><OperationalSummary fleet={fleetAgent} loading={fleetQuery.isLoading} error={fleetQuery.isError} /><Alert color="orange" title="Profile unavailable">No matching Git-backed policy profile was found.</Alert><RuntimeSection agent={runtimeAgent} /></Stack>;
+    if (instancesQuery.isLoading) return <Stack><Title order={1}>{id}</Title><OperationalSummary fleet={fleetAgent} loading={fleetQuery.isLoading} error={fleetQuery.isError} /><Skeleton height={120} /></Stack>;
+    if (instancesQuery.isError) return <Stack><Title order={1}>{id}</Title><OperationalSummary fleet={fleetAgent} loading={fleetQuery.isLoading} error={fleetQuery.isError} /><Alert color="orange" title="Agent state unknown">The profile was not found and runtime inspection is unavailable.</Alert></Stack>;
     return <Center py={48}><Stack align="center" gap={8}><ThemeIcon size={48} radius="xl" variant="light" color="gray"><IconRobot size={24} /></ThemeIcon><Text fw={600}>Unknown agent</Text><Text size="sm" c="dimmed">No profile or runtime instance exists for “{id}”.</Text></Stack></Center>;
   }
 
   return (
     <Stack gap="lg">
       <Box><Group justify="space-between" align="flex-start"><Box><Title order={1} className="page-title">{profile.display_name}</Title><Text c="dimmed" mt={6}>{profile.mission}</Text></Box><Group gap="xs"><Badge color={profile.enabled ? 'teal' : 'red'} size="lg">{profile.enabled ? 'Enabled' : 'Disabled'}</Badge><Badge variant="light" color="violet" size="lg">Profile Policy</Badge></Group></Group></Box>
+      <OperationalSummary fleet={fleetAgent} loading={fleetQuery.isLoading} error={fleetQuery.isError} />
       <Grid>
         <Grid.Col span={{ base: 12, lg: 7 }}><PolicyProfile profile={profile} /></Grid.Col>
         <Grid.Col span={{ base: 12, lg: 5 }}>
