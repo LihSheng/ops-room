@@ -1,0 +1,93 @@
+import { claimEffect, completeEffect } from '../services/review-effect-ledger.js';
+export class FixSupersededError extends Error {
+    constructor(reviewedSha, currentSha) {
+        super(`Fix task superseded: reviewed SHA ${reviewedSha} is not current SHA ${currentSha}`);
+        this.name = 'FixSupersededError';
+        this.reviewedSha = reviewedSha;
+        this.currentSha = currentSha;
+    }
+}
+export async function runFixChildWorker({ task, deps, dir, lease, workspace: explicitWorkspace = null }) {
+    const boundWorkspace = explicitWorkspace || task?.__workspace_binding || null;
+    const reviewedSha = task?.reviewed_sha;
+    const currentAtStart = await deps.fetchCurrentHead(task);
+    assertFixHeadCurrent({ reviewedSha, currentSha: currentAtStart });
+    let workspace;
+    let heartbeatTimer;
+    try {
+        if (!boundWorkspace)
+            throw new Error('fix_workspace_binding_missing');
+        workspace = await deps.prepareWorkspace(task, boundWorkspace);
+        const heartbeatIntervalMs = deps.heartbeatIntervalMs || 60_000;
+        if (typeof deps.renewLease === 'function' && lease) {
+            heartbeatTimer = setInterval(() => {
+                deps.renewLease({ dir, id: task.id, leaseId: lease.lease_id, leaseEpoch: lease.lease_epoch })
+                    .catch((error) => console.error(`[fix-worker] lease heartbeat failed for ${task.id}:`, error?.message || error));
+            }, heartbeatIntervalMs);
+            heartbeatTimer.unref?.();
+        }
+        if (lease) {
+            await deps.renewLease?.({ dir, id: task.id, leaseId: lease.lease_id, leaseEpoch: lease.lease_epoch });
+        }
+        const beforeApply = await deps.readTask?.(task);
+        if (beforeApply?.state === 'CANCEL_REQUESTED' || beforeApply?.state === 'CANCELLED') {
+            return { outcome: 'CANCELLED' };
+        }
+        const applied = await deps.applyFix({ task, workspace });
+        if (lease)
+            await deps.renewLease?.({ dir, id: task.id, leaseId: lease.lease_id, leaseEpoch: lease.lease_epoch });
+        if (!applied?.changed)
+            return { outcome: 'NEEDS_HUMAN', reason: 'no_source_changes' };
+        if (typeof deps.verifyWorkspace === 'function') {
+            const verification = await deps.verifyWorkspace({ task, workspace });
+            if (verification.outcome !== 'verified') {
+                return {
+                    outcome: 'NEEDS_HUMAN',
+                    reason: verification.outcome === 'no_commands' ? 'no_verification_commands' : 'verification_failed',
+                    verification,
+                };
+            }
+        }
+        const beforePush = await deps.fetchCurrentHead(task);
+        assertFixHeadCurrent({ reviewedSha, currentSha: beforePush });
+        if (lease)
+            await deps.renewLease?.({ dir, id: task.id, leaseId: lease.lease_id, leaseEpoch: lease.lease_epoch });
+        const beforePushTask = await deps.readTask?.(task);
+        if (beforePushTask?.state === 'CANCEL_REQUESTED' || beforePushTask?.state === 'CANCELLED') {
+            return { outcome: 'CANCELLED' };
+        }
+        let pushEffect;
+        if (dir) {
+            pushEffect = await claimEffect({
+                dir,
+                taskId: task.id,
+                kind: 'git_push',
+                fingerprint: `${task.reviewed_sha}:${task.head_ref || ''}`,
+                leaseId: lease?.lease_id,
+                leaseEpoch: lease?.lease_epoch,
+            });
+            if (!pushEffect.claimed) {
+                if (pushEffect.effect?.state === 'COMPLETED' && pushEffect.effect.result?.new_sha) {
+                    return { outcome: 'FIX_PUSHED', new_sha: pushEffect.effect.result.new_sha, duplicate_effect: true };
+                }
+                return { outcome: 'NEEDS_HUMAN', reason: 'ambiguous_push_effect' };
+            }
+        }
+        const pushed = await deps.pushWorkspace({ task, workspace });
+        if (!pushed?.newSha)
+            throw new Error('Fix push did not return a new SHA');
+        if (pushEffect)
+            await completeEffect({ dir, effectId: pushEffect.effect.id, result: { new_sha: pushed.newSha }, leaseId: lease?.lease_id, leaseEpoch: lease?.lease_epoch });
+        return { outcome: 'FIX_PUSHED', new_sha: pushed.newSha };
+    }
+    finally {
+        if (heartbeatTimer)
+            clearInterval(heartbeatTimer);
+    }
+}
+export function assertFixHeadCurrent({ reviewedSha, currentSha }) {
+    if (!reviewedSha || !currentSha || reviewedSha !== currentSha) {
+        throw new FixSupersededError(reviewedSha, currentSha);
+    }
+}
+//# sourceMappingURL=fix-worker.js.map
