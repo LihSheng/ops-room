@@ -73,14 +73,14 @@ function isAllowedManifestPath(path, rootName) {
 export function assertAllowedReleasePath(value) {
   const path = normalizeArchivePath(value);
   if (
-    path === 'RELEASE.json' || path === 'src' || path === 'dist' ||
-    path === 'dist/dashboard' || path === 'config' || path === 'config/agent-profiles' ||
+    path === 'RELEASE.json' || path === 'ops-room' || path === 'ops-room/src' || path === 'ops-room/dist' ||
+    path === 'ops-room/dist/dashboard' || path === 'config' || path === 'config/agent-profiles' ||
     isAllowedManifestPath(path, 'skills') || isAllowedManifestPath(path, 'memory-spaces')
   ) {
     return path;
   }
   if (
-    path === 'package.json' || path.startsWith('src/') || path.startsWith('dist/dashboard/') ||
+    path === 'ops-room/package.json' || path.startsWith('ops-room/src/') || path.startsWith('ops-room/dist/dashboard/') ||
     path.startsWith('config/agent-profiles/')
   ) {
     const segments = path.split('/');
@@ -125,7 +125,7 @@ export async function verifyReleaseArtifact({ archivePath, checksumPath, expecte
   const entries = await archiveEntries(archivePath);
   await assertRegularArchiveEntries(archivePath);
   for (const required of [
-    'RELEASE.json', 'package.json', 'src/server/webhook.js', 'dist/dashboard/index.html',
+    'RELEASE.json', 'ops-room/package.json', 'ops-room/src/server/webhook.js', 'ops-room/dist/dashboard/index.html',
     'config/agent-profiles/professor.json', 'config/agent-profiles/berlin.json',
     'config/agent-profiles/tokyo.json', 'config/agent-profiles/gemini.json',
     ...REQUIRED_SKILL_MANIFESTS,
