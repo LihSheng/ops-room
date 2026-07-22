@@ -1,7 +1,12 @@
 import { appendFile } from 'node:fs/promises';
 import { timingSafeEqual } from 'node:crypto';
 import {
-  DASHBOARD_TOKEN, OPERATOR_API_ENABLED, OPERATOR_TOKEN, SHARED_MEMORY, WEBHOOK_SECRET,
+  DASHBOARD_TOKEN,
+  HUMAN_AUTH_ENABLED,
+  OPERATOR_API_ENABLED,
+  OPERATOR_TOKEN,
+  SHARED_MEMORY,
+  WEBHOOK_SECRET,
 } from '../services/runtime-paths.js';
 
 const DASHBOARD_READ_ROUTES = [
@@ -42,7 +47,7 @@ export function verifyDashboardReadRequest(req) {
   return requiresDashboardAuth(req) && verifyDashboardAuth(req?.headers?.authorization);
 }
 
-export function sendJSON(res, status, data) {
+export function sendJSON(res, status, data, additionalHeaders = {}) {
   if (requiresDashboardAuth(res.req) && !verifyDashboardAuth(res.req?.headers?.authorization)) {
     status = 401;
     data = { error: 'Unauthorized' };
@@ -52,6 +57,7 @@ export function sendJSON(res, status, data) {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
+    ...additionalHeaders,
   });
   res.end(JSON.stringify(data));
 }
@@ -76,6 +82,10 @@ export function verifyDashboardAuth(authHeader) {
 
 export function verifyOperatorAuth(authHeader) {
   return OPERATOR_API_ENABLED && verifyBearer(authHeader, OPERATOR_TOKEN);
+}
+
+export function verifyOperatorBootstrapAuth(authHeader) {
+  return HUMAN_AUTH_ENABLED && verifyBearer(authHeader, OPERATOR_TOKEN);
 }
 
 export function parseBody(req) {
