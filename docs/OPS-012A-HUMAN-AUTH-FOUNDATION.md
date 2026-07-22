@@ -1,6 +1,6 @@
 # OPS-012A — Human Authentication Foundation
 
-Status: **Administrative session management slice**
+Status: **Emergency read-only and step-up confirmation slice**
 
 Issue: #54
 
@@ -98,6 +98,55 @@ Current permission mappings are:
 
 `OPS_ROOM_OPERATOR_API_ENABLED=false` continues to hide all operator mutation and audit endpoints, including from valid sessions.
 
+## Emergency read-only mode
+
+`OPS_ROOM_EMERGENCY_READ_ONLY_ENABLED=true` is the operational safety switch required by the V2 note.
+
+When active:
+
+- authenticated operator `GET`, `HEAD`, and `OPTIONS` requests remain available;
+- every authenticated operator mutation is rejected before its route handler runs;
+- bearer and browser-session mutations are blocked consistently;
+- the response is `423` with `operator_emergency_read_only`;
+- the rejected attempt is recorded as `operator.authorization.denied` with the actor, permission, method, and bounded path;
+- audit persistence failure returns a bounded `503` response rather than allowing the mutation.
+
+Session logout remains available through `DELETE /api/auth/session` so an operator can always terminate their own browser session. The emergency guard applies to bounded operator-control routes and does not reimplement task, lifecycle, workflow, workspace, or session state transitions.
+
+## Step-up confirmation
+
+Sensitive browser-session mutations require deliberate, action-bound confirmation after permission and CSRF validation.
+
+The browser sends:
+
+```text
+X-Ops-Room-Confirmation: confirm:<permission>:<METHOD>:<API path>
+```
+
+Example:
+
+```text
+X-Ops-Room-Confirmation: confirm:agent.lifecycle:POST:/api/operator/agents/professor/stop
+```
+
+The confirmation is bound to the exact permission, HTTP method, and pathname. A confirmation for one agent, route, permission, or method cannot authorize another action.
+
+The initial sensitive permission set is:
+
+- `workflow.approve`;
+- `agent.lifecycle`;
+- `agent.configure`;
+- `policy.manage` mutations;
+- `session.manage` mutations;
+- `repository.manage`;
+- `release.approve`.
+
+Ordinary `task.manage` and `workflow.recover` actions continue to require authentication, authorization, CSRF, a human-readable reason, idempotency, and durable route-level audit evidence, but do not require this additional confirmation header.
+
+Missing or mismatched confirmation returns `428` with `operator_step_up_required` and writes an actor-attributed denial event. The dedicated operator bearer remains backward-compatible and does not use browser confirmation headers.
+
+This control is explicit deliberate-action evidence for the current local identity model. It is not password re-entry, MFA, or external identity-provider reauthentication. A future identity-provider integration may replace it with stronger step-up authentication without changing the bounded route contracts.
+
 ## Durable authentication audit evidence
 
 Session and authorization activity is recorded through the existing append-only audit store.
@@ -108,7 +157,8 @@ The current event model includes:
 |---|---|
 | `operator.session.create` | A bootstrap credential created a browser session |
 | `operator.session.revoke` | The authenticated session logged out and was durably revoked |
-| `operator.authorization.denied` | A valid session lacked a permission or valid CSRF evidence |
+| `operator.authorization.denied` | Permission, CSRF, step-up, or emergency-mode authorization was rejected |
+| `operator.session.revoke.admin` | An administrator accepted or rejected cross-session revocation |
 
 Session-authenticated audit actors include:
 
@@ -119,7 +169,7 @@ Session-authenticated audit actors include:
 
 Audit records never contain the raw session token, token hash, CSRF token, bearer credential, cookie value, environment values, or storage path.
 
-A newly created session is not disclosed to the browser unless its creation audit event is written successfully. If audit persistence fails, the undisclosed session is revoked. Permission and CSRF denials also fail closed with a bounded unavailable response if their required audit evidence cannot be persisted.
+A newly created session is not disclosed to the browser unless its creation audit event is written successfully. If audit persistence fails, the undisclosed session is revoked. Authorization denials also fail closed with a bounded unavailable response if their required audit evidence cannot be persisted.
 
 ## Administrative session management
 
@@ -137,6 +187,8 @@ The list endpoint exposes bounded public session metadata, status, expiry, and r
 Cross-session revocation requires:
 
 - an authenticated principal with `session.manage`;
+- CSRF evidence for browser sessions;
+- action-bound step-up confirmation for browser sessions;
 - a reason of 1-500 characters;
 - an 8-128 character idempotency key;
 - durable session-state metadata identifying the revoking actor, reason, and idempotency key;
@@ -149,6 +201,7 @@ A replay with the same actor, target, payload, and idempotency key returns the s
 ```text
 OPS_ROOM_OPERATOR_API_ENABLED=false
 OPS_ROOM_OPERATOR_TOKEN=
+OPS_ROOM_EMERGENCY_READ_ONLY_ENABLED=false
 OPS_ROOM_HUMAN_AUTH_ENABLED=false
 OPS_ROOM_OPERATOR_ID=
 OPS_ROOM_OPERATOR_DISPLAY_NAME=
@@ -160,6 +213,8 @@ OPS_ROOM_OPERATOR_SESSIONS_DIR=/absolute/path/to/operator-sessions
 
 Human authentication remains disabled unless `OPS_ROOM_HUMAN_AUTH_ENABLED=true` is configured explicitly.
 
+`OPS_ROOM_EMERGENCY_READ_ONLY_ENABLED` defaults to `false`. Production operators can set it to `true` and restart the service to prevent all bounded operator mutations while preserving reads and logout.
+
 `OPS_ROOM_OPERATOR_SESSION_COOKIE_SECURE=false` is intended only for direct localhost HTTP development. Production traffic behind HTTPS should keep secure cookies enabled.
 
 ## Security boundaries
@@ -169,20 +224,21 @@ This implementation does not:
 - accept the dashboard token as a human credential;
 - accept the webhook secret as a human credential;
 - store raw session tokens;
-- persist session or CSRF credentials in audit events;
+- persist session, CSRF, or confirmation values in audit events;
 - permit cookie mutations without CSRF evidence;
+- permit sensitive cookie mutations without action-bound confirmation;
+- allow operator mutations while emergency read-only mode is active;
 - grant unknown roles or permissions;
 - enable operator APIs automatically;
 - expose session hashes, storage paths, environment values, or credentials;
-- introduce password storage, account registration, or external identity-provider integration;
+- introduce password storage, account registration, MFA, or external identity-provider integration;
 - expose authentication material through administrative session APIs;
 - add the dashboard login/logout interface.
 
 ## Remaining OPS-012A order
 
-1. Add emergency read-only mode and step-up confirmation for sensitive actions.
-2. Add the minimal dashboard login/logout experience.
-3. Run the production authentication and credential-separation drill.
+1. Add the minimal dashboard login/logout experience and session-backed dashboard reads.
+2. Run the production authentication and credential-separation drill.
 
 ## Tests
 
@@ -198,7 +254,11 @@ Coverage includes:
 - session read and revoke behavior;
 - session creation and logout audit events;
 - session-attributed permission and CSRF denial events;
-- audit failure rollback and fail-closed responses;
+- emergency read-only rejection for bearer and session mutations;
+- authenticated reads while emergency mode is active;
+- exact permission, method, and path binding for sensitive confirmations;
+- step-up denial audit evidence and audit failure handling;
+- ordinary task management without unnecessary step-up;
 - administrator-only session listing and filtering;
 - reason- and idempotency-guarded cross-session revocation;
 - self-revocation cookie clearing;
