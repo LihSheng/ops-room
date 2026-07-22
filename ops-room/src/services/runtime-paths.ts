@@ -63,6 +63,7 @@ export const SKILL_MANIFESTS_DIR = process.env.OPS_ROOM_SKILL_MANIFESTS_DIR || j
 export const MEMORY_SPACE_MANIFESTS_DIR = process.env.OPS_ROOM_MEMORY_SPACE_MANIFESTS_DIR || join(REPO_ROOT, 'config', 'memory-spaces');
 export const TASKS_DIR = process.env.OPS_ROOM_TASKS_DIR || join(_opsRoomDataDir, 'tasks');
 export const REVIEW_TASKS_DIR = process.env.OPS_ROOM_REVIEW_TASKS_DIR || join(_opsRoomDataDir, 'review-tasks');
+export const MISSIONS_DIR = process.env.OPS_ROOM_MISSIONS_DIR || join(_opsRoomDataDir, 'missions');
 export const WORKFLOW_RUNS_DIR = process.env.OPS_ROOM_WORKFLOW_RUNS_DIR || join(_opsRoomDataDir, 'workflow-runs');
 export const WORKFLOW_EFFECTS_DIR = process.env.OPS_ROOM_WORKFLOW_EFFECTS_DIR || join(_opsRoomDataDir, 'workflow-effects');
 export const LOG_DIR = process.env.OPS_ROOM_LOGS_DIR || join(_opsRoomDataDir, 'logs');
