@@ -121,7 +121,17 @@ export async function authorizeOperatorRequest({
     return { ok: false, status: 401, error: 'Unauthorized', error_code: 'operator_session_required' };
   }
 
-  const session = await readSession({ dir: sessionDir, token, now });
+  let session;
+  try {
+    session = await readSession({ dir: sessionDir, token, now });
+  } catch {
+    return {
+      ok: false,
+      status: 503,
+      error: 'Operator session unavailable',
+      error_code: 'operator_session_unavailable',
+    };
+  }
   if (!session) {
     return { ok: false, status: 401, error: 'Unauthorized', error_code: 'operator_session_invalid' };
   }
