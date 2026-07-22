@@ -105,8 +105,10 @@ test('mission creation is durable, idempotent, and does not start a workflow', a
 
   const files = await readdir(dir);
   assert.equal(files.length, 1);
-  const mode = (await stat(join(dir, files[0]))).mode & 0o777;
-  assert.equal(mode, 0o600);
+  if (process.platform !== 'win32') {
+    const mode = (await stat(join(dir, files[0]))).mode & 0o777;
+    assert.equal(mode, 0o600);
+  }
 
   const serialized = serializeMission(read);
   assert.equal(Object.hasOwn(serialized, 'creation_request_hash'), false);
