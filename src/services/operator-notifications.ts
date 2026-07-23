@@ -39,6 +39,11 @@ function bounded(value: unknown, maximum: number) {
   return String(value ?? '').trim().slice(0, maximum);
 }
 
+function safePath(value: unknown) {
+  const path = bounded(value, 500);
+  return path && path.startsWith('/') && !path.startsWith('//') ? path : null;
+}
+
 function actorIdFrom(actor: any) {
   const actorId = bounded(actor?.actor_id, 100);
   if (!actorId || /[\u0000-\u001f\u007f]/.test(actorId)) throw new Error('notification_actor_id_invalid');
@@ -80,19 +85,28 @@ export function classifyActivityNotification(event: any) {
   if (eventType === 'review.changes.requested' || includesAny(combined, ['berlin requested changes', 'changes_requested'])) {
     return 'review_changes_requested';
   }
-  if (includesAny(combined, ['retry budget exhausted', 'maximum iteration', 'max iteration', 'iteration budget'])) {
+  if (includesAny(combined, [
+    'retry budget exhausted',
+    'retry_budget_exhausted',
+    'maximum iteration',
+    'maximum_iteration',
+    'max iteration',
+    'max_iteration',
+    'iteration budget',
+    'iteration_budget',
+  ])) {
     return 'retry_budget_exhausted';
   }
-  if (includesAny(combined, ['agent unavailable', 'agent_unavailable', 'runtime unavailable'])) {
+  if (includesAny(combined, ['agent unavailable', 'agent_unavailable', 'runtime unavailable', 'runtime_unavailable'])) {
     return 'agent_unavailable';
   }
-  if (includesAny(combined, ['cleanup failure', 'cleanup_failed', 'workspace cleanup']) && includesAny(combined, ['fail', 'error', 'needs_human'])) {
+  if (includesAny(combined, ['cleanup failure', 'cleanup_failed', 'workspace cleanup', 'workspace_cleanup']) && includesAny(combined, ['fail', 'error', 'needs_human'])) {
     return 'workspace_cleanup_failure';
   }
-  if (includesAny(combined, ['approval required', 'approval_required', 'awaiting approval'])) {
+  if (includesAny(combined, ['approval required', 'approval_required', 'awaiting approval', 'awaiting_approval'])) {
     return 'approval_required';
   }
-  if (event?.source === 'provider_effect' && includesAny(combined, ['timeout', 'timed out'])) {
+  if (event?.source === 'provider_effect' && includesAny(combined, ['timeout', 'timed out', 'timed_out'])) {
     return 'provider_timeout';
   }
   if (event?.source === 'provider_effect' && (eventType === 'effect.failed' || event?.severity === 'error')) {
@@ -141,10 +155,10 @@ export function projectActivityNotification(event: any) {
     input_sha: bounded(event?.input_sha, 64) || null,
     output_sha: bounded(event?.output_sha, 64) || null,
     links: {
-      mission: bounded(event?.links?.mission, 500) || null,
-      stage: bounded(event?.links?.stage, 500) || null,
-      agent: bounded(event?.links?.agent, 500) || null,
-      workflow: bounded(event?.links?.workflow, 500) || null,
+      mission: safePath(event?.links?.mission),
+      stage: safePath(event?.links?.stage),
+      agent: safePath(event?.links?.agent),
+      workflow: safePath(event?.links?.workflow),
       activity: '/activity',
     },
   };
@@ -297,7 +311,7 @@ async function performNotificationAction({
 }: any) {
   const operation = action === 'acknowledge' ? 'notification.acknowledge' : 'notification.read';
   let key = '';
-  let reason = action === 'acknowledge' ? bounded(body?.reason, 500) : 'notification_mark_read';
+  const reason = action === 'acknowledge' ? bounded(body?.reason, 500) : 'notification_mark_read';
   try {
     const normalizedId = validateNotificationId(notificationId);
     if (action === 'acknowledge' && !reason) throw new Error('notification_acknowledgement_reason_required');
