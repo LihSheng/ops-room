@@ -57,6 +57,50 @@ export interface ChatSessionFilters {
   limit?: number;
 }
 
+export interface ChatTranscriptActor {
+  actor_id: string;
+  actor_type: string;
+  actor_display_name: string;
+}
+
+export interface ChatTranscriptTurn {
+  turn_id: string;
+  state: string;
+  target_agent_id?: string;
+  human_message: {
+    role: 'human';
+    content: string;
+    actor: ChatTranscriptActor;
+    created_at: string;
+  };
+  agent_message: {
+    role: 'agent';
+    agent_id?: string;
+    content: string;
+    created_at: string;
+    provider: string;
+    model: string;
+  } | null;
+  error_code: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatTranscriptSession {
+  session_id: string;
+  agent_id?: string;
+  mission_id?: string;
+  title: string;
+  state: ChatSessionState;
+  created_by: ChatTranscriptActor;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  last_error: string | null;
+  turn_count: number;
+  turns: ChatTranscriptTurn[];
+}
+
 function queryString(filters: ChatSessionFilters = {}) {
   const params = new URLSearchParams();
   if (filters.type && filters.type !== 'all') params.set('type', filters.type);
@@ -76,7 +120,7 @@ async function getJson<T>(url: string): Promise<T> {
   });
   const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (!response.ok) {
-    throw new Error(String(payload.error || response.statusText || 'Chat session index request failed'));
+    throw new Error(String(payload.error || response.statusText || 'Chat session request failed'));
   }
   return payload as T;
 }
@@ -84,5 +128,10 @@ async function getJson<T>(url: string): Promise<T> {
 export const chatSessionsApi = {
   list: (filters: ChatSessionFilters = {}) => getJson<ChatSessionIndexResponse>(
     `/api/operator/chat-sessions${queryString(filters)}`,
+  ),
+  detail: (session: Pick<ChatSessionIndexItem, 'session_id' | 'session_type'>) => getJson<{ session: ChatTranscriptSession }>(
+    session.session_type === 'direct'
+      ? `/api/operator/chat-sessions/${encodeURIComponent(session.session_id)}`
+      : `/api/operator/mission-chat-sessions/${encodeURIComponent(session.session_id)}`,
   ),
 };
