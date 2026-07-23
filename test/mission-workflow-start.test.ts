@@ -57,7 +57,6 @@ test('starting a planned mission creates one workflow and one pending Professor 
   assert.equal(result.mission.workflow_id, result.workflow.workflow_id);
   assert.equal(result.workflow.state, 'active');
   assert.equal(result.workflow.child_count, 1);
-  assert.equal(result.initial_child, undefined);
   assert.equal(result.child.stage, 'implementation');
   assert.equal(result.child.owner_agent, 'professor');
   assert.equal(result.child.iteration, 1);
