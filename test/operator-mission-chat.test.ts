@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -55,6 +55,18 @@ async function setup() {
 async function auditRecords(dir: string) {
   const names = (await readdir(dir)).filter((name) => name.startsWith('event-'));
   return Promise.all(names.map(async (name) => JSON.parse(await readFile(join(dir, name), 'utf-8'))));
+}
+
+async function completeStoredMission(dir: string) {
+  const name = (await readdir(dir)).find((candidate) => candidate.startsWith('mission-') && candidate.endsWith('.json'));
+  assert.ok(name);
+  const path = join(dir, name);
+  const mission = JSON.parse(await readFile(path, 'utf-8'));
+  const at = new Date().toISOString();
+  mission.state = 'completed';
+  mission.completed_at = at;
+  mission.updated_at = at;
+  await writeFile(path, `${JSON.stringify(mission, null, 2)}\n`, 'utf-8');
 }
 
 test('Mission chat creation records participant-bound audit evidence', async () => {
@@ -133,6 +145,50 @@ test('targeted send invokes one participant provider turn and audits digest meta
   assert.match(sends[0].metadata.message_digest, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(JSON.stringify(sends), /Which test evidence should be collected/);
   assert.doesNotMatch(JSON.stringify(sends), /Collect bounded acceptance evidence/);
+});
+
+test('accepted message replay survives later terminal Mission and disabled participant state', async () => {
+  const target = await setup();
+  const created = await handleCreateMissionChatSession({
+    missionId: target.mission.mission_id,
+    body: { reason: 'Start participant discussion', idempotency_key: 'mission-chat-create-handler-0005' },
+    actor: ACTOR,
+    missionsDir: target.missions,
+    chatDir: target.chat,
+    auditDir: target.audit,
+  });
+  let calls = 0;
+  const baseRequest = {
+    sessionId: created.body.session.session_id,
+    body: {
+      target_agent_id: 'tokyo',
+      content: 'Return durable evidence for safe replay.',
+      idempotency_key: 'mission-chat-message-handler-0004',
+    },
+    actor: ACTOR,
+    missionsDir: target.missions,
+    chatDir: target.chat,
+    auditDir: target.audit,
+    invokeProvider: async () => {
+      calls += 1;
+      return { text: 'Durable response.', provider: 'opencode', model: 'test-model' };
+    },
+  };
+
+  const first = await handleAppendMissionChatMessage({ ...baseRequest, profileLookup: () => PROFILE });
+  await completeStoredMission(target.missions);
+  const replay = await handleAppendMissionChatMessage({
+    ...baseRequest,
+    profileLookup: () => ({ ...PROFILE, enabled: false }),
+    invokeProvider: async () => { calls += 1; return { text: 'Must not run' }; },
+  });
+
+  assert.equal(first.status, 202);
+  assert.equal(replay.status, 202);
+  assert.equal(replay.body.domain_idempotent, true);
+  assert.equal(replay.body.provider_invoked, false);
+  assert.equal(replay.body.turn.agent_message.content, 'Durable response.');
+  assert.equal(calls, 1);
 });
 
 test('non-participant and disabled participant sends are rejected before provider invocation', async () => {
