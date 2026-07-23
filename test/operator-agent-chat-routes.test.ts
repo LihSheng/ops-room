@@ -44,3 +44,9 @@ test('session lists are bounded summaries while detail returns the transcript', 
   assert.match(source, /sessions: sessions\.map\(serializeAgentChatSessionSummary\)/);
   assert.match(source, /sendJSON\(res, 200, \{ session: serializeAgentChatSession\(session\) \}\)/);
 });
+
+test('disabled agents keep transcript reads while new session creation remains blocked', async () => {
+  const source = await readFile(ROUTE_FILE, 'utf-8');
+  assert.match(source, /if \(!profile\.enabled && req\.method === 'POST'\)/);
+  assert.doesNotMatch(source, /if \(!profile\.enabled\) \{/);
+});
