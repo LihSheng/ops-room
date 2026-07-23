@@ -135,7 +135,6 @@ export function deriveInvestigationActions(room: MissionRoom, stage: MissionRoom
     stage.workspace
     && workspaceState === 'held_for_investigation'
     && authoritativeSha
-    && (!stage.workspace.resolved_sha || stage.workspace.resolved_sha === authoritativeSha)
   ) {
     actions.push(ACTION_META.workspace_release);
   }
