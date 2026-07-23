@@ -67,6 +67,7 @@ import { joinProfileRuntime } from './lib/join-profile-runtime';
 import { ActivityPage, SettingsPage, WorkflowsPage } from './operational-pages';
 import { AgentDetailPage } from './pages/AgentDetailPage';
 import { AgentFleetPage } from './pages/AgentFleetPage';
+import { InterventionsPage } from './pages/InterventionsPage';
 import { MissionsPage } from './pages/MissionsPage';
 import { MissionRoomPage } from './pages/MissionRoomPage';
 import { SkillsPage } from './pages/SkillsPage';
@@ -260,11 +261,15 @@ function DashboardPage({ openAgent, openLogs }: {
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 4 }}>
           <Paper withBorder p="lg" h="100%">
-            <SectionHeading title="Operator queue" description="Items that should not continue unattended." />
+            <SectionHeading
+              title="Operator queue"
+              description="Items that should not continue unattended."
+              action={<Button variant="subtle" size="compact-sm" onClick={() => navigate('/interventions')}>Open inbox</Button>}
+            />
             {attentionTasks.length ? (
               <Stack gap="sm">
                 {attentionTasks.slice(0, 5).map((task) => (
-                  <UnstyledButton key={taskId(task)} className="attention-row" onClick={() => navigate('/tasks')}>
+                  <UnstyledButton key={taskId(task)} className="attention-row" onClick={() => navigate('/interventions')}>
                     <Group align="flex-start" wrap="nowrap">
                       <ThemeIcon color={statusColor(normalizeState(task))} variant="light" size={32}><IconAlertTriangle size={17} /></ThemeIcon>
                       <Box style={{ flex: 1, minWidth: 0 }}>
@@ -493,6 +498,7 @@ const navigation = [
   { label: 'Dashboard', path: '/', icon: IconDashboard },
   { label: 'Agents', path: '/agents', icon: IconUsers },
   { label: 'Tasks', path: '/tasks', icon: IconListCheck },
+  { label: 'Needs Human', path: '/interventions', icon: IconAlertTriangle },
   { label: 'Missions', path: '/missions', icon: IconRoute },
   { label: 'Workflows', path: '/workflows', icon: IconGitPullRequest },
   { label: 'Activity', path: '/activity', icon: IconActivity },
@@ -534,7 +540,7 @@ function OpsRoomApp() {
   const refreshAll = () => {
     for (const queryKey of [
       ['ops-dashboard'], ['agent-fleet'], ['agent-profiles'], ['agent-profile'], ['skills-catalog'],
-      ['memory-spaces'], ['missions'], ['mission-room'], ['openab-instances'],
+      ['memory-spaces'], ['missions'], ['mission-room'], ['interventions'], ['openab-instances'],
     ]) queryClient.invalidateQueries({ queryKey });
   };
 
@@ -565,6 +571,7 @@ function OpsRoomApp() {
         <Route path="/agents" element={<AgentFleetPage />} />
         <Route path="/agents/:id" element={<AgentDetailPage />} />
         <Route path="/tasks" element={<TasksPage />} />
+        <Route path="/interventions" element={<InterventionsPage />} />
         <Route path="/missions" element={<MissionsPage />} />
         <Route path="/missions/:missionId" element={<MissionRoomPage />} />
         <Route path="/workflows" element={<WorkflowsPage />} />
