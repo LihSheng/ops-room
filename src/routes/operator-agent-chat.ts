@@ -25,6 +25,11 @@ function decode(value: string) {
   }
 }
 
+function serializeAgentChatSessionSummary(record: any) {
+  const session = serializeAgentChatSession(record);
+  return { ...session, turns: [] };
+}
+
 export function matchAgentChatSessionsRoute(pathname: string) {
   const match = pathname.match(/^\/api\/operator\/agents\/([^/]+)\/chat-sessions$/);
   if (!match) return null;
@@ -93,7 +98,7 @@ const listOrCreateSessions: RouteEntry = {
       });
       sendJSON(res, 200, {
         agent_id: params.agentId,
-        sessions: sessions.map(serializeAgentChatSession),
+        sessions: sessions.map(serializeAgentChatSessionSummary),
         count: sessions.length,
       });
       return;
