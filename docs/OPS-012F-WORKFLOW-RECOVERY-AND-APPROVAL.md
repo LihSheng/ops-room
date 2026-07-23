@@ -2,9 +2,9 @@
 
 ## Status
 
-Initial server-authority slice for issue #87.
+Implementation complete in PR #90. Final review readiness depends on the latest required CI run.
 
-This slice exposes existing OPS-010G recovery contracts and a bounded operator Berlin-decision contract through authenticated operator routes. Browser presentation remains the next commit in the same work item.
+This slice exposes the accepted OPS-010G recovery contracts and bounded Berlin-decision authority through authenticated operator routes and visible browser controls. React remains a presentation layer; durable Workflow, provider-effect, workspace, idempotency, and audit stores remain authoritative.
 
 ## Routes
 
@@ -14,9 +14,9 @@ POST /api/operator/workflows/:workflowId/children/:childId/resume
 POST /api/operator/workflows/:workflowId/children/:childId/decision
 ```
 
-Every request targets one exact Workflow, child, and expected attempt.
+Workflow and child identifiers are URL-encoded by the browser and safely decoded by the route before the service revalidates them.
 
-Common body:
+Every request targets one exact Workflow, child, and expected attempt and includes:
 
 ```json
 {
@@ -26,21 +26,7 @@ Common body:
 }
 ```
 
-The decision route additionally requires:
-
-```json
-{
-  "decision": "approved"
-}
-```
-
-or:
-
-```json
-{
-  "decision": "changes_requested"
-}
-```
+The decision route additionally accepts only `approved` or `changes_requested`.
 
 ## Authorization
 
@@ -50,53 +36,97 @@ or:
 | Resume pending child | `workflow.recover` | CSRF |
 | Berlin decision | `workflow.approve` | CSRF + action-bound step-up confirmation |
 
-For a session-backed approval request, the confirmation value is bound to the exact method and path:
+For a session-backed decision request, confirmation is bound to the exact encoded method and path:
 
 ```text
-confirm:workflow.approve:POST:/api/operator/workflows/<workflowId>/children/<childId>/decision
+confirm:workflow.approve:POST:/api/operator/workflows/<encoded-workflow-id>/children/<encoded-child-id>/decision
 ```
 
-The existing dedicated operator bearer remains supported by the V1-compatible authorization boundary. Legacy dashboard-token mode remains read only.
+Legacy dashboard-token mode remains read only.
+
+## Browser workflow
+
+### Needs Human
+
+The Needs Human page now contains:
+
+- the existing review-task control desk;
+- a Workflow control desk listing active and needs-human Missions;
+- Mission selection with direct Mission Room navigation;
+- bounded legal-action suggestions derived from current Mission Room evidence;
+- exact-stage recovery and Berlin decision dialogs.
+
+### Mission Room
+
+Each Mission Room now includes a Workflow control panel before the activity feed and deterministic timeline. The panel displays:
+
+- exact Workflow ID and child ID;
+- iteration, stage, owner, and expected attempt;
+- bounded stage, effect, and workspace states;
+- only actions suggested by the current public evidence;
+- role-aware button availability.
+
+Browser gating is a usability aid only. The server re-reads and verifies every authority before mutation.
+
+## Confirmation and uncertain delivery
+
+Opening an action dialog creates one request identity. The dialog requires:
+
+- a human-readable reason of at most 500 characters;
+- acknowledgement of the exact consequence;
+- the authenticated session CSRF token;
+- step-up confirmation for Berlin decisions.
+
+If the browser does not receive a definite server response, the dialog remains open and retains the same idempotency key. Retrying cannot duplicate an accepted transition.
+
+After definite accepted or rejected responses, the browser invalidates:
+
+- selected Mission Room;
+- Mission list;
+- Needs Human intervention evidence;
+- dashboard metrics;
+- Agent Fleet evidence;
+- Workflow reads.
 
 ## Recovery authority
 
 Retry composes `retryWorkflowChildAfterInvestigation`:
 
 - Workflow and child must be `needs_human`;
-- the expected attempt must match;
-- the current-attempt provider effect must be terminal `failed` or `needs_human`;
+- expected attempt must match;
+- current-attempt provider effect must be terminal `failed` or `needs_human`;
 - `claimed` and `completed` effects are refused;
 - workspace ownership and exact HEAD are re-read;
 - held workspace evidence is reactivated only after verification;
-- the attempt increments exactly once.
+- attempt increments exactly once.
 
 Resume composes `resumePendingWorkflowAfterInvestigation`:
 
 - Workflow must be `needs_human` and child must remain pending;
-- the expected attempt must match;
+- expected attempt must match;
 - no current-attempt provider effect may exist;
 - any bound workspace must remain active at the exact input SHA;
-- the attempt is not incremented.
+- attempt is not incremented.
 
-Neither route invokes a provider.
+Neither browser request invokes a provider.
 
 ## Berlin decision authority
 
 The decision route accepts one completed Berlin review child only.
 
-When the Workflow was escalated solely because review-decision evidence was missing, the operator contract may reactivate it before recording the decision. Other needs-human reasons remain blocked.
+When a Workflow was escalated solely because review-decision evidence was missing, the operator contract may reactivate it before recording the decision. Other needs-human reasons remain blocked.
 
 ### Approved
 
-The accepted `persistReviewDecision` contract records `approved`. The deterministic advancement planner must then report `complete`; the existing advancement authority completes the Workflow without calling an execution provider.
+The accepted `persistReviewDecision` contract records `approved`. Deterministic advancement completes the Workflow without calling Berlin or another provider.
 
 ### Changes requested
 
-The accepted `persistReviewDecision` contract records `changes_requested` with the bounded reason code `operator_changes_requested`.
+The accepted contract records `changes_requested` with bounded reason code `operator_changes_requested`.
 
-- below the iteration limit, the accepted `ensureWorkflowChild` contract creates or reuses exactly one next-iteration Professor implementation child at the reviewed output SHA;
-- at the iteration limit, the existing advancement authority records `workflow_iteration_limit_exceeded`;
-- the browser request never activates or executes the next child.
+- below the iteration limit, `ensureWorkflowChild` creates or reuses exactly one next-iteration Professor implementation child at the reviewed output SHA;
+- at the iteration limit, advancement records `workflow_iteration_limit_exceeded`;
+- the request never activates or executes the next child.
 
 ## Idempotency and audit
 
@@ -106,16 +136,9 @@ Every operation is bound to:
 actor + operation + workflow/child target + request key + payload
 ```
 
-An identical retry replays the original response. Conflicting key reuse fails closed.
+Identical retries replay the original response. Conflicting key reuse fails closed.
 
-Accepted and rejected requests append actor-attributed audit evidence with:
-
-- Workflow and child IDs;
-- stage and owner;
-- expected and resulting attempt;
-- decision and next-child ID when applicable;
-- `provider_invoked: false`;
-- `uncertain_effect_replayed: false`.
+Accepted and rejected requests append actor-attributed audit evidence with Workflow/child IDs, stage, owner, attempt, decision, next-child ID when applicable, `provider_invoked: false`, and `uncertain_effect_replayed: false`.
 
 ## Explicit non-goals
 
@@ -126,14 +149,23 @@ This slice does not:
 - execute or activate a newly created iteration;
 - mutate Git or GitHub;
 - create, review, merge, release, or deploy a pull request;
-- resolve ambiguous effects or mutate workspace cleanup state beyond the accepted OPS-010G recovery contracts;
+- resolve ambiguous effects;
+- provide workspace hold/release or cleanup controls beyond accepted recovery contracts;
 - expose credentials, environment values, authenticated remotes, host paths, raw provider output, unrestricted logs, or private reasoning.
 
-## Remaining OPS-012F.2 work
+Effect resolution and general workspace investigation controls remain OPS-012F.3.
 
-- add typed dashboard client contracts;
-- add legal-action derivation from bounded Workflow/Mission Room evidence;
-- add deliberate confirmation dialogs with retained request keys for uncertain delivery;
-- integrate controls into Needs Human and Mission Room;
-- add query invalidation and browser error presentation;
-- complete cross-platform CI and immutable release verification.
+## Validation coverage
+
+Focused tests cover:
+
+- retry gating from terminal retryable effect plus inspectable workspace evidence;
+- refusal of claimed effects and released workspaces;
+- resume gating only when no current-attempt effect exists;
+- unresolved completed Berlin review decisions;
+- operator/reviewer/administrator permission separation;
+- retained browser request-key generation;
+- exact encoded route and action-bound approval confirmation;
+- route decoding and malformed-encoding rejection;
+- deterministic approval, next-iteration creation, iteration-limit escalation, recovery idempotency, and durable audit;
+- Needs Human and Mission Room browser integration and bounded-data exclusions.
