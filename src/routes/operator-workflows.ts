@@ -14,20 +14,25 @@ import {
 } from '../services/operator-workflow-actions.js';
 import { parseBody, sendJSON } from './helpers.js';
 
+export function matchOperatorWorkflowRoute(pathname: string) {
+  const match = pathname.match(
+    /^\/api\/operator\/workflows\/([^/]+)\/children\/([^/]+)\/(retry|resume|decision)$/,
+  );
+  if (!match) return null;
+  try {
+    return {
+      workflowId: decodeURIComponent(match[1]),
+      childId: decodeURIComponent(match[2]),
+      action: match[3],
+    };
+  } catch {
+    return null;
+  }
+}
+
 const operatorWorkflowRoute: RouteEntry = {
   method: 'POST',
-  match: (pathname) => {
-    const match = pathname.match(
-      /^\/api\/operator\/workflows\/([A-Za-z0-9._:-]+)\/children\/([A-Za-z0-9._:-]+)\/(retry|resume|decision)$/,
-    );
-    return match
-      ? {
-          workflowId: match[1],
-          childId: match[2],
-          action: match[3],
-        }
-      : null;
-  },
+  match: matchOperatorWorkflowRoute,
   handler: async (req, res, params) => {
     const action = params.action as OperatorWorkflowAction;
     const permission = action === 'decision' ? 'workflow.approve' : 'workflow.recover';
