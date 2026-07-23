@@ -5,6 +5,7 @@ import {
   Code,
   Group,
   Paper,
+  SimpleGrid,
   Stack,
   Text,
   Title,
@@ -12,6 +13,7 @@ import {
 import { IconAlertTriangle } from '@tabler/icons-react';
 
 import type { MissionRecord, MissionRoom } from '../api/missions';
+import { MissionActivityPanel } from './MissionActivityPanel';
 import { MissionRoomTimeline } from './MissionRoomTimeline';
 
 export function missionStateColor(state: MissionRecord['state']) {
@@ -33,7 +35,7 @@ function shortSha(value: string | null) {
 export function MissionRoomContent({ room }: { room: MissionRoom }) {
   return (
     <Stack gap="lg">
-      <Paper withBorder p="lg">
+      <Paper withBorder p="lg" id="workflow-summary">
         <Group justify="space-between" align="flex-start" wrap="wrap">
           <Box maw={900}>
             <Group gap="sm" align="center">
@@ -82,6 +84,15 @@ export function MissionRoomContent({ room }: { room: MissionRoom }) {
             <Text size="sm" fw={600}>{room.mission.participants.map((participant) => participant.agent_id).join(', ')}</Text>
           </Box>
         </Group>
+
+        <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="sm" mt="lg">
+          <Box><Text size="xs" c="dimmed">Activity events</Text><Text fz={22} fw={700}>{room.activity_summary.total}</Text></Box>
+          <Box><Text size="xs" c="dimmed">Attention events</Text><Text fz={22} fw={700}>{room.activity_summary.attention}</Text></Box>
+          <Box><Text size="xs" c="dimmed">Reviews</Text><Text fz={22} fw={700}>{room.activity_summary.reviews}</Text></Box>
+          <Box><Text size="xs" c="dimmed">Retries</Text><Text fz={22} fw={700}>{room.activity_summary.retries}</Text></Box>
+          <Box><Text size="xs" c="dimmed">Effect events</Text><Text fz={22} fw={700}>{room.activity_summary.effects}</Text></Box>
+          <Box><Text size="xs" c="dimmed">Created stages</Text><Text fz={22} fw={700}>{room.summary.created_stages}</Text></Box>
+        </SimpleGrid>
       </Paper>
 
       {room.summary.attention_required && (
@@ -90,6 +101,7 @@ export function MissionRoomContent({ room }: { room: MissionRoom }) {
         </Alert>
       )}
 
+      <MissionActivityPanel room={room} />
       <MissionRoomTimeline room={room} />
     </Stack>
   );
