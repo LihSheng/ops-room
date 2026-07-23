@@ -68,7 +68,7 @@ test('notification classification covers required actionable event families', ()
   assert.equal(classifyActivityNotification(activity({ event_type: 'review.approved', category: 'review', severity: 'success' })), 'review_approved');
   assert.equal(classifyActivityNotification(activity({ event_type: 'review.changes.requested', title: 'Berlin requested changes' })), 'review_changes_requested');
   assert.equal(classifyActivityNotification(activity({ reason_code: 'maximum_iteration_reached' })), 'retry_budget_exhausted');
-  assert.equal(classifyActivityNotification(activity({ source: 'provider_effect', event_type: 'effect.failed', severity: 'error', detail: 'Provider failed' })), 'provider_failure');
+  assert.equal(classifyActivityNotification(activity({ source: 'provider_effect', event_type: 'effect.failed', severity: 'error', detail: 'Provider failed', reason_code: 'provider_failed' })), 'provider_failure');
   assert.equal(classifyActivityNotification(activity({ source: 'provider_effect', event_type: 'effect.needs.human', detail: 'Provider timed out' })), 'provider_timeout');
   assert.equal(classifyActivityNotification(activity({ reason_code: 'agent_unavailable' })), 'agent_unavailable');
   assert.equal(classifyActivityNotification(activity({ event_type: 'workspace.failed', reason_code: 'workspace_cleanup_failed' })), 'workspace_cleanup_failure');
@@ -78,11 +78,14 @@ test('notification classification covers required actionable event families', ()
 test('notification projection is stable, bounded, and transcript free', () => {
   const first = projectActivityNotification(activity());
   const second = projectActivityNotification(activity());
+  const unsafe = projectActivityNotification(activity({ links: { mission: 'https://evil.example', stage: '//evil.example' } }));
   assert.ok(first);
   assert.equal(first?.notification_id, second?.notification_id);
   assert.match(first!.notification_id, /^notification:[a-f0-9]{40}$/);
   assert.equal(first?.activity_id, 'mission-a:activity:event-a');
   assert.equal(first?.links.stage, '/missions/mission-a#stage-1-implementation');
+  assert.equal(unsafe?.links.mission, null);
+  assert.equal(unsafe?.links.stage, null);
   assert.equal('provider_output' in first!, false);
   assert.equal('transcript' in first!, false);
   assert.equal('environment' in first!, false);
