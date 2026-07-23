@@ -4,7 +4,9 @@
 import { initializeAgentProfileRegistry } from '../services/agent-profile/registry.js';
 import { initializeSkillRegistry } from '../services/skill-registry/registry.js';
 import { initializeMemorySpaceRegistry } from '../services/memory-space-registry/registry.js';
+import { reconcileInterruptedAgentChatTurns } from '../services/agent-chat-store.js';
 import {
+  AGENT_CHAT_SESSIONS_DIR,
   TASK_WORKSPACE_ROOT,
   WORKFLOW_EFFECTS_DIR,
   WORKFLOW_RUNS_DIR,
@@ -17,6 +19,13 @@ import { reconcileInterruptedWorkflowRuns } from '../services/workflow-run-recon
 await initializeAgentProfileRegistry();
 await initializeSkillRegistry();
 await initializeMemorySpaceRegistry();
+
+const chatRecovery = await reconcileInterruptedAgentChatTurns({ dir: AGENT_CHAT_SESSIONS_DIR });
+if (chatRecovery.recovered_turns > 0) {
+  console.warn(
+    `[agent-chat-reconciler] recovered ${chatRecovery.recovered_turns} interrupted provider turn(s) without replay`,
+  );
+}
 
 const effectRecovery = await reconcileInterruptedWorkflowEffects({ dir: WORKFLOW_EFFECTS_DIR });
 if (effectRecovery.recovered_effects > 0) {
@@ -66,4 +75,5 @@ if (providerRecovery.unavailable.length > 0) {
 }
 
 await import('../routes/operator-workflows.js');
+await import('../routes/operator-agent-chat.js');
 await import('./http.js');
