@@ -38,6 +38,7 @@ import {
   type MissionChatSession,
 } from '../api/mission-chat';
 import type { MissionRoom } from '../api/missions';
+import { useAgentFleet } from '../hooks/use-agent-fleet';
 import { useOperatorAuth } from '../operator-auth';
 
 function label(value: string | null | undefined) {
@@ -71,15 +72,22 @@ function errorMessage(error: unknown) {
   return `${error.message}${details ? ` (${details})` : ''}`;
 }
 
-function preferredParticipant(room: MissionRoom) {
+function preferredParticipant(room: MissionRoom, knownDisabled: ReadonlySet<string> = new Set()) {
   const current = room.timeline.find((stage) => stage.key === room.summary.current_stage_key)?.owner_agent;
-  if (current && room.mission.participants.some((participant) => participant.agent_id === current)) return current;
-  return room.mission.participants[0]?.agent_id || null;
+  if (
+    current
+    && !knownDisabled.has(current)
+    && room.mission.participants.some((participant) => participant.agent_id === current)
+  ) return current;
+  return room.mission.participants.find((participant) => !knownDisabled.has(participant.agent_id))?.agent_id
+    || room.mission.participants[0]?.agent_id
+    || null;
 }
 
 export function MissionParticipantChatPanel({ room }: { room: MissionRoom }) {
   const auth = useOperatorAuth();
   const queryClient = useQueryClient();
+  const fleetQuery = useAgentFleet();
   const missionId = room.mission.mission_id;
   const roles = auth.session?.session.roles || [];
   const canAccess = auth.mode === 'session' && rolesAllowMissionChat(roles);
@@ -92,19 +100,33 @@ export function MissionParticipantChatPanel({ room }: { room: MissionRoom }) {
   });
   const session = chatQuery.data?.session || null;
   const canMutateMission = chatQuery.data?.can_mutate ?? !['completed', 'cancelled'].includes(room.mission.state);
+  const knownDisabledParticipants = useMemo(() => new Set(
+    (fleetQuery.data?.fleet || [])
+      .filter((agent) => agent.profile.available && !agent.profile.enabled)
+      .map((agent) => agent.id),
+  ), [fleetQuery.data?.fleet]);
   const participantOptions = useMemo(
-    () => room.mission.participants.map((participant) => ({
-      value: participant.agent_id,
-      label: `${participant.agent_id} — ${participant.roles.join(', ')}`,
-    })),
-    [room.mission.participants],
+    () => room.mission.participants.map((participant) => {
+      const disabled = knownDisabledParticipants.has(participant.agent_id);
+      return {
+        value: participant.agent_id,
+        label: `${participant.agent_id} — ${participant.roles.join(', ')}${disabled ? ' — disabled' : ''}`,
+        disabled,
+      };
+    }),
+    [knownDisabledParticipants, room.mission.participants],
   );
 
   const [targetAgentId, setTargetAgentId] = useState<string | null>(() => preferredParticipant(room));
+  const targetKnownDisabled = Boolean(targetAgentId && knownDisabledParticipants.has(targetAgentId));
   useEffect(() => {
-    if (targetAgentId && room.mission.participants.some((participant) => participant.agent_id === targetAgentId)) return;
-    setTargetAgentId(preferredParticipant(room));
-  }, [room, targetAgentId]);
+    if (
+      targetAgentId
+      && !knownDisabledParticipants.has(targetAgentId)
+      && room.mission.participants.some((participant) => participant.agent_id === targetAgentId)
+    ) return;
+    setTargetAgentId(preferredParticipant(room, knownDisabledParticipants));
+  }, [knownDisabledParticipants, room, targetAgentId]);
 
   const [createOpened, setCreateOpened] = useState(false);
   const [createReason, setCreateReason] = useState('Coordinate with declared Mission participants');
@@ -179,7 +201,15 @@ export function MissionParticipantChatPanel({ room }: { room: MissionRoom }) {
   };
 
   const submitMessage = async () => {
-    if (!auth.session || !session || session.state !== 'open' || !canMutateMission || !targetAgentId || !message.trim()) return;
+    if (
+      !auth.session
+      || !session
+      || session.state !== 'open'
+      || !canMutateMission
+      || !targetAgentId
+      || targetKnownDisabled
+      || !message.trim()
+    ) return;
     const retainedKey = messageKey || createMissionChatIdempotencyKey();
     setMessageKey(retainedKey);
     setMessagePending(true);
@@ -288,12 +318,21 @@ export function MissionParticipantChatPanel({ room }: { room: MissionRoom }) {
         </Alert>
 
         <Group gap={6}>
-          {room.mission.participants.map((participant) => (
-            <Badge key={participant.agent_id} variant="outline" color="violet">
-              {participant.agent_id}: {participant.roles.join(', ')}
-            </Badge>
-          ))}
+          {room.mission.participants.map((participant) => {
+            const disabled = knownDisabledParticipants.has(participant.agent_id);
+            return (
+              <Badge key={participant.agent_id} variant="outline" color={disabled ? 'red' : 'violet'}>
+                {participant.agent_id}: {participant.roles.join(', ')}{disabled ? ' · disabled' : ''}
+              </Badge>
+            );
+          })}
         </Group>
+
+        {knownDisabledParticipants.size > 0 && (
+          <Alert color="orange" icon={<IconAlertTriangle size={17} />} title="Disabled participants are read only">
+            Disabled agent profiles remain visible in historical Mission transcripts but cannot be selected for a new provider turn.
+          </Alert>
+        )}
 
         {auth.mode === 'legacy' ? (
           <Alert color="orange" icon={<IconAlertTriangle size={17} />} title="Human session required">
@@ -381,13 +420,18 @@ export function MissionParticipantChatPanel({ room }: { room: MissionRoom }) {
             <Divider />
             <Select
               label="Address participant"
-              description="Only agents declared in this Mission are available."
+              description="Only enabled agents declared in this Mission are available for new turns."
               data={participantOptions}
               value={targetAgentId}
               onChange={setTargetAgentId}
               disabled={!canMutateMission || session.state !== 'open' || messagePending}
               allowDeselect={false}
             />
+            {targetKnownDisabled && (
+              <Alert color="orange" icon={<IconAlertTriangle size={17} />} title="Selected participant is disabled">
+                Choose another enabled Mission participant. Historical responses from this agent remain visible.
+              </Alert>
+            )}
             <Textarea
               label="Message"
               description="Maximum 4,000 characters. This is conversation context, not a task or approval."
@@ -399,8 +443,14 @@ export function MissionParticipantChatPanel({ room }: { room: MissionRoom }) {
                 setMessage(event.currentTarget.value);
                 if (!messageKey) setMessageKey(createMissionChatIdempotencyKey());
               }}
-              disabled={!canMutateMission || session.state !== 'open' || messagePending}
-              placeholder={session.state === 'open' && canMutateMission ? 'Ask the selected participant for clarification or a bounded summary...' : 'This Mission chat is read only.'}
+              disabled={!canMutateMission || session.state !== 'open' || targetKnownDisabled || messagePending}
+              placeholder={
+                targetKnownDisabled
+                  ? 'The selected participant is disabled.'
+                  : session.state === 'open' && canMutateMission
+                    ? 'Ask the selected participant for clarification or a bounded summary...'
+                    : 'This Mission chat is read only.'
+              }
             />
             {messageUncertain && (
               <Alert color="orange" icon={<IconAlertTriangle size={17} />} title="Server response was not received">
@@ -408,7 +458,7 @@ export function MissionParticipantChatPanel({ room }: { room: MissionRoom }) {
               </Alert>
             )}
             <Group justify="flex-end">
-              <Button leftSection={<IconSend size={15} />} loading={messagePending} disabled={!canMutateMission || session.state !== 'open' || !targetAgentId || !message.trim()} onClick={() => { void submitMessage(); }}>
+              <Button leftSection={<IconSend size={15} />} loading={messagePending} disabled={!canMutateMission || session.state !== 'open' || !targetAgentId || targetKnownDisabled || !message.trim()} onClick={() => { void submitMessage(); }}>
                 Send to {targetAgentId || 'participant'}
               </Button>
             </Group>
