@@ -34,6 +34,7 @@ import { useParams } from 'react-router-dom';
 import { opsApi } from '../api';
 import type { ProfileMemoryAssignment, PublicAgentProfile } from '../api/agent-profiles';
 import type { CompatibilityStatus, RequirementStatus } from '../api/skills';
+import { AgentChatPanel } from '../components/AgentChatPanel';
 import { AgentOperationalSummary } from '../components/AgentOperationalSummary';
 import { useAgentFleet } from '../hooks/use-agent-fleet';
 import { useAgentProfile } from '../hooks/use-agent-profile';
@@ -216,6 +217,7 @@ export function AgentDetailPage() {
     <Stack gap="lg">
       <Box><Group justify="space-between" align="flex-start"><Box><Title order={1} className="page-title">{profile.display_name}</Title><Text c="dimmed" mt={6}>{profile.mission}</Text></Box><Group gap="xs"><Badge color={profile.enabled ? 'teal' : 'red'} size="lg">{profile.enabled ? 'Enabled' : 'Disabled'}</Badge><Badge variant="light" color="violet" size="lg">Profile Policy</Badge></Group></Group></Box>
       <AgentOperationalSummary fleet={fleetAgent} loading={fleetQuery.isLoading} error={fleetQuery.isError} />
+      <AgentChatPanel agentId={profile.id} displayName={profile.display_name} />
       <Grid>
         <Grid.Col span={{ base: 12, lg: 7 }}><PolicyProfile profile={profile} /></Grid.Col>
         <Grid.Col span={{ base: 12, lg: 5 }}>
