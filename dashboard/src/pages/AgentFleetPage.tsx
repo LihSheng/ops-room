@@ -32,6 +32,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import type { AgentFleetItem, AgentFleetState } from '../api/agent-fleet';
+import { CurrentMissionEvidence } from '../components/CurrentMissionEvidence';
 import { MissionCreationModal } from '../components/MissionCreationModal';
 import { MissionStartPanel } from '../components/MissionStartPanel';
 import { useAgentFleet } from '../hooks/use-agent-fleet';
@@ -98,7 +99,11 @@ function relativeTime(value: string | null) {
 
 function matchesFilter(agent: AgentFleetItem, filter: FleetFilter) {
   if (filter === 'working') return WORKING_STATES.has(agent.state);
-  if (filter === 'attention') return agent.attention.required || agent.state === 'needs_human';
+  if (filter === 'attention') {
+    return agent.attention.required
+      || agent.state === 'needs_human'
+      || Boolean(agent.current_mission?.attention_required);
+  }
   if (filter === 'offline') return OFFLINE_STATES.has(agent.state);
   return true;
 }
@@ -115,6 +120,10 @@ function matchesSearch(agent: AgentFleetItem, search: string) {
     agent.responsibility,
     agent.current_task?.title,
     agent.current_task?.repository,
+    agent.current_mission?.title,
+    agent.current_mission?.mission_id,
+    agent.current_mission?.repository_id,
+    agent.current_mission?.stage,
     ...agent.repositories,
   ];
 
@@ -178,6 +187,8 @@ function FleetCard({ agent }: { agent: AgentFleetItem }) {
             </Text>
           </Alert>
         )}
+
+        <CurrentMissionEvidence mission={agent.current_mission} compact />
 
         <Paper withBorder p="sm" bg="gray.0">
           <Group justify="space-between" align="flex-start" wrap="nowrap">
@@ -261,7 +272,11 @@ export function AgentFleetPage() {
     && (roles.includes('operator') || roles.includes('administrator'));
 
   const workingCount = fleet.filter((agent) => WORKING_STATES.has(agent.state)).length;
-  const attentionCount = fleet.filter((agent) => agent.attention.required || agent.state === 'needs_human').length;
+  const attentionCount = fleet.filter((agent) => (
+    agent.attention.required
+    || agent.state === 'needs_human'
+    || Boolean(agent.current_mission?.attention_required)
+  )).length;
   const offlineCount = fleet.filter((agent) => OFFLINE_STATES.has(agent.state)).length;
 
   const filteredFleet = useMemo(
@@ -269,10 +284,10 @@ export function AgentFleetPage() {
     [fleet, filter, search],
   );
 
-  const unavailableSources = query.data
+  const degradedSources = query.data
     ? Object.entries(query.data.sources)
-      .filter(([source, state]) => source !== 'missions' && state === 'unavailable')
-      .map(([source]) => source)
+      .filter(([, state]) => state !== 'available')
+      .map(([source, state]) => `${source} (${state})`)
     : [];
 
   if (query.isLoading) {
@@ -280,7 +295,7 @@ export function AgentFleetPage() {
       <Stack gap="lg">
         <Skeleton height={74} radius="lg" />
         <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }}>{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} height={120} radius="lg" />)}</SimpleGrid>
-        <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }}>{Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} height={360} radius="lg" />)}</SimpleGrid>
+        <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }}>{Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} height={420} radius="lg" />)}</SimpleGrid>
       </Stack>
     );
   }
@@ -305,9 +320,9 @@ export function AgentFleetPage() {
         <Box>
           <Group gap="sm">
             <Title order={1} className="page-title">Agent Fleet</Title>
-            <Badge variant="light" color="gray">Fleet read only</Badge>
+            <Badge variant="light" color="gray">Normalized evidence</Badge>
           </Group>
-          <Text c="dimmed" mt={6}>Canonical state, current work, runtime health, and operator attention across the multi-agent fleet.</Text>
+          <Text c="dimmed" mt={6}>Canonical mission, workflow, current-work, runtime health, and operator-attention evidence across the multi-agent fleet.</Text>
         </Box>
         <Group>
           <Button
@@ -334,13 +349,13 @@ export function AgentFleetPage() {
       <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }} spacing="md">
         <FleetMetric label="Registered agents" value={fleet.length} helper="Validated fleet records" icon={<IconUsers size={19} />} color="blue" />
         <FleetMetric label="Working" value={workingCount} helper="Executing or waiting on work" icon={<IconActivity size={19} />} color="violet" />
-        <FleetMetric label="Needs attention" value={attentionCount} helper="Operator review required" icon={<IconAlertTriangle size={19} />} color={attentionCount ? 'orange' : 'gray'} />
+        <FleetMetric label="Needs attention" value={attentionCount} helper="Task, runtime, or mission evidence" icon={<IconAlertTriangle size={19} />} color={attentionCount ? 'orange' : 'gray'} />
         <FleetMetric label="Offline or unavailable" value={offlineCount} helper="No healthy operating evidence" icon={<IconServer size={19} />} color={offlineCount ? 'red' : 'teal'} />
       </SimpleGrid>
 
-      {unavailableSources.length > 0 && (
+      {degradedSources.length > 0 && (
         <Alert color="orange" variant="light" icon={<IconAlertTriangle size={18} />} title="Fleet evidence is degraded">
-          Unavailable sources: {unavailableSources.join(', ')}. Cards show only the bounded evidence currently available.
+          Degraded sources: {degradedSources.join(', ')}. Cards show only bounded evidence currently available; missing mission or workflow state is not inferred.
         </Alert>
       )}
 
@@ -348,7 +363,7 @@ export function AgentFleetPage() {
         <Group justify="space-between" align="flex-end" wrap="wrap">
           <TextInput
             label="Find an agent"
-            placeholder="Name, role, repository, or task"
+            placeholder="Name, role, mission, repository, or task"
             leftSection={<IconSearch size={16} />}
             value={search}
             onChange={(event) => setSearch(event.currentTarget.value)}

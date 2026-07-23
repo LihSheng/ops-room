@@ -1,9 +1,9 @@
 import { getAgentList } from '../services/agent-registry.js';
-import { getAgentFleet } from '../services/agent-fleet.js';
+import { getAgentFleetWithMissionEvidence } from '../services/agent-fleet-missions.js';
 
 export async function handleAgentsList() {
   const agents = await getAgentList();
-  const fleet = await getAgentFleet({ agents });
+  const fleet = await getAgentFleetWithMissionEvidence({ agents });
   return {
     agents,
     fleet: fleet.fleet,
