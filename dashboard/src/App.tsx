@@ -67,6 +67,8 @@ import { joinProfileRuntime } from './lib/join-profile-runtime';
 import { ActivityPage, SettingsPage, WorkflowsPage } from './operational-pages';
 import { AgentDetailPage } from './pages/AgentDetailPage';
 import { AgentFleetPage } from './pages/AgentFleetPage';
+import { MissionsPage } from './pages/MissionsPage';
+import { MissionRoomPage } from './pages/MissionRoomPage';
 import { SkillsPage } from './pages/SkillsPage';
 import { MemorySpacesPage } from './pages/MemorySpacesPage';
 import type { AgentInstance, OpsTask } from './types';
@@ -189,13 +191,11 @@ export function useDashboardData() {
       const [health, tasks] = await Promise.all([
         opsApi.health(), opsApi.tasks(),
       ]);
-      // Instances are fetched independently so health/tasks failures don't
-      // collapse the fleet table or the command center.
       let instances: Awaited<ReturnType<typeof opsApi.instances>> = { instances: [] };
       try {
         instances = await opsApi.instances();
       } catch {
-        // Silently degrade — fleet table uses its own standalone query.
+        // Fleet runtime evidence degrades independently.
       }
       return { health, instances, tasks };
     },
@@ -314,15 +314,9 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs, profilesLoad
     return <EmptyState icon={<IconRobot size={20} />} title="No agents configured" description="Add agents to the server registry before they can appear here." />;
   }
 
-  const showProfileColumn = profiles.length > 0 || profilesLoading || profilesError;
-
-  function ProfileCell({ profile, id }: { profile: PublicAgentProfile | null; id: string }) {
+  function ProfileCell({ profile }: { profile: PublicAgentProfile | null }) {
     if (profilesLoading) return <Skeleton height={22} width={90} radius="sm" />;
-    if (profilesError) {
-      // Only flag missing profiles when runtime exists and we know the API
-      // succeeded but didn't include this agent. Otherwise show error state.
-      return <Badge color="red" variant="light" size="sm">Profile API error</Badge>;
-    }
+    if (profilesError) return <Badge color="red" variant="light" size="sm">Profile API error</Badge>;
     if (profile) {
       return (
         <Stack gap={4}>
@@ -337,7 +331,7 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs, profilesLoad
   function ProfileDataCell({ profile }: { profile: PublicAgentProfile | null }) {
     if (profilesLoading) return <Skeleton height={16} width={60} />;
     if (profilesError) return <Text size="xs" c="dimmed">—</Text>;
-    if (profile) return null; // caller renders profile data
+    if (profile) return null;
     return <Text size="xs" c="dimmed">—</Text>;
   }
 
@@ -380,7 +374,7 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs, profilesLoad
                     </Group>
                   </UnstyledButton>
                 </Table.Td>
-                <Table.Td><ProfileCell profile={profile} id={id} /></Table.Td>
+                <Table.Td><ProfileCell profile={profile} /></Table.Td>
                 <Table.Td>
                   {runtimeError ? (
                     <Badge color="red" variant="light" size="sm">Runtime API error</Badge>
@@ -397,66 +391,25 @@ function AgentTable({ agents, profiles, tasks, openAgent, openLogs, profilesLoad
                   <Text size="sm" fw={500}>{role}</Text>
                   {description && <Text size="xs" c="dimmed" lineClamp={1}>{description}</Text>}
                 </Table.Td>
-                <Table.Td>
-                  {profile ? (
-                    <Text size="xs" lineClamp={2} maw={160}>{profile.mission}</Text>
-                  ) : (
-                    <ProfileDataCell profile={profile} />
-                  )}
-                </Table.Td>
-                <Table.Td>
-                  {profile ? (
-                    <Badge variant="light" color="violet">{profile.skills.length}</Badge>
-                  ) : (
-                    <ProfileDataCell profile={profile} />
-                  )}
-                </Table.Td>
-                <Table.Td>
-                  {profile ? (
-                    <Group gap={4}>
-                      <Badge variant="light" color="blue" size="sm">{profile.memory.read.length}r</Badge>
-                      <Badge variant="light" color="orange" size="sm">{profile.memory.write.length}w</Badge>
-                    </Group>
-                  ) : (
-                    <ProfileDataCell profile={profile} />
-                  )}
-                </Table.Td>
-                <Table.Td>
-                  {profile ? (
-                    <Badge variant="light" color="gray">{profile.repositories.length}</Badge>
-                  ) : (
-                    <ProfileDataCell profile={profile} />
-                  )}
-                </Table.Td>
+                <Table.Td>{profile ? <Text size="xs" lineClamp={2} maw={160}>{profile.mission}</Text> : <ProfileDataCell profile={profile} />}</Table.Td>
+                <Table.Td>{profile ? <Badge variant="light" color="violet">{profile.skills.length}</Badge> : <ProfileDataCell profile={profile} />}</Table.Td>
+                <Table.Td>{profile ? <Group gap={4}><Badge variant="light" color="blue" size="sm">{profile.memory.read.length}r</Badge><Badge variant="light" color="orange" size="sm">{profile.memory.write.length}w</Badge></Group> : <ProfileDataCell profile={profile} />}</Table.Td>
+                <Table.Td>{profile ? <Badge variant="light" color="gray">{profile.repositories.length}</Badge> : <ProfileDataCell profile={profile} />}</Table.Td>
                 <Table.Td>
                   {current ? (
                     <Box style={{ minWidth: 0 }}>
                       <Text size="sm" fw={500} lineClamp={1}>{taskTitle(current)}</Text>
                       <Text size="xs" c="dimmed">{relativeTime(taskTimestamp(current))}</Text>
                     </Box>
-                  ) : (
-                    <Text size="sm" c="dimmed">Idle</Text>
-                  )}
+                  ) : <Text size="sm" c="dimmed">Idle</Text>}
                 </Table.Td>
-                <Table.Td>
-                  <Badge variant="dot" color={agent?.github_polling_enabled ? 'teal' : 'gray'}>
-                    {agent?.github_polling_enabled ? 'enabled' : 'disabled'}
-                  </Badge>
-                </Table.Td>
+                <Table.Td><Badge variant="dot" color={agent?.github_polling_enabled ? 'teal' : 'gray'}>{agent?.github_polling_enabled ? 'enabled' : 'disabled'}</Badge></Table.Td>
                 <Table.Td>
                   <Group gap={4} justify="flex-end" wrap="nowrap">
                     {agent && (
                       <>
-                        <Tooltip label="View logs">
-                          <ActionIcon variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); openLogs(agent); }}>
-                            <IconTerminal2 size={17} />
-                          </ActionIcon>
-                        </Tooltip>
-                        <Tooltip label="Agent details">
-                          <ActionIcon variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); openAgent(agent); }}>
-                            <IconChevronRight size={17} />
-                          </ActionIcon>
-                        </Tooltip>
+                        <Tooltip label="View logs"><ActionIcon variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); openLogs(agent); }}><IconTerminal2 size={17} /></ActionIcon></Tooltip>
+                        <Tooltip label="Agent details"><ActionIcon variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); openAgent(agent); }}><IconChevronRight size={17} /></ActionIcon></Tooltip>
                       </>
                     )}
                   </Group>
@@ -540,19 +493,24 @@ const navigation = [
   { label: 'Dashboard', path: '/', icon: IconDashboard },
   { label: 'Agents', path: '/agents', icon: IconUsers },
   { label: 'Tasks', path: '/tasks', icon: IconListCheck },
-  { label: 'Workflows', path: '/workflows', icon: IconRoute },
+  { label: 'Missions', path: '/missions', icon: IconRoute },
+  { label: 'Workflows', path: '/workflows', icon: IconGitPullRequest },
   { label: 'Activity', path: '/activity', icon: IconActivity },
   { label: 'Skills', path: '/skills', icon: IconCode },
   { label: 'Memory', path: '/memory', icon: IconDatabase },
   { label: 'Settings', path: '/settings', icon: IconSettings },
 ];
 
+function pathMatches(pathname: string, path: string) {
+  return pathname === path || (path !== '/' && pathname.startsWith(`${path}/`));
+}
+
 function AppNavigation({ closeMobile }: { closeMobile: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   return (
     <Stack gap={4}>
-      {navigation.map((item) => <NavLink key={item.path} label={item.label} leftSection={<item.icon size={18} stroke={1.8} />} active={location.pathname === item.path} onClick={() => { navigate(item.path); closeMobile(); }} />)}
+      {navigation.map((item) => <NavLink key={item.path} label={item.label} leftSection={<item.icon size={18} stroke={1.8} />} active={pathMatches(location.pathname, item.path)} onClick={() => { navigate(item.path); closeMobile(); }} />)}
     </Stack>
   );
 }
@@ -565,13 +523,20 @@ function OpsRoomApp() {
   const queryClient = useQueryClient();
   const auth = useOperatorAuth();
   const location = useLocation();
-  const pageName = navigation.find((item) => item.path === location.pathname)?.label || 'Ops Room';
+  const pageName = navigation.find((item) => pathMatches(location.pathname, item.path))?.label || 'Ops Room';
 
   const openAgent = (agent: AgentInstance) => { setSelectedAgent(agent); agentDrawer.open(); };
   const openLogs = (agent: AgentInstance) => { setSelectedAgent(agent); logsModal.open(); };
   const lastUpdated = useMemo(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), [queryClient.getQueryState(['ops-dashboard'])?.dataUpdatedAt]);
   const operatorName = auth.session?.session.actor.actor_display_name || auth.session?.session.actor.actor_id || 'Operator';
   const operatorRoles = auth.session?.session.roles.join(', ') || '';
+
+  const refreshAll = () => {
+    for (const queryKey of [
+      ['ops-dashboard'], ['agent-fleet'], ['agent-profiles'], ['agent-profile'], ['skills-catalog'],
+      ['memory-spaces'], ['missions'], ['mission-room'], ['openab-instances'],
+    ]) queryClient.invalidateQueries({ queryKey });
+  };
 
   return (
     <AppShell header={{ height: 64 }} navbar={{ width: 248, breakpoint: 'md', collapsed: { mobile: !mobileOpened } }} padding={{ base: 'md', sm: 'xl' }}>
@@ -583,18 +548,11 @@ function OpsRoomApp() {
             {auth.mode === 'session' && auth.session ? (
               <Group gap="xs" wrap="nowrap">
                 <Avatar size={30} radius="xl" color="violet">{operatorName.slice(0, 2).toUpperCase()}</Avatar>
-                <Box visibleFrom="sm">
-                  <Text size="sm" fw={600} lh={1.1}>{operatorName}</Text>
-                  <Text size="xs" c="dimmed" lineClamp={1}>{operatorRoles}</Text>
-                </Box>
-                <Tooltip label="Sign out">
-                  <ActionIcon variant="default" size="lg" disabled={auth.logoutPending} onClick={() => { void auth.logout(); }}>
-                    <IconLogout size={17} />
-                  </ActionIcon>
-                </Tooltip>
+                <Box visibleFrom="sm"><Text size="sm" fw={600} lh={1.1}>{operatorName}</Text><Text size="xs" c="dimmed" lineClamp={1}>{operatorRoles}</Text></Box>
+                <Tooltip label="Sign out"><ActionIcon variant="default" size="lg" disabled={auth.logoutPending} onClick={() => { void auth.logout(); }}><IconLogout size={17} /></ActionIcon></Tooltip>
               </Group>
             ) : <Badge variant="light" color="gray">Dashboard token</Badge>}
-            <Tooltip label="Refresh all data"><ActionIcon variant="default" size="lg" onClick={() => { queryClient.invalidateQueries({ queryKey: ['ops-dashboard'] }); queryClient.invalidateQueries({ queryKey: ['agent-fleet'] }); queryClient.invalidateQueries({ queryKey: ['agent-profiles'] }); queryClient.invalidateQueries({ queryKey: ['agent-profile'] }); queryClient.invalidateQueries({ queryKey: ['skills-catalog'] }); queryClient.invalidateQueries({ queryKey: ['memory-spaces'] }); queryClient.invalidateQueries({ queryKey: ['openab-instances'] }); }}><IconRefresh size={17} /></ActionIcon></Tooltip>
+            <Tooltip label="Refresh all data"><ActionIcon variant="default" size="lg" onClick={refreshAll}><IconRefresh size={17} /></ActionIcon></Tooltip>
           </Group>
         </Group>
       </AppShell.Header>
@@ -607,6 +565,8 @@ function OpsRoomApp() {
         <Route path="/agents" element={<AgentFleetPage />} />
         <Route path="/agents/:id" element={<AgentDetailPage />} />
         <Route path="/tasks" element={<TasksPage />} />
+        <Route path="/missions" element={<MissionsPage />} />
+        <Route path="/missions/:missionId" element={<MissionRoomPage />} />
         <Route path="/workflows" element={<WorkflowsPage />} />
         <Route path="/activity" element={<ActivityPage />} />
         <Route path="/skills" element={<SkillsPage />} />

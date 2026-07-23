@@ -2,6 +2,7 @@ import {
   Alert,
   Badge,
   Box,
+  Button,
   Code,
   Group,
   Paper,
@@ -10,7 +11,8 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { IconAlertTriangle, IconRoute } from '@tabler/icons-react';
+import { IconAlertTriangle, IconChevronRight, IconRoute } from '@tabler/icons-react';
+import { useNavigate } from 'react-router-dom';
 
 import type { AgentFleetMission } from '../api/agent-fleet';
 
@@ -37,6 +39,8 @@ export function CurrentMissionEvidence({
   mission: AgentFleetMission | null;
   compact?: boolean;
 }) {
+  const navigate = useNavigate();
+
   if (!mission) {
     return compact ? (
       <Paper withBorder p="sm" bg="gray.0">
@@ -54,6 +58,7 @@ export function CurrentMissionEvidence({
   const stageLabel = mission.stage
     ? `${mission.stage.replaceAll('_', ' ')} · ${String(mission.stage_state || 'unknown').replaceAll('_', ' ')}`
     : 'Current workflow stage unavailable';
+  const openRoom = () => navigate(`/missions/${encodeURIComponent(mission.mission_id)}`);
 
   if (compact) {
     return (
@@ -82,8 +87,8 @@ export function CurrentMissionEvidence({
             {stageLabel}{mission.stage_owner ? ` · ${mission.stage_owner}` : ''}
           </Text>
 
-          <Group justify="space-between" gap="xs">
-            <Text size="xs" ff="monospace" c="dimmed" lineClamp={1}>
+          <Group justify="space-between" gap="xs" align="center">
+            <Text size="xs" ff="monospace" c="dimmed" lineClamp={1} style={{ flex: 1 }}>
               {mission.repository_id || 'repository unavailable'}
             </Text>
             {mission.additional_mission_count > 0 && (
@@ -91,11 +96,16 @@ export function CurrentMissionEvidence({
             )}
           </Group>
 
-          {evidenceDegraded && (
-            <Badge size="xs" color="orange" variant="light" w="fit-content">
-              {evidenceLabel(mission.evidence_status)}
-            </Badge>
-          )}
+          <Group justify="space-between" align="center" gap="xs">
+            {evidenceDegraded ? (
+              <Badge size="xs" color="orange" variant="light">
+                {evidenceLabel(mission.evidence_status)}
+              </Badge>
+            ) : <Box />}
+            <Button variant="subtle" size="compact-xs" rightSection={<IconChevronRight size={12} />} onClick={openRoom}>
+              Open room
+            </Button>
+          </Group>
         </Stack>
       </Paper>
     );
@@ -121,6 +131,9 @@ export function CurrentMissionEvidence({
               <Badge color={mission.current_agent_is_stage_owner ? 'teal' : 'gray'} variant="light">
                 {mission.current_agent_is_stage_owner ? 'Current stage owner' : 'Participant'}
               </Badge>
+              <Button variant="light" size="compact-sm" rightSection={<IconChevronRight size={13} />} onClick={openRoom}>
+                Open Mission Room
+              </Button>
             </Group>
           </Group>
 
