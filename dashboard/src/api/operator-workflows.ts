@@ -190,6 +190,7 @@ export const operatorWorkflowsApi = {
     const routeAction = action === 'approve' || action === 'changes_requested' ? 'decision' : action;
     const path = `/api/operator/workflows/${encodeURIComponent(workflowId)}/children/${encodeURIComponent(childId)}/${routeAction}`;
     const permission = routeAction === 'decision' ? 'workflow.approve' : 'workflow.recover';
+    const decision = action === 'approve' ? 'approved' : action;
     return requestJson<WorkflowActionResponse>(path, {
       method: 'POST',
       headers: {
@@ -203,7 +204,7 @@ export const operatorWorkflowsApi = {
         reason,
         expected_attempt: expectedAttempt,
         idempotency_key: idempotencyKey,
-        ...(routeAction === 'decision' ? { decision: action } : {}),
+        ...(routeAction === 'decision' ? { decision } : {}),
       }),
     });
   },
