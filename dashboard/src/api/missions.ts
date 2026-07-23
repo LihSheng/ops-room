@@ -1,5 +1,7 @@
 export type MissionPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type MissionEvidenceSourceState = 'available' | 'degraded' | 'unavailable' | 'not_applicable';
+export type MissionActivitySeverity = 'info' | 'success' | 'warning' | 'attention' | 'error';
+export type MissionActivityCategory = 'mission' | 'workflow' | 'stage' | 'workspace' | 'effect' | 'review' | 'intervention';
 
 export interface MissionParticipant {
   agent_id: string;
@@ -119,10 +121,46 @@ export interface MissionRoomStage {
   provider_effect: MissionRoomEffect | null;
   provider_effect_count: number;
   verification: { status: string; reason: string | null };
-  retry_history: Array<{ event: string; reason: string | null; at: string | null }>;
+  retry_history: Array<{
+    event: string;
+    reason: string | null;
+    from: string | null;
+    to: string | null;
+    at: string | null;
+  }>;
   evidence: {
     workspace: MissionEvidenceSourceState;
     provider_effect: MissionEvidenceSourceState;
+  };
+}
+
+export interface MissionActivityEvent {
+  event_id: string;
+  event_type: string;
+  category: MissionActivityCategory;
+  severity: MissionActivitySeverity;
+  source: 'mission' | 'workflow' | 'workflow_child' | 'workspace' | 'provider_effect';
+  source_id: string | null;
+  title: string;
+  detail: string | null;
+  reason_code: string | null;
+  at: string;
+  mission_id: string | null;
+  workflow_id: string | null;
+  child_id: string | null;
+  stage_key: string | null;
+  iteration: number | null;
+  stage: string | null;
+  owner_agent: string | null;
+  input_sha: string | null;
+  output_sha: string | null;
+  state: string | null;
+  attempt: number | null;
+  links: {
+    mission: string | null;
+    stage: string | null;
+    agent: string | null;
+    workflow: string | null;
   };
 }
 
@@ -142,6 +180,15 @@ export interface MissionRoom {
     last_error: string | null;
   } | null;
   timeline: MissionRoomStage[];
+  activity: MissionActivityEvent[];
+  activity_summary: {
+    total: number;
+    attention: number;
+    reviews: number;
+    retries: number;
+    effects: number;
+    latest_at: string | null;
+  };
   summary: {
     iterations: number;
     created_stages: number;
