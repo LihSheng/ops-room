@@ -20,7 +20,7 @@ test('participant chat UI preserves Mission and role boundaries', async () => {
   assert.match(panel, /agent\.chat/);
   assert.match(panel, /Mission context, not Mission authority/);
   assert.match(panel, /cannot change tasks, Workflow stages, workspaces, SHAs, provider effects/);
-  assert.match(panel, /Only agents declared in this Mission are available/);
+  assert.match(panel, /Only enabled agents declared in this Mission are available/);
   assert.match(panel, /preferredParticipant/);
   assert.match(panel, /targetAgentId/);
   assert.match(panel, /The same participant, message, and request identity are retained/);
@@ -30,6 +30,17 @@ test('participant chat UI preserves Mission and role boundaries', async () => {
   assert.match(panel, /\['mission-room', missionId\]/);
   assert.match(panel, /\['interventions'\]/);
   assert.doesNotMatch(panel, /dangerouslySetInnerHTML|localStorage|sessionStorage/);
+});
+
+test('disabled Mission participants are visible and unavailable for new turns', async () => {
+  const panel = await readFile(PANEL_FILE, 'utf-8');
+  assert.match(panel, /useAgentFleet/);
+  assert.match(panel, /knownDisabledParticipants/);
+  assert.match(panel, /agent\.profile\.available && !agent\.profile\.enabled/);
+  assert.match(panel, /disabled,/);
+  assert.match(panel, /Disabled participants are read only/);
+  assert.match(panel, /Selected participant is disabled/);
+  assert.match(panel, /targetKnownDisabled/);
 });
 
 test('typed client binds encoded Mission routes, target participant, CSRF, and idempotency', async () => {
