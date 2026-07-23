@@ -21,6 +21,7 @@ import {
   IconAlertTriangle,
   IconChevronRight,
   IconGitBranch,
+  IconPlus,
   IconRefresh,
   IconRobot,
   IconSearch,
@@ -31,7 +32,9 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import type { AgentFleetItem, AgentFleetState } from '../api/agent-fleet';
+import { MissionCreationModal } from '../components/MissionCreationModal';
 import { useAgentFleet } from '../hooks/use-agent-fleet';
+import { useOperatorAuth } from '../operator-auth';
 
 type FleetFilter = 'all' | 'working' | 'attention' | 'offline';
 
@@ -247,9 +250,14 @@ function FleetCard({ agent }: { agent: AgentFleetItem }) {
 
 export function AgentFleetPage() {
   const query = useAgentFleet();
+  const auth = useOperatorAuth();
   const [filter, setFilter] = useState<FleetFilter>('all');
   const [search, setSearch] = useState('');
+  const [missionOpened, setMissionOpened] = useState(false);
   const fleet = query.data?.fleet || [];
+  const roles = auth.session?.session.roles.map((role) => role.toLowerCase()) || [];
+  const canCreateMission = auth.mode === 'session'
+    && (roles.includes('operator') || roles.includes('administrator'));
 
   const workingCount = fleet.filter((agent) => WORKING_STATES.has(agent.state)).length;
   const attentionCount = fleet.filter((agent) => agent.attention.required || agent.state === 'needs_human').length;
@@ -296,14 +304,29 @@ export function AgentFleetPage() {
         <Box>
           <Group gap="sm">
             <Title order={1} className="page-title">Agent Fleet</Title>
-            <Badge variant="light" color="gray">Read only</Badge>
+            <Badge variant="light" color="gray">Fleet read only</Badge>
           </Group>
           <Text c="dimmed" mt={6}>Canonical state, current work, runtime health, and operator attention across the multi-agent fleet.</Text>
         </Box>
-        <Button variant="default" leftSection={<IconRefresh size={16} />} loading={query.isFetching} onClick={() => query.refetch()}>
-          Refresh fleet
-        </Button>
+        <Group>
+          <Button
+            leftSection={<IconPlus size={16} />}
+            onClick={() => setMissionOpened(true)}
+            disabled={!canCreateMission}
+          >
+            Create mission
+          </Button>
+          <Button variant="default" leftSection={<IconRefresh size={16} />} loading={query.isFetching} onClick={() => query.refetch()}>
+            Refresh fleet
+          </Button>
+        </Group>
       </Group>
+
+      {!canCreateMission && (
+        <Alert color="gray" variant="light" title="Mission creation requires operator authority">
+          Mission creation is available only through a human session with the Operator or Administrator role. Legacy dashboard-token mode remains read-only.
+        </Alert>
+      )}
 
       <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }} spacing="md">
         <FleetMetric label="Registered agents" value={fleet.length} helper="Validated fleet records" icon={<IconUsers size={19} />} color="blue" />
@@ -354,6 +377,12 @@ export function AgentFleetPage() {
           </Stack>
         </Paper>
       )}
+
+      <MissionCreationModal
+        opened={missionOpened}
+        onClose={() => setMissionOpened(false)}
+        csrfToken={auth.session?.csrf_token || null}
+      />
     </Stack>
   );
 }
