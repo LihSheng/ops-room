@@ -13,6 +13,7 @@ export const OPERATOR_PERMISSION_NAMES = Object.freeze([
   'task.manage',
   'workflow.recover',
   'workflow.approve',
+  'agent.chat',
   'agent.lifecycle',
   'agent.configure',
   'policy.manage',
@@ -34,6 +35,7 @@ const ROLE_PERMISSIONS: Readonly<Record<OperatorRole, readonly OperatorPermissio
     'mission.start',
     'task.manage',
     'workflow.recover',
+    'agent.chat',
     'agent.lifecycle',
   ]),
   reviewer: Object.freeze([
@@ -47,6 +49,7 @@ const ROLE_PERMISSIONS: Readonly<Record<OperatorRole, readonly OperatorPermissio
     'task.manage',
     'workflow.recover',
     'workflow.approve',
+    'agent.chat',
     'agent.lifecycle',
     'agent.configure',
     'policy.manage',

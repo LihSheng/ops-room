@@ -27,6 +27,7 @@ test('permissions are the union of configured roles', () => {
   assert.equal(permissions.includes('task.manage'), true);
   assert.equal(permissions.includes('workflow.recover'), true);
   assert.equal(permissions.includes('workflow.approve'), true);
+  assert.equal(permissions.includes('agent.chat'), true);
   assert.equal(permissions.includes('policy.manage'), false);
   assert.equal(permissions.includes('release.approve'), false);
 });
@@ -41,11 +42,20 @@ test('mission creation and start are available to operators and administrators o
   }
 });
 
+test('direct agent chat is available to operators and administrators only', () => {
+  assert.equal(hasOperatorPermission(['operator'], 'agent.chat'), true);
+  assert.equal(hasOperatorPermission(['administrator'], 'agent.chat'), true);
+  assert.equal(hasOperatorPermission(['viewer'], 'agent.chat'), false);
+  assert.equal(hasOperatorPermission(['reviewer'], 'agent.chat'), false);
+  assert.equal(hasOperatorPermission(['deployer'], 'agent.chat'), false);
+});
+
 test('administrator and deployer remain separate authorities', () => {
   assert.equal(hasOperatorPermission(['administrator'], 'repository.manage'), true);
   assert.equal(hasOperatorPermission(['administrator'], 'release.approve'), false);
   assert.equal(hasOperatorPermission(['deployer'], 'release.approve'), true);
   assert.equal(hasOperatorPermission(['deployer'], 'task.manage'), false);
+  assert.equal(hasOperatorPermission(['deployer'], 'agent.chat'), false);
 });
 
 test('unknown permissions and denied actions fail closed', () => {
@@ -62,7 +72,12 @@ test('unknown permissions and denied actions fail closed', () => {
     () => requireOperatorPermission(['viewer'], 'mission.start'),
     /operator_permission_denied:mission.start/,
   );
+  assert.throws(
+    () => requireOperatorPermission(['viewer'], 'agent.chat'),
+    /operator_permission_denied:agent.chat/,
+  );
   assert.doesNotThrow(() => requireOperatorPermission(['operator'], 'task.manage'));
   assert.doesNotThrow(() => requireOperatorPermission(['operator'], 'mission.create'));
   assert.doesNotThrow(() => requireOperatorPermission(['operator'], 'mission.start'));
+  assert.doesNotThrow(() => requireOperatorPermission(['operator'], 'agent.chat'));
 });
