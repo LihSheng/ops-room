@@ -3,6 +3,12 @@ import {
   readMission,
   serializeMission,
 } from '../services/mission-store.js';
+import {
+  WORKFLOW_EFFECTS_DIR,
+  WORKFLOW_RUNS_DIR,
+  WORKSPACE_RECORDS_DIR,
+} from '../services/runtime-paths.js';
+import { handleMissionRoomDetail } from './mission-room.js';
 
 const MISSION_STATES = new Set([
   'planned',
@@ -127,10 +133,18 @@ export async function handleMissionsList(searchParams: any, {
 
 export async function handleMissionDetail(missionId: unknown, {
   missionsDir,
+  workflowRunsDir = WORKFLOW_RUNS_DIR,
+  workflowEffectsDir = WORKFLOW_EFFECTS_DIR,
+  workspaceRecordsDir = WORKSPACE_RECORDS_DIR,
   readRecord = readMission,
+  roomHandler = handleMissionRoomDetail,
 }: {
   missionsDir: string;
+  workflowRunsDir?: string;
+  workflowEffectsDir?: string;
+  workspaceRecordsDir?: string;
   readRecord?: typeof readMission;
+  roomHandler?: typeof handleMissionRoomDetail;
 }) {
   const normalizedId = String(missionId || '');
   if (!SAFE_PUBLIC_ID.test(normalizedId)) {
@@ -139,11 +153,34 @@ export async function handleMissionDetail(missionId: unknown, {
 
   try {
     const record = await readRecord({ dir: missionsDir, missionId: normalizedId });
-    return { status: 200, body: { mission: serializeForRead(record, true) } };
+    const roomResult = await roomHandler(normalizedId, {
+      missionsDir,
+      workflowRunsDir,
+      workflowEffectsDir,
+      workspaceRecordsDir,
+      readMissionRecord: async () => record,
+    });
+    return {
+      status: 200,
+      body: {
+        mission: serializeForRead(record, true),
+        room: roomResult?.body?.room || null,
+        room_unavailable: Boolean(roomResult?.body?.unavailable),
+        room_error_code: roomResult?.body?.error_code || null,
+      },
+    };
   } catch (error: any) {
     if (error?.code === 'ENOENT') {
       return { status: 404, body: { error: 'Mission not found' } };
     }
-    return { status: 200, body: { mission: unavailableMission(null, normalizedId) } };
+    return {
+      status: 200,
+      body: {
+        mission: unavailableMission(null, normalizedId),
+        room: null,
+        room_unavailable: true,
+        room_error_code: 'mission_record_unavailable',
+      },
+    };
   }
 }

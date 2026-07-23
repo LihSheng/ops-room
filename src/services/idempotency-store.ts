@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -28,10 +28,32 @@ function recordPath(dir, actorId, operation, key) {
   return join(dir, `request-${digest(`${actorId}\0${operation}\0${key}`)}.json`);
 }
 
+async function replaceExistingRecord(path, content) {
+  const handle = await open(path, 'r+');
+  try {
+    await handle.truncate(0);
+    await handle.writeFile(content, 'utf-8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function writeAtomic(path, value) {
-  const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf-8', mode: 0o640 });
-  await rename(temp, path);
+  const content = `${JSON.stringify(value, null, 2)}\n`;
+  const temp = `${path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+  await writeFile(temp, content, { encoding: 'utf-8', mode: 0o640 });
+  try {
+    await rename(temp, path);
+  } catch (error) {
+    if (!['EPERM', 'EEXIST', 'ENOTEMPTY'].includes(error?.code)) throw error;
+
+    // Windows does not reliably allow rename-over-existing. The idempotency
+    // owner is the only writer, and readers already treat a transient partial
+    // JSON record as in-progress, so replace the existing record in place.
+    await replaceExistingRecord(path, content);
+    await rm(temp, { force: true });
+  }
 }
 
 async function readRecord(path) {

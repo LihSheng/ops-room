@@ -18,6 +18,7 @@ const DASHBOARD_READ_ROUTES = [
   /^\/api\/agents\/profiles(?:\/|$)/,
   /^\/api\/skills(?:\/|$)/,
   /^\/api\/memory-spaces(?:\/|$)/,
+  /^\/api\/missions(?:\/|$)/,
   /^\/api\/workflows(?:\/|$)/,
   /^\/api\/review-tasks(?:\/|$)/,
 ];
