@@ -5,6 +5,8 @@ import test from 'node:test';
 const APP_FILE = new URL('../dashboard/src/App.tsx', import.meta.url);
 const API_FILE = new URL('../dashboard/src/api/interventions.ts', import.meta.url);
 const PAGE_FILE = new URL('../dashboard/src/pages/InterventionsPage.tsx', import.meta.url);
+const WORKFLOW_DESK_FILE = new URL('../dashboard/src/components/WorkflowControlDesk.tsx', import.meta.url);
+const WORKFLOW_PANEL_FILE = new URL('../dashboard/src/components/WorkflowControlPanel.tsx', import.meta.url);
 
  test('Needs Human is a first-class dashboard route and refresh authority', async () => {
   const source = await readFile(APP_FILE, 'utf8');
@@ -46,15 +48,24 @@ test('intervention ordering and deduplication are deterministic', async () => {
   assert.match(source, /left\.intervention_id\.localeCompare\(right\.intervention_id\)/);
 });
 
-test('Needs Human preserves explanations and hosts only governed task controls', async () => {
-  const source = await readFile(PAGE_FILE, 'utf8');
-  assert.match(source, /Governed task controls only/);
-  assert.match(source, /<TaskControlDesk \/>/);
-  assert.match(source, /Could an external effect have occurred\?/);
-  assert.match(source, /Retry assessment/);
-  assert.match(source, /Why action is blocked/);
-  assert.match(source, /Recommended operator response/);
-  assert.match(source, /Evidence used/);
-  assert.match(source, /Workflow approval, effect resolution, workspace controls/);
-  assert.doesNotMatch(source, /absolute_path|relative_path|payload_hash|provider_output|environment|credential|private reasoning/i);
+test('Needs Human preserves explanations and hosts governed task and workflow controls', async () => {
+  const [page, desk, panel] = await Promise.all([
+    readFile(PAGE_FILE, 'utf8'),
+    readFile(WORKFLOW_DESK_FILE, 'utf8'),
+    readFile(WORKFLOW_PANEL_FILE, 'utf8'),
+  ]);
+  assert.match(page, /Governed task and workflow controls/);
+  assert.match(page, /<TaskControlDesk \/>/);
+  assert.match(page, /<WorkflowControlDesk \/>/);
+  assert.match(page, /Could an external effect have occurred\?/);
+  assert.match(page, /Retry assessment/);
+  assert.match(page, /Why action is blocked/);
+  assert.match(page, /Recommended operator response/);
+  assert.match(page, /Effect resolution, workspace cleanup controls, provider invocation, and uncertain-effect replay remain unavailable/);
+  assert.match(desk, /Select a Mission with active or needs-human workflow evidence/);
+  assert.match(panel, /Server remains authoritative/);
+  assert.match(panel, /same request key is retained/i);
+  assert.match(panel, /\['mission-room', room\.mission\.mission_id\]/);
+  assert.match(panel, /\['interventions'\]/);
+  assert.doesNotMatch(`${page}\n${desk}\n${panel}`, /absolute_path|relative_path|payload_hash|provider_output|environment|credential|private reasoning/i);
 });
