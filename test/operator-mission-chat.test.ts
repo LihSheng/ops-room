@@ -147,16 +147,17 @@ test('targeted send invokes one participant provider turn and audits digest meta
   assert.doesNotMatch(JSON.stringify(sends), /Collect bounded acceptance evidence/);
 });
 
-test('accepted message replay survives later terminal Mission and disabled participant state', async () => {
+test('accepted creation and message replay survive later terminal Mission and disabled participant state', async () => {
   const target = await setup();
-  const created = await handleCreateMissionChatSession({
+  const createRequest = {
     missionId: target.mission.mission_id,
     body: { reason: 'Start participant discussion', idempotency_key: 'mission-chat-create-handler-0005' },
     actor: ACTOR,
     missionsDir: target.missions,
     chatDir: target.chat,
     auditDir: target.audit,
-  });
+  };
+  const created = await handleCreateMissionChatSession(createRequest);
   let calls = 0;
   const baseRequest = {
     sessionId: created.body.session.session_id,
@@ -177,17 +178,21 @@ test('accepted message replay survives later terminal Mission and disabled parti
 
   const first = await handleAppendMissionChatMessage({ ...baseRequest, profileLookup: () => PROFILE });
   await completeStoredMission(target.missions);
-  const replay = await handleAppendMissionChatMessage({
+  const createReplay = await handleCreateMissionChatSession(createRequest);
+  const messageReplay = await handleAppendMissionChatMessage({
     ...baseRequest,
     profileLookup: () => ({ ...PROFILE, enabled: false }),
     invokeProvider: async () => { calls += 1; return { text: 'Must not run' }; },
   });
 
   assert.equal(first.status, 202);
-  assert.equal(replay.status, 202);
-  assert.equal(replay.body.domain_idempotent, true);
-  assert.equal(replay.body.provider_invoked, false);
-  assert.equal(replay.body.turn.agent_message.content, 'Durable response.');
+  assert.equal(createReplay.status, 200);
+  assert.equal(createReplay.body.domain_idempotent, true);
+  assert.equal(createReplay.body.session.session_id, created.body.session.session_id);
+  assert.equal(messageReplay.status, 202);
+  assert.equal(messageReplay.body.domain_idempotent, true);
+  assert.equal(messageReplay.body.provider_invoked, false);
+  assert.equal(messageReplay.body.turn.agent_message.content, 'Durable response.');
   assert.equal(calls, 1);
 });
 
