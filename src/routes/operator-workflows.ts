@@ -1,3 +1,5 @@
+import './operator-investigations.js';
+
 import { registerRouteExtension, type RouteEntry } from '../lib/router.js';
 import {
   AUDIT_DIR,
@@ -8,6 +10,7 @@ import {
   WORKSPACE_RECORDS_DIR,
 } from '../services/runtime-paths.js';
 import { authorizeOperatorRequest } from '../services/operator-request-auth.js';
+import { guardOperatorWorkflowRetryResolution } from '../services/operator-investigation-actions.js';
 import {
   handleOperatorWorkflowAction,
   type OperatorWorkflowAction,
@@ -47,6 +50,23 @@ const operatorWorkflowRoute: RouteEntry = {
 
     try {
       const body = await parseBody(req);
+      if (action === 'retry') {
+        const blocked = await guardOperatorWorkflowRetryResolution({
+          workflowRunsDir: WORKFLOW_RUNS_DIR,
+          effectsDir: WORKFLOW_EFFECTS_DIR,
+          workflowId: params.workflowId,
+          childId: params.childId,
+          expectedAttempt: body?.expected_attempt,
+          actor: authorization.actor,
+          reason: String(body?.reason || '').trim().slice(0, 500),
+          idempotencyKey: body?.idempotency_key ? String(body.idempotency_key).trim() : null,
+          auditDir: AUDIT_DIR,
+        });
+        if (blocked) {
+          sendJSON(res, blocked.status, blocked.body);
+          return;
+        }
+      }
       const result = await handleOperatorWorkflowAction({
         action,
         workflowId: params.workflowId,
