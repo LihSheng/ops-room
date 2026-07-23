@@ -33,6 +33,7 @@ import { useNavigate } from 'react-router-dom';
 
 import type { AgentFleetItem, AgentFleetState } from '../api/agent-fleet';
 import { MissionCreationModal } from '../components/MissionCreationModal';
+import { MissionStartPanel } from '../components/MissionStartPanel';
 import { useAgentFleet } from '../hooks/use-agent-fleet';
 import { useOperatorAuth } from '../operator-auth';
 
@@ -327,6 +328,8 @@ export function AgentFleetPage() {
           Mission creation is available only through a human session with the Operator or Administrator role. Legacy dashboard-token mode remains read-only.
         </Alert>
       )}
+
+      <MissionStartPanel />
 
       <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }} spacing="md">
         <FleetMetric label="Registered agents" value={fleet.length} helper="Validated fleet records" icon={<IconUsers size={19} />} color="blue" />

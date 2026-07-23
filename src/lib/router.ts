@@ -15,7 +15,22 @@ export interface RouteEntry {
   handler: RouteHandler;
 }
 
+const routeExtensions: RouteEntry[] = [];
+
+export function registerRouteExtension(route: RouteEntry): void {
+  if (!route || typeof route.match !== 'function' || typeof route.handler !== 'function') {
+    throw new Error('invalid_route_extension');
+  }
+  if (routeExtensions.includes(route)) return;
+  routeExtensions.push(route);
+}
+
+export function resetRouteExtensionsForTests(): void {
+  routeExtensions.length = 0;
+}
+
 export function createRouter(routes: RouteEntry[]) {
+  const routeTable = [...routeExtensions, ...routes];
   return async (
     req: IncomingMessage,
     res: ServerResponse,
@@ -31,7 +46,7 @@ export function createRouter(routes: RouteEntry[]) {
       return;
     }
 
-    for (const route of routes) {
+    for (const route of routeTable) {
       const methods = Array.isArray(route.method) ? route.method : [route.method];
       if (!methods.includes(req.method!)) continue;
 

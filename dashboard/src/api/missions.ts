@@ -38,6 +38,42 @@ export interface MissionRecord {
   last_error?: string | null;
 }
 
+export interface WorkflowChildRecord {
+  child_id: string;
+  stage: string;
+  owner_agent: string;
+  iteration: number;
+  attempt: number;
+  state: string;
+  depends_on: string | null;
+  input_sha: string;
+  output_sha: string | null;
+}
+
+export interface WorkflowRecord {
+  workflow_id: string;
+  workflow_type: 'feature-development';
+  repository_id: string;
+  source_sha: string;
+  state: string;
+  policy: {
+    max_iterations: number;
+    max_concurrency: number;
+  };
+  current_iteration: number;
+  child_count: number;
+  children: WorkflowChildRecord[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MissionsListResponse {
+  missions: MissionRecord[];
+  count: number;
+  total_matching: number;
+  unavailable_count: number;
+}
+
 export interface CreateMissionRequest {
   title: string;
   objective: string;
@@ -60,6 +96,22 @@ export interface CreateMissionRequest {
 export interface CreateMissionResponse {
   operation: 'mission.create';
   mission: MissionRecord;
+  audit_event_id: string;
+  idempotent_replay: boolean;
+}
+
+export interface StartMissionRequest {
+  reason: string;
+  idempotency_key: string;
+}
+
+export interface StartMissionResponse {
+  operation: 'mission.start';
+  mission: MissionRecord;
+  workflow: WorkflowRecord;
+  initial_child: WorkflowChildRecord;
+  started: boolean;
+  provider_invoked: false;
   audit_event_id: string;
   idempotent_replay: boolean;
 }
@@ -102,6 +154,7 @@ async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const missionsApi = {
+  listMissions: () => requestJson<MissionsListResponse>('/api/missions?limit=100'),
   createMission: (request: CreateMissionRequest, csrfToken: string) => requestJson<CreateMissionResponse>(
     '/api/operator/missions',
     {
@@ -113,4 +166,16 @@ export const missionsApi = {
       body: JSON.stringify(request),
     },
   ),
+  startMission: (missionId: string, request: StartMissionRequest, csrfToken: string) => {
+    const path = `/api/operator/missions/${encodeURIComponent(missionId)}/start`;
+    return requestJson<StartMissionResponse>(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Ops-Room-CSRF': csrfToken,
+        'X-Ops-Room-Confirmation': `confirm:mission.start:POST:${path}`,
+      },
+      body: JSON.stringify(request),
+    });
+  },
 };

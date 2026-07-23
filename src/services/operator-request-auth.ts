@@ -20,6 +20,7 @@ export const OPERATOR_CSRF_HEADER_NAME = 'x-ops-room-csrf';
 export const OPERATOR_CONFIRMATION_HEADER_NAME = 'x-ops-room-confirmation';
 
 export const OPERATOR_STEP_UP_PERMISSIONS = Object.freeze([
+  'mission.start',
   'workflow.approve',
   'agent.lifecycle',
   'agent.configure',
