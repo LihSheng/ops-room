@@ -112,7 +112,9 @@ export async function readOperatorNotificationState({
 }
 
 export function notificationStateFor(record: any, notificationId: unknown) {
-  validateNotificationStateRecord(record);
+  if (!record || typeof record !== 'object' || !record.entries || typeof record.entries !== 'object') {
+    throw new Error('notification_state_record_invalid');
+  }
   const normalizedId = validateNotificationId(notificationId);
   const entry = record.entries[normalizedId];
   if (!entry) {
