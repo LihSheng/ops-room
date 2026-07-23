@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation for issue #91.
+Ready for review in PR #92. CI #278 passes all required checks.
 
 OPS-012F.3 completes the safe browser-control epic by adding explicit provider-effect resolution and workspace investigation controls. React presents bounded evidence and submits exact requests; durable state authority remains on the server.
 
@@ -143,4 +143,10 @@ Focused tests cover:
 - Mission Room and Needs Human integration;
 - bounded public-data exclusions.
 
-Cross-platform CI and immutable release verification are required before the pull request becomes ready for review.
+CI #278 passed:
+
+- Ubuntu tests and dashboard build;
+- Windows tests and dashboard build;
+- OpenAB instances smoke;
+- immutable release build and verification;
+- required-check aggregation.
