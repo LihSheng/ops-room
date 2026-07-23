@@ -7,10 +7,17 @@ export type ActivityEventCategory = 'mission' | 'workflow' | 'stage' | 'workspac
 
 const SEVERITIES = new Set<ActivityEventSeverity>(['info', 'success', 'warning', 'attention', 'error']);
 const CATEGORIES = new Set<ActivityEventCategory>(['mission', 'workflow', 'stage', 'workspace', 'effect', 'review', 'intervention']);
+const ROOM_READ_CONCURRENCY = 10;
 
 function bounded(value: unknown, maximum: number) {
   const normalized = String(value ?? '').trim();
   return normalized ? normalized.slice(0, maximum) : null;
+}
+
+function requiredBounded(value: unknown, maximum: number, errorCode: string) {
+  const normalized = bounded(value, maximum);
+  if (!normalized) throw new Error(errorCode);
+  return normalized;
 }
 
 function safePath(value: unknown) {
@@ -42,7 +49,7 @@ function truthy(value: unknown) {
 
 function missionSummary(record: any) {
   return {
-    mission_id: bounded(record?.mission_id, 180) || 'mission-unavailable',
+    mission_id: requiredBounded(record?.mission_id, 180, 'activity_mission_id_missing'),
     title: bounded(record?.title, 180) || 'Mission',
     state: bounded(record?.state, 80),
     repository_id: bounded(record?.repository_id, 220),
@@ -52,7 +59,9 @@ function missionSummary(record: any) {
 
 export function serializeGlobalActivityEvent(event: any, missionRecord: any) {
   const mission = missionSummary(missionRecord);
-  const eventId = bounded(event?.event_id, 220) || 'event-unavailable';
+  const eventId = requiredBounded(event?.event_id, 220, 'activity_event_id_missing');
+  const at = requiredBounded(event?.at, 64, 'activity_timestamp_missing');
+  if (!timestamp(at)) throw new Error('activity_timestamp_invalid');
   const missionId = mission.mission_id;
   return {
     activity_id: `${missionId}:${eventId}`,
@@ -65,7 +74,7 @@ export function serializeGlobalActivityEvent(event: any, missionRecord: any) {
     title: bounded(event?.title, 220) || 'Mission activity',
     detail: bounded(event?.detail, 500),
     reason_code: bounded(event?.reason_code, 160),
-    at: bounded(event?.at, 64) || new Date(0).toISOString(),
+    at,
     mission,
     workflow_id: bounded(event?.workflow_id, 180) || mission.workflow_id,
     child_id: bounded(event?.child_id, 220),
@@ -128,9 +137,11 @@ export async function buildActivityEventIndex({
   const missionMap = new Map<string, ReturnType<typeof missionSummary>>();
   const byId = new Map<string, ReturnType<typeof serializeGlobalActivityEvent>>();
   let roomFailures = 0;
+  let malformedEvents = 0;
 
-  if (records.length > 0) {
-    const results = await Promise.allSettled(records.map(async (record) => {
+  for (let offset = 0; offset < records.length; offset += ROOM_READ_CONCURRENCY) {
+    const batch = records.slice(offset, offset + ROOM_READ_CONCURRENCY);
+    const results = await Promise.allSettled(batch.map(async (record) => {
       const mission = missionSummary(record);
       missionMap.set(mission.mission_id, mission);
       const result = await roomHandler(mission.mission_id, {
@@ -156,14 +167,16 @@ export async function buildActivityEventIndex({
           const existing = byId.get(serialized.activity_id);
           if (!existing || timestamp(serialized.at) > timestamp(existing.at)) byId.set(serialized.activity_id, serialized);
         } catch {
-          roomFailures += 1;
+          malformedEvents += 1;
         }
       }
     }
   }
 
-  if (roomFailures > 0) {
-    sources.mission_rooms = records.length > 0 && roomFailures >= records.length ? 'unavailable' : 'degraded';
+  if (records.length > 0 && roomFailures === records.length) {
+    sources.mission_rooms = 'unavailable';
+  } else if (roomFailures > 0 || malformedEvents > 0) {
+    sources.mission_rooms = 'degraded';
   }
 
   const matching = [...byId.values()]
