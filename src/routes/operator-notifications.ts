@@ -31,6 +31,14 @@ export function matchNotificationActionRoute(pathname: string) {
   return match ? { notificationId: match[1], action: match[2] } : null;
 }
 
+function decodeNotificationId(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new Error('notification_id_invalid');
+  }
+}
+
 function notificationDeps() {
   return {
     notificationStateDir: OPERATOR_NOTIFICATION_STATE_DIR,
@@ -104,7 +112,7 @@ const notificationDetailRoute: RouteEntry = {
     }
     try {
       const notification = await findOperatorNotification({
-        notificationId: decodeURIComponent(params.notificationId),
+        notificationId: decodeNotificationId(params.notificationId),
         actor: authorization.actor,
         ...notificationDeps(),
       });
@@ -131,7 +139,7 @@ const notificationActionRoute: RouteEntry = {
     }
     let notificationId: string;
     try {
-      notificationId = decodeURIComponent(params.notificationId);
+      notificationId = decodeNotificationId(params.notificationId);
     } catch {
       sendJSON(res, 400, { error: 'notification id invalid', error_code: 'notification_id_invalid' });
       return;
