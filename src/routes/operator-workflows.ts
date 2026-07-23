@@ -56,9 +56,9 @@ const operatorWorkflowRoute: RouteEntry = {
         idempotencyDir: IDEMPOTENCY_DIR,
       });
       sendJSON(res, result.status, result.body);
-    } catch (error: any) {
+    } catch {
       sendJSON(res, 500, {
-        error: error?.message || 'Workflow action failed',
+        error: 'Workflow action failed',
         error_code: 'workflow_action_failed',
       });
     }
