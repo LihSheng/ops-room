@@ -65,7 +65,7 @@ const ACTION_META: Record<WorkflowBrowserAction, WorkflowActionOption> = {
   retry: {
     action: 'retry',
     label: 'Retry stage',
-    description: 'Retry a failed or needs-human stage only after durable terminal effect and workspace evidence are verified.',
+    description: 'Retry a failed stage only after any needs-human provider effect has been explicitly resolved and workspace evidence is verified.',
     consequence: 'The current attempt is fenced and the stage returns to pending with its attempt incremented once. No provider is invoked by this request.',
     permission: 'workflow.recover',
     color: 'violet',
@@ -113,7 +113,7 @@ export function deriveWorkflowStageActions(room: MissionRoom, stage: MissionRoom
   if (
     workflow.state === 'needs_human'
     && ['needs_human', 'failed'].includes(stage.state)
-    && ['failed', 'needs_human'].includes(effectState)
+    && effectState === 'failed'
     && ['active', 'held_for_investigation'].includes(workspaceState)
   ) {
     actions.push(ACTION_META.retry);
