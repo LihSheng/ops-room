@@ -67,6 +67,16 @@ function participantProfileEnabled(agentId: string, profileLookup = getAgentProf
   return profile;
 }
 
+function existingMessageReplay(session: any, targetAgentId: string, content: string, key: string) {
+  const turn = Array.isArray(session?.turns)
+    ? session.turns.find((candidate: any) => candidate.idempotency_key === key)
+    : null;
+  if (!turn) return null;
+  const expectedHash = createHash('sha256').update(`${targetAgentId}\n${content}`).digest('hex');
+  if (turn.content_hash !== expectedHash) throw new Error('mission_chat_idempotency_conflict');
+  return turn;
+}
+
 function boundedFailure(error: any) {
   const raw = String(error?.message || 'mission_chat_action_failed').trim().toLowerCase();
   const code = SAFE_ERROR_CODE.test(raw) ? raw : 'mission_chat_action_failed';
@@ -238,17 +248,24 @@ export async function handleAppendMissionChatMessage({
     if (!existing) throw new Error('mission_chat_session_not_found');
     const mission = await loadMission(missionsDir, existing.mission_id);
     participantForMission(mission, targetAgentId);
-    participantProfileEnabled(targetAgentId, profileLookup);
-    const result = await appendMissionChatTurn({
-      dir: chatDir,
-      mission,
-      sessionId: normalizedSessionId,
-      targetAgentId,
-      actor,
-      content,
-      idempotencyKey: key,
-      invokeProvider: (input: any) => invokeProvider({ ...input, profileLookup }),
-    });
+
+    const replay = existingMessageReplay(existing, targetAgentId, content, key);
+    const result = replay
+      ? { session: existing, turn: replay, idempotent: true, provider_invoked: false }
+      : await (async () => {
+        participantProfileEnabled(targetAgentId, profileLookup);
+        return appendMissionChatTurn({
+          dir: chatDir,
+          mission,
+          sessionId: normalizedSessionId,
+          targetAgentId,
+          actor,
+          content,
+          idempotencyKey: key,
+          invokeProvider: (input: any) => invokeProvider({ ...input, profileLookup }),
+        });
+      })();
+
     const publicSession = serializeMissionChatSession(result.session);
     const publicTurn = publicSession.turns.find((turn: any) => turn.turn_id === result.turn.turn_id);
     const event = await accepted({
