@@ -87,4 +87,5 @@ await import('../routes/operator-workflows.js');
 await import('../routes/operator-agent-chat.js');
 await import('../routes/operator-mission-chat.js');
 await import('../routes/operator-chat-sessions.js');
+await import('../routes/activity-events.js');
 await import('./http.js');
