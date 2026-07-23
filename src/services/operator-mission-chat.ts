@@ -10,6 +10,7 @@ import {
   closeMissionChatSession,
   createOrLoadMissionChatSession,
   readMissionChatSession,
+  readMissionChatSessionForMission,
   serializeMissionChatSession,
 } from './mission-chat-store.js';
 
@@ -179,12 +180,15 @@ export async function handleCreateMissionChatSession({
     reason = reasonFrom(body);
     key = idempotencyFrom(body);
     const mission = await loadMission(missionsDir, normalizedMissionId);
-    const result = await createOrLoadMissionChatSession({
-      dir: chatDir,
-      mission,
-      actor,
-      idempotencyKey: key,
-    });
+    const existing = await readMissionChatSessionForMission({ dir: chatDir, missionId: normalizedMissionId });
+    const result = existing
+      ? { created: false, session: existing, idempotent: true }
+      : await createOrLoadMissionChatSession({
+        dir: chatDir,
+        mission,
+        actor,
+        idempotencyKey: key,
+      });
     const event = await accepted({
       auditDir,
       actor,
