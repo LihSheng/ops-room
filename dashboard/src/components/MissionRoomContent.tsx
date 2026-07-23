@@ -15,6 +15,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import type { MissionRecord, MissionRoom } from '../api/missions';
 import { InvestigationControlPanel } from './InvestigationControlPanel';
 import { MissionActivityPanel } from './MissionActivityPanel';
+import { MissionParticipantChatPanel } from './MissionParticipantChatPanel';
 import { MissionRoomTimeline } from './MissionRoomTimeline';
 import { WorkflowControlPanel } from './WorkflowControlPanel';
 
@@ -105,6 +106,7 @@ export function MissionRoomContent({ room }: { room: MissionRoom }) {
 
       <WorkflowControlPanel room={room} />
       <InvestigationControlPanel room={room} />
+      <MissionParticipantChatPanel room={room} />
       <MissionActivityPanel room={room} />
       <MissionRoomTimeline room={room} />
     </Stack>
