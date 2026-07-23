@@ -78,6 +78,10 @@ function publicActor(actor: any) {
   };
 }
 
+function evidencePath(sessionId: string) {
+  return `/interventions?view=chat&session=${encodeURIComponent(sessionId)}`;
+}
+
 function directSummary(record: any): ChatSessionIndexItem {
   const session = validateAgentChatSession(record);
   const latest = session.turns.at(-1) || null;
@@ -108,10 +112,10 @@ function directSummary(record: any): ChatSessionIndexItem {
     updated_at: String(session.updated_at),
     closed_at: session.closed_at ? String(session.closed_at) : null,
     links: {
-      session_index: `/chat-sessions?session=${encodeURIComponent(sessionId)}`,
-      agent: `/agents/${encodeURIComponent(agentId)}?chat_session=${encodeURIComponent(sessionId)}#agent-chat`,
+      session_index: evidencePath(sessionId),
+      agent: `/agents/${encodeURIComponent(agentId)}#agent-chat`,
       mission: null,
-      transcript: `/agents/${encodeURIComponent(agentId)}?chat_session=${encodeURIComponent(sessionId)}#agent-chat`,
+      transcript: evidencePath(sessionId),
     },
   };
 }
@@ -146,10 +150,10 @@ function missionSummary(record: any): ChatSessionIndexItem {
     updated_at: String(session.updated_at),
     closed_at: session.closed_at ? String(session.closed_at) : null,
     links: {
-      session_index: `/chat-sessions?session=${encodeURIComponent(sessionId)}`,
+      session_index: evidencePath(sessionId),
       agent: latest?.target_agent_id ? `/agents/${encodeURIComponent(String(latest.target_agent_id))}` : null,
-      mission: `/missions/${encodeURIComponent(missionId)}?chat_session=${encodeURIComponent(sessionId)}#mission-participant-chat`,
-      transcript: `/missions/${encodeURIComponent(missionId)}?chat_session=${encodeURIComponent(sessionId)}#mission-participant-chat`,
+      mission: `/missions/${encodeURIComponent(missionId)}#mission-participant-chat`,
+      transcript: evidencePath(sessionId),
     },
   };
 }
