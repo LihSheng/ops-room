@@ -15,6 +15,7 @@ import {
 import { IconActivity, IconAlertTriangle, IconGitBranch } from '@tabler/icons-react';
 
 import type { AgentFleetItem } from '../api/agent-fleet';
+import { CurrentMissionEvidence } from './CurrentMissionEvidence';
 
 function stateColor(status?: string | null) {
   switch (status) {
@@ -111,7 +112,7 @@ export function AgentOperationalSummary({
           <Box>
             <Title order={4}>Operational Summary</Title>
             <Text size="xs" c="dimmed">
-              Normalized profile, runtime, lifecycle, and current-work evidence.
+              Normalized profile, mission, workflow, runtime, lifecycle, and current-work evidence.
             </Text>
           </Box>
         </Group>
@@ -131,6 +132,10 @@ export function AgentOperationalSummary({
           {fleet.attention.summary || fleet.attention.reason_code || 'The fleet contract reports an unresolved condition.'}
         </Alert>
       )}
+
+      <Box mb="md">
+        <CurrentMissionEvidence mission={fleet.current_mission} />
+      </Box>
 
       <Grid>
         <Grid.Col span={{ base: 12, sm: 6 }}>
