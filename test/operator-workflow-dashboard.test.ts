@@ -63,7 +63,10 @@ function stage(overrides: Partial<MissionRoomStage> = {}): MissionRoomStage {
   };
 }
 
-function room(stageRecord: MissionRoomStage, workflowOverrides: Record<string, unknown> = {}): MissionRoom {
+function room(
+  stageRecord: MissionRoomStage,
+  workflowOverrides: Partial<NonNullable<MissionRoom['workflow']>> = {},
+): MissionRoom {
   return {
     mission: {
       mission_id: 'mission:1',
@@ -121,7 +124,8 @@ function room(stageRecord: MissionRoomStage, workflowOverrides: Record<string, u
 }
 
 test('derives retry only from terminal retryable effect and inspectable workspace evidence', () => {
-  const safe = deriveWorkflowStageActions(room(stage()), stage());
+  const safeStage = stage();
+  const safe = deriveWorkflowStageActions(room(safeStage), safeStage);
   assert.deepEqual(safe.map((entry) => entry.action), ['retry']);
 
   const claimed = stage({ provider_effect: { ...stage().provider_effect!, state: 'claimed' } });
@@ -221,6 +225,6 @@ test('binds approval confirmation to the exact encoded route', async () => {
     reason: 'Approve verified Berlin result',
     expected_attempt: 0,
     idempotency_key: 'browser-workflow:test-key',
-    decision: 'approve',
+    decision: 'approved',
   });
 });
