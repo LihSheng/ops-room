@@ -4,7 +4,7 @@
 import { initializeAgentProfileRegistry } from '../services/agent-profile/registry.js';
 import { initializeSkillRegistry } from '../services/skill-registry/registry.js';
 import { initializeMemorySpaceRegistry } from '../services/memory-space-registry/registry.js';
-import { reconcileInterruptedAgentChatTurns } from '../services/agent-chat-store.js';
+import { reconcileAgentChatOnStartup } from '../services/agent-chat-recovery.js';
 import {
   AGENT_CHAT_SESSIONS_DIR,
   TASK_WORKSPACE_ROOT,
@@ -20,7 +20,7 @@ await initializeAgentProfileRegistry();
 await initializeSkillRegistry();
 await initializeMemorySpaceRegistry();
 
-const chatRecovery = await reconcileInterruptedAgentChatTurns({ dir: AGENT_CHAT_SESSIONS_DIR });
+const chatRecovery = await reconcileAgentChatOnStartup({ dir: AGENT_CHAT_SESSIONS_DIR });
 if (chatRecovery.recovered_turns > 0) {
   console.warn(
     `[agent-chat-reconciler] recovered ${chatRecovery.recovered_turns} interrupted provider turn(s) without replay`,
