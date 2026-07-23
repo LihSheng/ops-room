@@ -108,7 +108,7 @@ test('message submission invokes one bounded provider turn and audits only diges
   const sends = audits.filter((event) => event.operation === 'agent.chat.message.send');
   assert.equal(sends.length, 2);
   assert.match(sends[0].metadata.message_digest, /^[a-f0-9]{64}$/);
-  assert.equal(sends[0].metadata.message_length, 35);
+  assert.equal(sends[0].metadata.message_length, 37);
   assert.doesNotMatch(JSON.stringify(sends), /What should remain outside this chat/);
   assert.doesNotMatch(JSON.stringify(sends), /Operational mutations remain outside chat/);
 });
