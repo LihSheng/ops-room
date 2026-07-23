@@ -240,8 +240,8 @@ export function InterventionsPage() {
         </Button>
       </Group>
 
-      <Alert color="blue" variant="light" icon={<IconShieldCheck size={18} />} title="Governed task and workflow controls">
-        Review-task controls and exact Workflow recovery/Berlin decisions are available through authenticated server contracts. Effect resolution, workspace cleanup controls, provider invocation, and uncertain-effect replay remain unavailable.
+      <Alert color="blue" variant="light" icon={<IconShieldCheck size={18} />} title="Governed task, workflow, effect, and workspace controls">
+        Review-task controls, exact Workflow recovery and Berlin decisions, explicit effect resolution, and workspace investigation or cleanup requests are available through authenticated server contracts. Provider invocation, uncertain-effect replay, and physical workspace deletion remain unavailable.
       </Alert>
 
       <TaskControlDesk />
