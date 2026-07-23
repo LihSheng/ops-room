@@ -74,6 +74,7 @@ export const AUDIT_DIR = process.env.OPS_ROOM_AUDIT_DIR || join(_opsRoomDataDir,
 export const IDEMPOTENCY_DIR = process.env.OPS_ROOM_IDEMPOTENCY_DIR || join(_opsRoomDataDir, 'idempotency');
 export const LIFECYCLE_DIR = process.env.OPS_ROOM_LIFECYCLE_DIR || join(_opsRoomDataDir, 'lifecycle');
 export const OPERATOR_SESSION_DIR = process.env.OPS_ROOM_OPERATOR_SESSIONS_DIR || join(_opsRoomDataDir, 'operator-sessions');
+export const OPERATOR_NOTIFICATION_STATE_DIR = process.env.OPS_ROOM_OPERATOR_NOTIFICATION_STATE_DIR || join(_opsRoomDataDir, 'operator-notification-state');
 export const WORKSPACE_BASE = process.env.OPENAB_WORKSPACES_DIR || process.env.OPENAB_WORKSPACE_BASE || join(_dataDir, 'workspaces');
 export const REPOSITORY_CACHE_ROOT = process.env.OPS_ROOM_REPOSITORY_CACHE_ROOT || join(_dataDir, 'repositories');
 export const TASK_WORKSPACE_ROOT = process.env.OPS_ROOM_TASK_WORKSPACE_ROOT || WORKSPACE_BASE;
