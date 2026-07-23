@@ -7,6 +7,7 @@ import {
   Code,
   Group,
   Paper,
+  ScrollArea,
   SegmentedControl,
   SimpleGrid,
   Skeleton,
@@ -26,7 +27,7 @@ import {
   IconUser,
 } from '@tabler/icons-react';
 import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import {
   chatSessionsApi,
@@ -72,8 +73,7 @@ function ownerLabel(session: ChatSessionIndexItem) {
 
 export function ChatSessionsPage() {
   const auth = useOperatorAuth();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const selectedSessionId = searchParams.get('session');
   const roles = auth.session?.session.roles || [];
   const canRead = auth.mode === 'session' && rolesAllowChat(roles);
@@ -87,6 +87,23 @@ export function ChatSessionsPage() {
     enabled: canRead,
     refetchInterval: canRead ? 15_000 : false,
   });
+  const sessions = query.data?.sessions || [];
+  const selectedSummary = selectedSessionId
+    ? sessions.find((session) => session.session_id === selectedSessionId) || null
+    : null;
+  const detailQuery = useQuery({
+    queryKey: ['chat-session-detail', selectedSummary?.session_type, selectedSummary?.session_id],
+    queryFn: () => chatSessionsApi.detail(selectedSummary as ChatSessionIndexItem),
+    enabled: canRead && Boolean(selectedSummary),
+    refetchInterval: selectedSummary?.state === 'open' ? 10_000 : false,
+  });
+
+  const selectSession = (sessionId: string) => {
+    const updated = new URLSearchParams(searchParams);
+    updated.set('view', 'chat');
+    updated.set('session', sessionId);
+    setSearchParams(updated);
+  };
 
   if (auth.mode === 'legacy') {
     return (
@@ -105,7 +122,6 @@ export function ChatSessionsPage() {
   }
 
   const data = query.data;
-  const sessions = data?.sessions || [];
 
   return (
     <Stack gap="lg">
@@ -121,8 +137,8 @@ export function ChatSessionsPage() {
         </Button>
       </Group>
 
-      <Alert color="blue" variant="light" icon={<IconShieldCheck size={18} />} title="Bounded session evidence">
-        This index shows ownership, state, turn counts, attention codes, timestamps, and navigation only. Transcript and provider response text remain in the exact session view.
+      <Alert color="blue" variant="light" icon={<IconShieldCheck size={18} />} title="Bounded index, exact transcript drill-in">
+        The index shows ownership, state, turn counts, attention codes, timestamps, and links only. Message and response text is requested only after selecting one exact durable session.
       </Alert>
 
       <Paper withBorder p="md">
@@ -227,8 +243,8 @@ export function ChatSessionsPage() {
                         </Table.Td>
                         <Table.Td><Text size="sm" c="dimmed">{timeLabel(session.updated_at)}</Text></Table.Td>
                         <Table.Td>
-                          <Button size="compact-sm" variant={session.attention_required ? 'light' : 'subtle'} color={session.attention_required ? 'orange' : 'violet'} onClick={() => navigate(session.links.transcript)}>
-                            Open exact session
+                          <Button size="compact-sm" variant={session.attention_required ? 'light' : 'subtle'} color={session.attention_required ? 'orange' : 'violet'} onClick={() => selectSession(session.session_id)}>
+                            Inspect evidence
                           </Button>
                         </Table.Td>
                       </Table.Tr>
@@ -238,6 +254,72 @@ export function ChatSessionsPage() {
               </Table.ScrollContainer>
             )}
           </Paper>
+
+          {selectedSessionId && !selectedSummary && (
+            <Alert color="orange" icon={<IconAlertTriangle size={18} />} title="Selected session is outside this filter">
+              Clear or widen the type, lifecycle, or attention filters to load the selected session evidence.
+            </Alert>
+          )}
+
+          {selectedSummary && (
+            <Paper withBorder p="lg" id="selected-chat-session">
+              <Stack gap="md">
+                <Group justify="space-between" align="flex-start" wrap="wrap">
+                  <Box>
+                    <Group gap={6}><Title order={3}>{selectedSummary.title}</Title><SessionTypeBadge type={selectedSummary.session_type} /><Badge color={stateColor(selectedSummary.state)}>{label(selectedSummary.state)}</Badge></Group>
+                    <Text size="xs" c="dimmed" ff="monospace" mt={5}>{selectedSummary.session_id}</Text>
+                  </Box>
+                  <Group gap={6}>
+                    {selectedSummary.links.agent && <Button component={Link} to={selectedSummary.links.agent} variant="subtle">Agent Detail</Button>}
+                    {selectedSummary.links.mission && <Button component={Link} to={selectedSummary.links.mission} variant="subtle">Mission Room</Button>}
+                  </Group>
+                </Group>
+
+                {selectedSummary.attention_required && (
+                  <Alert color="orange" icon={<IconAlertTriangle size={17} />} title="Provider turn requires human resolution">
+                    {label(selectedSummary.attention_code)}. The uncertain provider turn was not replayed automatically. Close or inspect the conversation and start a deliberately new message only when appropriate.
+                  </Alert>
+                )}
+
+                {detailQuery.isLoading ? (
+                  <Skeleton height={220} />
+                ) : detailQuery.isError || !detailQuery.data ? (
+                  <Alert color="red" title="Exact transcript unavailable">The selected session summary remains available, but its exact transcript could not be loaded.</Alert>
+                ) : (
+                  <ScrollArea.Autosize mah={560} offsetScrollbars>
+                    <Stack gap="sm" pr="xs">
+                      {detailQuery.data.session.turns.length === 0 ? (
+                        <Text size="sm" c="dimmed">This session has no accepted message turns.</Text>
+                      ) : detailQuery.data.session.turns.map((turn) => (
+                        <Stack key={turn.turn_id} gap={6}>
+                          <Paper withBorder p="sm" bg="gray.0" ml="15%">
+                            <Group justify="space-between" gap="xs">
+                              <Text size="xs" c="dimmed" fw={700}>{turn.human_message.actor.actor_display_name} · {timeLabel(turn.human_message.created_at)}</Text>
+                              {turn.target_agent_id && <Badge size="xs" variant="outline">To {turn.target_agent_id}</Badge>}
+                            </Group>
+                            <Text size="sm" mt={5} style={{ whiteSpace: 'pre-wrap' }}>{turn.human_message.content}</Text>
+                          </Paper>
+                          {turn.agent_message ? (
+                            <Paper withBorder p="sm" mr="15%">
+                              <Group justify="space-between" gap="xs">
+                                <Text size="xs" c="dimmed" fw={700}>{turn.agent_message.agent_id || selectedSummary.agent_id || 'Agent'} · {timeLabel(turn.agent_message.created_at)}</Text>
+                                <Badge size="xs" variant="outline">{turn.agent_message.model}</Badge>
+                              </Group>
+                              <Text size="sm" mt={5} style={{ whiteSpace: 'pre-wrap' }}>{turn.agent_message.content}</Text>
+                            </Paper>
+                          ) : (
+                            <Alert color={turn.state === 'provider_pending' ? 'blue' : 'orange'} title={turn.state === 'provider_pending' ? 'Provider response pending' : 'No final response recorded'}>
+                              {turn.state === 'provider_pending' ? 'The accepted human message is durable while the bounded provider turn runs.' : label(turn.error_code)}
+                            </Alert>
+                          )}
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </ScrollArea.Autosize>
+                )}
+              </Stack>
+            </Paper>
+          )}
         </>
       )}
     </Stack>
