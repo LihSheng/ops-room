@@ -23,6 +23,7 @@ test('permissions are the union of configured roles', () => {
   const permissions = permissionsForOperatorRoles(['operator', 'reviewer']);
   assert.equal(permissions.includes('dashboard.read'), true);
   assert.equal(permissions.includes('mission.create'), true);
+  assert.equal(permissions.includes('mission.start'), true);
   assert.equal(permissions.includes('task.manage'), true);
   assert.equal(permissions.includes('workflow.recover'), true);
   assert.equal(permissions.includes('workflow.approve'), true);
@@ -30,12 +31,14 @@ test('permissions are the union of configured roles', () => {
   assert.equal(permissions.includes('release.approve'), false);
 });
 
-test('mission creation is available to operators and administrators only', () => {
-  assert.equal(hasOperatorPermission(['operator'], 'mission.create'), true);
-  assert.equal(hasOperatorPermission(['administrator'], 'mission.create'), true);
-  assert.equal(hasOperatorPermission(['viewer'], 'mission.create'), false);
-  assert.equal(hasOperatorPermission(['reviewer'], 'mission.create'), false);
-  assert.equal(hasOperatorPermission(['deployer'], 'mission.create'), false);
+test('mission creation and start are available to operators and administrators only', () => {
+  for (const permission of ['mission.create', 'mission.start']) {
+    assert.equal(hasOperatorPermission(['operator'], permission), true);
+    assert.equal(hasOperatorPermission(['administrator'], permission), true);
+    assert.equal(hasOperatorPermission(['viewer'], permission), false);
+    assert.equal(hasOperatorPermission(['reviewer'], permission), false);
+    assert.equal(hasOperatorPermission(['deployer'], permission), false);
+  }
 });
 
 test('administrator and deployer remain separate authorities', () => {
@@ -55,6 +58,11 @@ test('unknown permissions and denied actions fail closed', () => {
     () => requireOperatorPermission(['viewer'], 'mission.create'),
     /operator_permission_denied:mission.create/,
   );
+  assert.throws(
+    () => requireOperatorPermission(['viewer'], 'mission.start'),
+    /operator_permission_denied:mission.start/,
+  );
   assert.doesNotThrow(() => requireOperatorPermission(['operator'], 'task.manage'));
   assert.doesNotThrow(() => requireOperatorPermission(['operator'], 'mission.create'));
+  assert.doesNotThrow(() => requireOperatorPermission(['operator'], 'mission.start'));
 });
