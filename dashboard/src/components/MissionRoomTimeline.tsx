@@ -23,7 +23,8 @@ import {
   IconRoute,
   IconRobot,
 } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 import type { MissionRoom, MissionRoomStage } from '../api/missions';
 
@@ -63,9 +64,18 @@ function verificationColor(status: string) {
   return 'gray';
 }
 
+function stageAnchor(stage: MissionRoomStage) {
+  return `stage-${stage.iteration}-${stage.stage}`;
+}
+
+function stageKeyFromHash(hash: string) {
+  const match = hash.match(/^#stage-(\d+)-(implementation|test|integration|review)$/);
+  return match ? `${Number(match[1])}:${match[2]}` : null;
+}
+
 function StageDetail({ stage }: { stage: MissionRoomStage }) {
   return (
-    <Paper withBorder p="lg">
+    <Paper withBorder p="lg" id="stage-detail">
       <Stack gap="md">
         <Group justify="space-between" align="flex-start" wrap="wrap">
           <Group gap="sm">
@@ -159,7 +169,10 @@ function StageDetail({ stage }: { stage: MissionRoomStage }) {
             <Stack gap={4}>
               {stage.retry_history.map((entry, index) => (
                 <Group key={`${entry.event}:${entry.at}:${index}`} justify="space-between" wrap="nowrap">
-                  <Text size="xs">{label(entry.event)}{entry.reason ? ` · ${label(entry.reason)}` : ''}</Text>
+                  <Text size="xs">
+                    {entry.from || entry.to ? `${label(entry.from || 'new')} → ${label(entry.to || stage.state)}` : label(entry.event)}
+                    {entry.reason ? ` · ${label(entry.reason)}` : ''}
+                  </Text>
                   <Text size="xs" c="dimmed">{entry.at || 'time unavailable'}</Text>
                 </Group>
               ))}
@@ -172,7 +185,8 @@ function StageDetail({ stage }: { stage: MissionRoomStage }) {
 }
 
 export function MissionRoomTimeline({ room }: { room: MissionRoom }) {
-  const initialKey = room.summary.current_stage_key || room.timeline[0]?.key || null;
+  const location = useLocation();
+  const initialKey = stageKeyFromHash(location.hash) || room.summary.current_stage_key || room.timeline[0]?.key || null;
   const [selectedKey, setSelectedKey] = useState<string | null>(initialKey);
   const selected = useMemo(
     () => room.timeline.find((stage) => stage.key === selectedKey) || room.timeline[0] || null,
@@ -183,8 +197,19 @@ export function MissionRoomTimeline({ room }: { room: MissionRoom }) {
     [room.timeline],
   );
 
+  useEffect(() => {
+    const key = stageKeyFromHash(location.hash);
+    if (!key || !room.timeline.some((stage) => stage.key === key)) return;
+    setSelectedKey(key);
+    const targetId = location.hash.slice(1);
+    const timer = window.setTimeout(() => {
+      document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [location.hash, room.timeline]);
+
   return (
-    <Stack gap="lg">
+    <Stack gap="lg" id="workflow-timeline">
       <Group justify="space-between" align="flex-start" wrap="wrap">
         <Group gap="sm">
           <ThemeIcon variant="light" color="violet" size={40} radius="md"><IconRoute size={22} /></ThemeIcon>
@@ -207,6 +232,7 @@ export function MissionRoomTimeline({ room }: { room: MissionRoom }) {
             <Timeline active={activeIndex} bulletSize={30} lineWidth={2}>
               {stages.map((stage) => (
                 <Timeline.Item
+                  id={stageAnchor(stage)}
                   key={stage.key}
                   bullet={stage.state === 'completed' ? <IconCheck size={15} /> : stage.state === 'not_created' ? <IconClock size={15} /> : <IconRobot size={15} />}
                   color={stateColor(stage.state)}
