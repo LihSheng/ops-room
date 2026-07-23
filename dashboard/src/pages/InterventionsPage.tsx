@@ -22,7 +22,6 @@ import {
   IconBolt,
   IconBrandGithub,
   IconGitBranch,
-  IconMessageCircle2,
   IconRefresh,
   IconRobot,
   IconRoute,
@@ -336,7 +335,6 @@ export function InterventionsPage() {
             { label: 'Needs Human', value: 'inbox' },
             { label: 'Chat Sessions', value: 'chat' },
           ]}
-          leftSection={view === 'chat' ? <IconMessageCircle2 size={15} /> : undefined}
         />
       </Paper>
       {view === 'chat' ? <ChatSessionsPage /> : <InterventionInboxView />}
