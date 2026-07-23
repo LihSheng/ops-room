@@ -5,11 +5,12 @@ import test from 'node:test';
 const APP_FILE = new URL('../dashboard/src/App.tsx', import.meta.url);
 const API_FILE = new URL('../dashboard/src/api/interventions.ts', import.meta.url);
 const PAGE_FILE = new URL('../dashboard/src/pages/InterventionsPage.tsx', import.meta.url);
+const CHAT_PANEL_FILE = new URL('../dashboard/src/components/ChatInterventionPanel.tsx', import.meta.url);
 const WORKFLOW_DESK_FILE = new URL('../dashboard/src/components/WorkflowControlDesk.tsx', import.meta.url);
 const WORKFLOW_PANEL_FILE = new URL('../dashboard/src/components/WorkflowControlPanel.tsx', import.meta.url);
 const INVESTIGATION_PANEL_FILE = new URL('../dashboard/src/components/InvestigationControlPanel.tsx', import.meta.url);
 
- test('Needs Human is a first-class dashboard route and refresh authority', async () => {
+test('Needs Human is a first-class dashboard route and refresh authority', async () => {
   const source = await readFile(APP_FILE, 'utf8');
   assert.match(source, /label: 'Needs Human', path: '\/interventions'/);
   assert.match(source, /<Route path="\/interventions" element=\{<InterventionsPage \/>\} \/>/);
@@ -49,21 +50,26 @@ test('intervention ordering and deduplication are deterministic', async () => {
   assert.match(source, /left\.intervention_id\.localeCompare\(right\.intervention_id\)/);
 });
 
-test('Needs Human preserves explanations and hosts all governed OPS-012F controls', async () => {
-  const [page, desk, workflowPanel, investigationPanel] = await Promise.all([
+test('Needs Human preserves explanations and hosts governed OPS-012F and chat evidence', async () => {
+  const [page, chatPanel, desk, workflowPanel, investigationPanel] = await Promise.all([
     readFile(PAGE_FILE, 'utf8'),
+    readFile(CHAT_PANEL_FILE, 'utf8'),
     readFile(WORKFLOW_DESK_FILE, 'utf8'),
     readFile(WORKFLOW_PANEL_FILE, 'utf8'),
     readFile(INVESTIGATION_PANEL_FILE, 'utf8'),
   ]);
-  assert.match(page, /Governed task, workflow, effect, and workspace controls/);
+  assert.match(page, /Governed task, workflow, effect, workspace, and chat evidence/);
   assert.match(page, /<TaskControlDesk \/>/);
   assert.match(page, /<WorkflowControlDesk \/>/);
+  assert.match(page, /<ChatInterventionPanel \/>/);
   assert.match(page, /Could an external effect have occurred\?/);
   assert.match(page, /Retry assessment/);
   assert.match(page, /Why action is blocked/);
   assert.match(page, /Recommended operator response/);
-  assert.match(page, /Provider invocation, uncertain-effect replay, and physical workspace deletion remain unavailable/);
+  assert.match(page, /Provider replay and physical workspace deletion remain unavailable/);
+  assert.match(chatPanel, /Automatic replay remains blocked/);
+  assert.match(chatPanel, /attention: true/);
+  assert.doesNotMatch(chatPanel, /human_message\.content|agent_message\.content/);
   assert.match(desk, /Workflow and investigation control desk/);
   assert.match(desk, /<InvestigationControlPanel room=\{roomQuery\.data\.room\} compact \/>/);
   assert.match(workflowPanel, /Server remains authoritative/);
@@ -72,5 +78,5 @@ test('Needs Human preserves explanations and hosts all governed OPS-012F control
   assert.match(investigationPanel, /physical deletion remains a separate server-owned operation/);
   assert.match(investigationPanel, /\['mission-room', room\.mission\.mission_id\]/);
   assert.match(investigationPanel, /\['interventions'\]/);
-  assert.doesNotMatch(`${page}\n${desk}\n${workflowPanel}\n${investigationPanel}`, /absolute_path|relative_path|payload_hash|provider_output|environment|credential|private reasoning/i);
+  assert.doesNotMatch(`${page}\n${chatPanel}\n${desk}\n${workflowPanel}\n${investigationPanel}`, /absolute_path|relative_path|payload_hash|provider_output|environment|credential|private reasoning/i);
 });

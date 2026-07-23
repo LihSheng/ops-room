@@ -29,7 +29,7 @@ import {
   IconShieldCheck,
 } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import {
   interventionsApi,
@@ -38,10 +38,13 @@ import {
   type InterventionSeverity,
   type RetryAssessment,
 } from '../api/interventions';
+import { ChatInterventionPanel } from '../components/ChatInterventionPanel';
 import { TaskControlDesk } from '../components/TaskControlDesk';
 import { WorkflowControlDesk } from '../components/WorkflowControlDesk';
+import { ChatSessionsPage } from './ChatSessionsPage';
 
 type InboxFilter = 'all' | 'errors' | 'blocked' | 'unknown' | 'effects';
+type InterventionWorkspaceView = 'inbox' | 'chat';
 
 function label(value: string | null | undefined) {
   return String(value || 'unavailable').replaceAll('_', ' ');
@@ -212,7 +215,7 @@ function InterventionEntry({ item }: { item: InterventionItem }) {
   );
 }
 
-export function InterventionsPage() {
+function InterventionInboxView() {
   const [filter, setFilter] = useState<InboxFilter>('all');
   const [search, setSearch] = useState('');
   const query = useQuery({
@@ -240,12 +243,13 @@ export function InterventionsPage() {
         </Button>
       </Group>
 
-      <Alert color="blue" variant="light" icon={<IconShieldCheck size={18} />} title="Governed task, workflow, effect, and workspace controls">
-        Review-task controls, exact Workflow recovery and Berlin decisions, explicit effect resolution, and workspace investigation or cleanup requests are available through authenticated server contracts. Provider invocation, uncertain-effect replay, and physical workspace deletion remain unavailable.
+      <Alert color="blue" variant="light" icon={<IconShieldCheck size={18} />} title="Governed task, workflow, effect, workspace, and chat evidence">
+        Review-task controls, exact Workflow recovery and Berlin decisions, explicit effect resolution, workspace investigation, and bounded chat-session attention evidence use authenticated server contracts. Provider replay and physical workspace deletion remain unavailable.
       </Alert>
 
       <TaskControlDesk />
       <WorkflowControlDesk />
+      <ChatInterventionPanel />
 
       {query.isLoading ? (
         <Stack gap="md"><Skeleton height={110} /><Skeleton height={420} /></Stack>
@@ -304,6 +308,36 @@ export function InterventionsPage() {
           )}
         </>
       )}
+    </Stack>
+  );
+}
+
+export function InterventionsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view = searchParams.get('view') === 'chat' ? 'chat' : 'inbox';
+  const setView = (next: InterventionWorkspaceView) => {
+    const updated = new URLSearchParams(searchParams);
+    if (next === 'chat') updated.set('view', 'chat');
+    else {
+      updated.delete('view');
+      updated.delete('session');
+    }
+    setSearchParams(updated);
+  };
+
+  return (
+    <Stack gap="lg">
+      <Paper withBorder p="xs" style={{ alignSelf: 'flex-start' }}>
+        <SegmentedControl
+          value={view}
+          onChange={(value) => setView(value as InterventionWorkspaceView)}
+          data={[
+            { label: 'Needs Human', value: 'inbox' },
+            { label: 'Chat Sessions', value: 'chat' },
+          ]}
+        />
+      </Paper>
+      {view === 'chat' ? <ChatSessionsPage /> : <InterventionInboxView />}
     </Stack>
   );
 }
