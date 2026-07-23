@@ -6,7 +6,7 @@ const APP_FILE = new URL('../dashboard/src/App.tsx', import.meta.url);
 const API_FILE = new URL('../dashboard/src/api/interventions.ts', import.meta.url);
 const PAGE_FILE = new URL('../dashboard/src/pages/InterventionsPage.tsx', import.meta.url);
 
-test('Needs Human is a first-class dashboard route and refresh authority', async () => {
+ test('Needs Human is a first-class dashboard route and refresh authority', async () => {
   const source = await readFile(APP_FILE, 'utf8');
   assert.match(source, /label: 'Needs Human', path: '\/interventions'/);
   assert.match(source, /<Route path="\/interventions" element=\{<InterventionsPage \/>\} \/>/);
@@ -46,14 +46,15 @@ test('intervention ordering and deduplication are deterministic', async () => {
   assert.match(source, /left\.intervention_id\.localeCompare\(right\.intervention_id\)/);
 });
 
-test('Needs Human page remains read only and exposes operator-facing explanations', async () => {
+test('Needs Human preserves explanations and hosts only governed task controls', async () => {
   const source = await readFile(PAGE_FILE, 'utf8');
-  assert.match(source, /Evidence and recommendations only/);
+  assert.match(source, /Governed task controls only/);
+  assert.match(source, /<TaskControlDesk \/>/);
   assert.match(source, /Could an external effect have occurred\?/);
   assert.match(source, /Retry assessment/);
   assert.match(source, /Why action is blocked/);
   assert.match(source, /Recommended operator response/);
   assert.match(source, /Evidence used/);
-  assert.match(source, /OPS-012F will wire authorized controls/);
+  assert.match(source, /Workflow approval, effect resolution, workspace controls/);
   assert.doesNotMatch(source, /absolute_path|relative_path|payload_hash|provider_output|environment|credential|private reasoning/i);
 });

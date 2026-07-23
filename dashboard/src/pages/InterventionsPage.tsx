@@ -38,6 +38,7 @@ import {
   type InterventionSeverity,
   type RetryAssessment,
 } from '../api/interventions';
+import { TaskControlDesk } from '../components/TaskControlDesk';
 
 type InboxFilter = 'all' | 'errors' | 'blocked' | 'unknown' | 'effects';
 
@@ -248,23 +249,25 @@ export function InterventionsPage() {
           <ThemeIcon variant="light" color="orange" size={44} radius="md"><IconAlertTriangle size={24} /></ThemeIcon>
           <Box>
             <Title order={1} className="page-title">Needs Human</Title>
-            <Text c="dimmed" mt={4}>A read-only inbox explaining durable operational conditions that require an operator decision.</Text>
+            <Text c="dimmed" mt={4}>Durable intervention evidence and governed operator controls for accepted recovery paths.</Text>
           </Box>
         </Group>
         <Button variant="default" leftSection={<IconRefresh size={16} />} loading={query.isFetching} onClick={() => query.refetch()}>
-          Refresh
+          Refresh evidence
         </Button>
       </Group>
 
-      <Alert color="blue" variant="light" icon={<IconShieldCheck size={18} />} title="Evidence and recommendations only">
-        This page does not retry, resume, cancel, resolve effects, mutate workspaces, invoke providers, or change workflow state. OPS-012F will wire authorized controls to accepted mutation contracts.
+      <Alert color="blue" variant="light" icon={<IconShieldCheck size={18} />} title="Governed task controls only">
+        OPS-012F.1 enables confirmed review-task pause, resume, cancel, and retry actions through the existing server contract. Workflow approval, effect resolution, workspace controls, provider invocation, and uncertain-effect replay remain unavailable.
       </Alert>
+
+      <TaskControlDesk />
 
       {query.isLoading ? (
         <Stack gap="md"><Skeleton height={110} /><Skeleton height={420} /></Stack>
       ) : query.isError || !query.data ? (
         <Alert color="red" icon={<IconAlertTriangle size={18} />} title="Intervention evidence unavailable">
-          The accepted authenticated read contracts could not be composed. No operator action was attempted.
+          The accepted authenticated read contracts could not be composed. Task controls remain independently server-authorized.
         </Alert>
       ) : (
         <>
