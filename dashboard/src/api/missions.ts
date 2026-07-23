@@ -1,4 +1,5 @@
 export type MissionPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type MissionEvidenceSourceState = 'available' | 'degraded' | 'unavailable' | 'not_applicable';
 
 export interface MissionParticipant {
   agent_id: string;
@@ -67,11 +68,110 @@ export interface WorkflowRecord {
   updated_at: string;
 }
 
+export interface MissionRoomWorkspace {
+  workspace_id: string;
+  mode: string | null;
+  state: string;
+  repository_id: string | null;
+  branch: string | null;
+  resolved_sha: string | null;
+  held_for_investigation: boolean;
+  cleanup_requested: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+  unavailable: boolean;
+  last_error: string | null;
+}
+
+export interface MissionRoomEffect {
+  effect_id: string;
+  effect_type: string | null;
+  state: string;
+  attempt: number | null;
+  claimed_at: string | null;
+  completed_at: string | null;
+  output_sha: string | null;
+  result_code: string | null;
+  unavailable: boolean;
+  last_error: string | null;
+}
+
+export interface MissionRoomStage {
+  key: string;
+  child_id: string | null;
+  iteration: number;
+  stage: 'implementation' | 'test' | 'integration' | 'review';
+  owner_agent: string;
+  state: string;
+  attempt: number;
+  retry_count: number;
+  depends_on: string | null;
+  input_sha: string | null;
+  output_sha: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_seconds: number | null;
+  last_error: string | null;
+  review_decision: string | null;
+  review_reason: string | null;
+  workspace: MissionRoomWorkspace | null;
+  provider_effect: MissionRoomEffect | null;
+  provider_effect_count: number;
+  verification: { status: string; reason: string | null };
+  retry_history: Array<{ event: string; reason: string | null; at: string | null }>;
+  evidence: {
+    workspace: MissionEvidenceSourceState;
+    provider_effect: MissionEvidenceSourceState;
+  };
+}
+
+export interface MissionRoom {
+  mission: MissionRecord;
+  workflow: {
+    workflow_id: string | null;
+    workflow_type: string | null;
+    repository_id: string | null;
+    source_sha: string | null;
+    state: string | null;
+    current_iteration: number;
+    policy: { max_iterations: number; max_concurrency: number } | null;
+    created_at: string | null;
+    updated_at: string | null;
+    completed_at: string | null;
+    last_error: string | null;
+  } | null;
+  timeline: MissionRoomStage[];
+  summary: {
+    iterations: number;
+    created_stages: number;
+    completed_stages: number;
+    attention_stages: number;
+    degraded_stages: number;
+    current_stage_key: string | null;
+    attention_required: boolean;
+  };
+  sources: {
+    mission: MissionEvidenceSourceState;
+    workflow: MissionEvidenceSourceState;
+    workspaces: MissionEvidenceSourceState;
+    effects: MissionEvidenceSourceState;
+  };
+  generated_at: string;
+}
+
 export interface MissionsListResponse {
   missions: MissionRecord[];
   count: number;
   total_matching: number;
   unavailable_count: number;
+}
+
+export interface MissionDetailResponse {
+  mission: MissionRecord;
+  room: MissionRoom | null;
+  room_unavailable: boolean;
+  room_error_code: string | null;
 }
 
 export interface CreateMissionRequest {
@@ -134,12 +234,8 @@ async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
     ...init,
     credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json',
-      ...init.headers,
-    },
+    headers: { Accept: 'application/json', ...init.headers },
   });
-
   const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (!response.ok) {
     throw new MissionApiError(
@@ -149,12 +245,14 @@ async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
       payload.audit_event_id ? String(payload.audit_event_id) : null,
     );
   }
-
   return payload as T;
 }
 
 export const missionsApi = {
   listMissions: () => requestJson<MissionsListResponse>('/api/missions?limit=100'),
+  getMission: (missionId: string) => requestJson<MissionDetailResponse>(
+    `/api/missions/${encodeURIComponent(missionId)}`,
+  ),
   createMission: (request: CreateMissionRequest, csrfToken: string) => requestJson<CreateMissionResponse>(
     '/api/operator/missions',
     {
