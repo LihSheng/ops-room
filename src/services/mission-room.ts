@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   FEATURE_DEVELOPMENT_OWNERS,
   FEATURE_DEVELOPMENT_STAGES,
@@ -7,6 +9,8 @@ import { serializeMission } from './mission-store.js';
 const SAFE_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,200}$/;
 const SOURCE_STATES = new Set(['available', 'degraded', 'unavailable', 'not_applicable']);
+const ACTIVITY_SEVERITY = new Set(['info', 'success', 'warning', 'attention', 'error']);
+const ACTIVITY_CATEGORY = new Set(['mission', 'workflow', 'stage', 'workspace', 'effect', 'review', 'intervention']);
 
 function bounded(value: unknown, maximum = 240): string | null {
   if (value == null) return null;
@@ -118,8 +122,10 @@ function publicEffect(effect: any) {
 function publicHistory(child: any) {
   return Array.isArray(child?.history)
     ? child.history.slice(-20).map((entry: any) => ({
-        event: bounded(entry?.event, 100) || 'workflow_event',
+        event: bounded(entry?.event, 100) || bounded(entry?.reason, 100) || 'workflow_event',
         reason: bounded(entry?.reason, 120),
+        from: bounded(entry?.from, 40),
+        to: bounded(entry?.to, 40),
         at: bounded(entry?.at, 64),
       }))
     : [];
@@ -223,6 +229,333 @@ function timelineStage({ iteration, stage, child, workspaces, effects, sourceSta
   };
 }
 
+function stageKeyForChild(child: any) {
+  if (!child || !Number.isInteger(child.iteration) || !FEATURE_DEVELOPMENT_STAGES.includes(child.stage)) return null;
+  return `${child.iteration}:${child.stage}`;
+}
+
+function childIndex(workflow: any) {
+  return new Map((Array.isArray(workflow?.children) ? workflow.children : []).map((child: any) => [child.child_id, child]));
+}
+
+function activityEvent(input: any) {
+  const at = bounded(input.at, 64);
+  const category = ACTIVITY_CATEGORY.has(input.category) ? input.category : 'workflow';
+  const severity = ACTIVITY_SEVERITY.has(input.severity) ? input.severity : 'info';
+  const stageKey = bounded(input.stage_key, 80);
+  const ownerAgent = bounded(input.owner_agent, 120);
+  const eventType = bounded(input.event_type, 100) || 'activity.recorded';
+  const correlation = [
+    eventType,
+    stageKey || bounded(input.workflow_id, 200) || bounded(input.mission_id, 200) || bounded(input.source_id, 200) || 'mission',
+    at || 'unknown-time',
+  ].join('|');
+  return {
+    event_id: `activity:${createHash('sha256').update(correlation).digest('hex').slice(0, 24)}`,
+    event_type: eventType,
+    category,
+    severity,
+    source: bounded(input.source, 40) || 'workflow',
+    source_id: bounded(input.source_id, 200),
+    title: bounded(input.title, 120) || 'Mission activity recorded',
+    detail: bounded(input.detail, 300),
+    reason_code: bounded(input.reason_code, 120),
+    at,
+    mission_id: bounded(input.mission_id, 200),
+    workflow_id: bounded(input.workflow_id, 200),
+    child_id: bounded(input.child_id, 200),
+    stage_key: stageKey,
+    iteration: Number.isInteger(input.iteration) ? input.iteration : null,
+    stage: bounded(input.stage, 40),
+    owner_agent: ownerAgent,
+    input_sha: SAFE_SHA.test(String(input.input_sha || '')) ? String(input.input_sha).toLowerCase() : null,
+    output_sha: SAFE_SHA.test(String(input.output_sha || '')) ? String(input.output_sha).toLowerCase() : null,
+    state: bounded(input.state, 40),
+    attempt: Number.isInteger(input.attempt) ? input.attempt : null,
+    links: {
+      mission: input.mission_id ? `/missions/${encodeURIComponent(String(input.mission_id))}` : null,
+      stage: input.mission_id && stageKey
+        ? `/missions/${encodeURIComponent(String(input.mission_id))}#stage-${stageKey.replace(':', '-')}`
+        : null,
+      agent: ownerAgent ? `/agents/${encodeURIComponent(ownerAgent)}` : null,
+      workflow: input.mission_id && input.workflow_id
+        ? `/missions/${encodeURIComponent(String(input.mission_id))}#workflow-summary`
+        : null,
+    },
+  };
+}
+
+function stageTransitionMetadata(to: string | null, reason: string | null) {
+  if (to === 'completed') return { event_type: 'stage.completed', title: 'Stage completed', severity: 'success', category: 'stage' };
+  if (to === 'active') return { event_type: 'stage.activated', title: 'Stage activated', severity: 'info', category: 'stage' };
+  if (to === 'pending' && reason === 'child_retry_requested') return { event_type: 'stage.retried', title: 'Stage retry requested', severity: 'warning', category: 'stage' };
+  if (to === 'pending') return { event_type: 'stage.created', title: 'Stage created', severity: 'info', category: 'stage' };
+  if (to === 'failed') return { event_type: 'stage.failed', title: 'Stage failed', severity: 'error', category: 'intervention' };
+  if (to === 'needs_human') return { event_type: 'stage.needs_human', title: 'Stage needs human intervention', severity: 'attention', category: 'intervention' };
+  if (to === 'cancelled') return { event_type: 'stage.cancelled', title: 'Stage cancelled', severity: 'warning', category: 'stage' };
+  return { event_type: 'stage.updated', title: 'Stage updated', severity: 'info', category: 'stage' };
+}
+
+function workflowHistoryMetadata(eventName: string) {
+  if (eventName === 'workflow_created') return { event_type: 'workflow.created', title: 'Workflow created', severity: 'info' };
+  if (eventName.includes('completed')) return { event_type: eventName.includes('child') ? 'stage.completed' : 'workflow.completed', title: eventName.includes('child') ? 'Stage completed' : 'Workflow completed', severity: 'success' };
+  if (eventName.includes('activated')) return { event_type: 'stage.activated', title: 'Stage activated', severity: 'info' };
+  if (eventName.includes('created') && eventName.includes('child')) return { event_type: 'stage.created', title: 'Stage created', severity: 'info' };
+  if (eventName.includes('retried')) return { event_type: 'stage.retried', title: 'Stage retry requested', severity: 'warning' };
+  if (eventName.includes('failed')) return { event_type: 'stage.failed', title: 'Stage failed', severity: 'error' };
+  if (eventName.includes('needs_human')) return { event_type: 'workflow.needs_human', title: 'Workflow needs human intervention', severity: 'attention' };
+  return { event_type: `workflow.${eventName.replace(/^workflow_/, '').replaceAll('_', '.')}`, title: eventName.replaceAll('_', ' '), severity: 'info' };
+}
+
+function buildActivity({ mission, workflow, effects, workspaces }: any) {
+  const events: any[] = [];
+  const children = childIndex(workflow);
+  const missionId = mission?.mission_id || null;
+  const workflowId = workflow?.workflow_id || mission?.workflow_id || null;
+
+  for (const entry of Array.isArray(mission?.history) ? mission.history.slice(-100) : []) {
+    const eventName = bounded(entry?.event, 100) || 'mission_updated';
+    const attention = eventName.includes('needs_human') || entry?.to === 'needs_human';
+    const completed = eventName.includes('completed') || entry?.to === 'completed';
+    events.push(activityEvent({
+      event_type: `mission.${eventName.replace(/^mission_/, '').replaceAll('_', '.')}`,
+      category: attention ? 'intervention' : 'mission',
+      severity: attention ? 'attention' : completed ? 'success' : 'info',
+      source: 'mission',
+      source_id: missionId,
+      title: eventName.replaceAll('_', ' '),
+      detail: entry?.actor_id ? `Actor ${bounded(entry.actor_id, 120)}` : null,
+      reason_code: entry?.reason,
+      at: entry?.at,
+      mission_id: missionId,
+      workflow_id: workflowId,
+      state: entry?.to || mission?.state,
+    }));
+  }
+
+  for (const entry of Array.isArray(workflow?.history) ? workflow.history.slice(-200) : []) {
+    const eventName = bounded(entry?.event, 100) || 'workflow_updated';
+    const child = entry?.child_id ? children.get(entry.child_id) : null;
+    const metadata = workflowHistoryMetadata(eventName);
+    events.push(activityEvent({
+      ...metadata,
+      category: metadata.event_type.startsWith('stage.')
+        ? (metadata.severity === 'error' || metadata.severity === 'attention' ? 'intervention' : 'stage')
+        : 'workflow',
+      source: 'workflow',
+      source_id: workflowId,
+      detail: bounded(entry?.reason || entry?.decision, 300),
+      reason_code: entry?.reason,
+      at: entry?.at,
+      mission_id: missionId,
+      workflow_id: workflowId,
+      child_id: child?.child_id || entry?.child_id,
+      stage_key: stageKeyForChild(child),
+      iteration: child?.iteration,
+      stage: child?.stage,
+      owner_agent: child?.owner_agent,
+      input_sha: child?.input_sha,
+      output_sha: child?.output_sha,
+      state: child?.state || workflow?.state,
+      attempt: entry?.attempt ?? child?.attempt,
+    }));
+  }
+
+  for (const child of Array.isArray(workflow?.children) ? workflow.children : []) {
+    for (const entry of Array.isArray(child.history) ? child.history.slice(-100) : []) {
+      const metadata = stageTransitionMetadata(bounded(entry?.to, 40), bounded(entry?.reason, 120));
+      events.push(activityEvent({
+        ...metadata,
+        source: 'workflow_child',
+        source_id: child.child_id,
+        detail: entry?.from || entry?.to ? `${bounded(entry?.from, 40) || 'new'} → ${bounded(entry?.to, 40) || child.state}` : null,
+        reason_code: entry?.reason,
+        at: entry?.at,
+        mission_id: missionId,
+        workflow_id: workflowId,
+        child_id: child.child_id,
+        stage_key: stageKeyForChild(child),
+        iteration: child.iteration,
+        stage: child.stage,
+        owner_agent: child.owner_agent,
+        input_sha: child.input_sha,
+        output_sha: child.output_sha,
+        state: entry?.to || child.state,
+        attempt: child.attempt,
+      }));
+    }
+
+    if (child.review_decision) {
+      const changes = child.review_decision === 'changes_requested';
+      events.push(activityEvent({
+        event_type: `review.${String(child.review_decision).replaceAll('_', '.')}`,
+        category: changes ? 'intervention' : 'review',
+        severity: changes ? 'attention' : child.review_decision === 'approved' ? 'success' : 'warning',
+        source: 'workflow_child',
+        source_id: child.child_id,
+        title: changes ? 'Berlin requested changes' : `Berlin review ${String(child.review_decision).replaceAll('_', ' ')}`,
+        detail: child.review_reason,
+        reason_code: child.review_reason,
+        at: child.completed_at || child.updated_at,
+        mission_id: missionId,
+        workflow_id: workflowId,
+        child_id: child.child_id,
+        stage_key: stageKeyForChild(child),
+        iteration: child.iteration,
+        stage: child.stage,
+        owner_agent: child.owner_agent,
+        input_sha: child.input_sha,
+        output_sha: child.output_sha,
+        state: child.state,
+        attempt: child.attempt,
+      }));
+    }
+  }
+
+  for (const record of Array.isArray(workspaces) ? workspaces : []) {
+    const child = children.get(record?.task_id);
+    if (!child) continue;
+    const workspace = publicWorkspace(record);
+    if (!workspace || workspace.unavailable) continue;
+    events.push(activityEvent({
+      event_type: 'workspace.created',
+      category: 'workspace',
+      severity: 'info',
+      source: 'workspace',
+      source_id: workspace.workspace_id,
+      title: 'Workspace allocated',
+      detail: `${workspace.mode} workspace for ${child.owner_agent}`,
+      at: workspace.created_at,
+      mission_id: missionId,
+      workflow_id: workflowId,
+      child_id: child.child_id,
+      stage_key: stageKeyForChild(child),
+      iteration: child.iteration,
+      stage: child.stage,
+      owner_agent: child.owner_agent,
+      input_sha: child.input_sha,
+      output_sha: workspace.resolved_sha,
+      state: 'allocated',
+      attempt: child.attempt,
+    }));
+    events.push(activityEvent({
+      event_type: workspace.held_for_investigation ? 'workspace.investigation_hold' : `workspace.${String(workspace.state).replaceAll('_', '.')}`,
+      category: workspace.held_for_investigation ? 'intervention' : 'workspace',
+      severity: workspace.held_for_investigation ? 'attention' : workspace.state === 'failed' ? 'error' : workspace.state === 'released' ? 'success' : 'info',
+      source: 'workspace',
+      source_id: workspace.workspace_id,
+      title: workspace.held_for_investigation ? 'Workspace held for investigation' : `Workspace ${String(workspace.state).replaceAll('_', ' ')}`,
+      at: workspace.updated_at,
+      mission_id: missionId,
+      workflow_id: workflowId,
+      child_id: child.child_id,
+      stage_key: stageKeyForChild(child),
+      iteration: child.iteration,
+      stage: child.stage,
+      owner_agent: child.owner_agent,
+      input_sha: child.input_sha,
+      output_sha: workspace.resolved_sha,
+      state: workspace.state,
+      attempt: child.attempt,
+    }));
+  }
+
+  for (const rawEffect of Array.isArray(effects) ? effects : []) {
+    const effect = publicEffect(rawEffect);
+    const child = children.get(rawEffect?.child_id);
+    if (!effect || effect.unavailable || !child) continue;
+    events.push(activityEvent({
+      event_type: 'effect.claimed',
+      category: 'effect',
+      severity: 'info',
+      source: 'provider_effect',
+      source_id: effect.effect_id,
+      title: 'Provider effect claimed',
+      detail: effect.effect_type,
+      at: effect.claimed_at,
+      mission_id: missionId,
+      workflow_id: workflowId,
+      child_id: child.child_id,
+      stage_key: stageKeyForChild(child),
+      iteration: child.iteration,
+      stage: child.stage,
+      owner_agent: child.owner_agent,
+      input_sha: child.input_sha,
+      state: 'claimed',
+      attempt: effect.attempt,
+    }));
+    if (effect.completed_at) {
+      const attention = effect.state === 'failed' || effect.state === 'needs_human';
+      events.push(activityEvent({
+        event_type: `effect.${String(effect.state).replaceAll('_', '.')}`,
+        category: attention ? 'intervention' : 'effect',
+        severity: effect.state === 'completed' ? 'success' : effect.state === 'failed' ? 'error' : 'attention',
+        source: 'provider_effect',
+        source_id: effect.effect_id,
+        title: effect.state === 'completed' ? 'Provider effect completed' : effect.state === 'failed' ? 'Provider effect failed' : 'Provider effect needs human intervention',
+        detail: effect.effect_type,
+        reason_code: effect.result_code,
+        at: effect.completed_at,
+        mission_id: missionId,
+        workflow_id: workflowId,
+        child_id: child.child_id,
+        stage_key: stageKeyForChild(child),
+        iteration: child.iteration,
+        stage: child.stage,
+        owner_agent: child.owner_agent,
+        input_sha: child.input_sha,
+        output_sha: effect.output_sha,
+        state: effect.state,
+        attempt: effect.attempt,
+      }));
+    }
+  }
+
+  if (workflow && ['blocked', 'needs_human'].includes(workflow.state)) {
+    events.push(activityEvent({
+      event_type: `workflow.${String(workflow.state).replaceAll('_', '.')}`,
+      category: 'intervention',
+      severity: workflow.state === 'needs_human' ? 'attention' : 'warning',
+      source: 'workflow',
+      source_id: workflowId,
+      title: workflow.state === 'needs_human' ? 'Workflow needs human intervention' : 'Workflow is blocked',
+      detail: workflow.last_error,
+      reason_code: workflow.last_error,
+      at: workflow.updated_at,
+      mission_id: missionId,
+      workflow_id: workflowId,
+      state: workflow.state,
+    }));
+  }
+
+  const deduplicated = new Map<string, any>();
+  for (const event of events) {
+    if (!event.at) continue;
+    const key = [event.event_type, event.stage_key || event.source_id || event.workflow_id || event.mission_id, event.at].join('|');
+    const existing = deduplicated.get(key);
+    const score = Number(Boolean(event.detail)) + Number(Boolean(event.reason_code)) + Number(Boolean(event.output_sha)) + Number(event.source === 'workflow_child');
+    const existingScore = existing
+      ? Number(Boolean(existing.detail)) + Number(Boolean(existing.reason_code)) + Number(Boolean(existing.output_sha)) + Number(existing.source === 'workflow_child')
+      : -1;
+    if (!existing || score > existingScore) deduplicated.set(key, event);
+  }
+
+  const activity = [...deduplicated.values()]
+    .sort((left, right) => timestamp(right.at) - timestamp(left.at) || String(left.event_id).localeCompare(String(right.event_id)))
+    .slice(0, 200);
+  return {
+    activity,
+    summary: {
+      total: activity.length,
+      attention: activity.filter((event) => ['attention', 'error'].includes(event.severity)).length,
+      reviews: activity.filter((event) => event.category === 'review' || event.event_type.startsWith('review.')).length,
+      retries: activity.filter((event) => event.event_type === 'stage.retried').length,
+      effects: activity.filter((event) => event.source === 'provider_effect').length,
+      latest_at: activity[0]?.at || null,
+    },
+  };
+}
+
 export function buildMissionRoom({
   mission,
   workflow = null,
@@ -266,6 +599,7 @@ export function buildMissionRoom({
     || entry.evidence.provider_effect === 'degraded'
     || entry.evidence.provider_effect === 'unavailable'
   ));
+  const activityResult = buildActivity({ mission, workflow, effects, workspaces });
 
   return {
     mission: publicMission,
@@ -285,6 +619,8 @@ export function buildMissionRoom({
         }
       : null,
     timeline,
+    activity: activityResult.activity,
+    activity_summary: activityResult.summary,
     summary: {
       iterations: maximumObservedIteration,
       created_stages: children.length,
