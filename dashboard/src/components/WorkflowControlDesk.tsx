@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { missionsApi } from '../api/missions';
+import { InvestigationControlPanel } from './InvestigationControlPanel';
 import { WorkflowControlPanel } from './WorkflowControlPanel';
 
 export function WorkflowControlDesk() {
@@ -29,7 +30,7 @@ export function WorkflowControlDesk() {
 
   const candidates = useMemo(
     () => (missionsQuery.data?.missions || [])
-      .filter((mission) => !mission.unavailable && mission.workflow_id && ['needs_human', 'active'].includes(mission.state))
+      .filter((mission) => !mission.unavailable && mission.workflow_id)
       .sort((left, right) => {
         if (left.state === 'needs_human' && right.state !== 'needs_human') return -1;
         if (right.state === 'needs_human' && left.state !== 'needs_human') return 1;
@@ -57,9 +58,9 @@ export function WorkflowControlDesk() {
           <Group gap="sm" align="flex-start">
             <ThemeIcon variant="light" color="violet" size={40} radius="md"><IconRoute size={21} /></ThemeIcon>
             <Box>
-              <Title order={3}>Workflow control desk</Title>
+              <Title order={3}>Workflow and investigation control desk</Title>
               <Text size="sm" c="dimmed" mt={3}>
-                Select a Mission with active or needs-human workflow evidence, then use only the recovery and Berlin decisions accepted by the server contract.
+                Select a Mission, then use only the workflow recovery, effect resolution, Berlin decision, and workspace actions accepted by server authority.
               </Text>
             </Box>
           </Group>
@@ -73,7 +74,7 @@ export function WorkflowControlDesk() {
               if (missionId) void roomQuery.refetch();
             }}
           >
-            Refresh workflows
+            Refresh controls
           </Button>
         </Group>
 
@@ -81,10 +82,10 @@ export function WorkflowControlDesk() {
           <Skeleton height={84} />
         ) : missionsQuery.isError ? (
           <Alert color="red" icon={<IconAlertTriangle size={17} />} title="Mission controls unavailable">
-            Mission evidence could not be loaded. No workflow action was attempted.
+            Mission evidence could not be loaded. No workflow, effect, or workspace action was attempted.
           </Alert>
         ) : candidates.length === 0 ? (
-          <Text size="sm" c="dimmed">No active or needs-human Mission is currently available for workflow controls.</Text>
+          <Text size="sm" c="dimmed">No Mission with durable workflow evidence is currently available for controls.</Text>
         ) : (
           <Group align="flex-end" wrap="wrap">
             <Select
@@ -113,7 +114,12 @@ export function WorkflowControlDesk() {
             The selected Mission Room could not be loaded. No legal action has been inferred.
           </Alert>
         )}
-        {roomQuery.data?.room && <WorkflowControlPanel room={roomQuery.data.room} compact />}
+        {roomQuery.data?.room && (
+          <Stack gap="md">
+            <WorkflowControlPanel room={roomQuery.data.room} compact />
+            <InvestigationControlPanel room={roomQuery.data.room} compact />
+          </Stack>
+        )}
       </Stack>
     </Paper>
   );
