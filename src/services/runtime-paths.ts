@@ -66,6 +66,7 @@ export const REVIEW_TASKS_DIR = process.env.OPS_ROOM_REVIEW_TASKS_DIR || join(_o
 export const MISSIONS_DIR = process.env.OPS_ROOM_MISSIONS_DIR || join(_opsRoomDataDir, 'missions');
 export const WORKFLOW_RUNS_DIR = process.env.OPS_ROOM_WORKFLOW_RUNS_DIR || join(_opsRoomDataDir, 'workflow-runs');
 export const WORKFLOW_EFFECTS_DIR = process.env.OPS_ROOM_WORKFLOW_EFFECTS_DIR || join(_opsRoomDataDir, 'workflow-effects');
+export const AGENT_CHAT_SESSIONS_DIR = process.env.OPS_ROOM_AGENT_CHAT_SESSIONS_DIR || join(_opsRoomDataDir, 'agent-chat-sessions');
 export const LOG_DIR = process.env.OPS_ROOM_LOGS_DIR || join(_opsRoomDataDir, 'logs');
 export const STATE_DIR = process.env.OPS_ROOM_STATE_DIR || join(_opsRoomDataDir, 'state');
 export const AUDIT_DIR = process.env.OPS_ROOM_AUDIT_DIR || join(_opsRoomDataDir, 'audit');
