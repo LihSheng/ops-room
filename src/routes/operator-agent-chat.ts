@@ -85,7 +85,7 @@ const listOrCreateSessions: RouteEntry = {
       sendJSON(res, 404, { error: 'Agent profile not found', error_code: 'agent_chat_profile_missing' });
       return;
     }
-    if (!profile.enabled) {
+    if (!profile.enabled && req.method === 'POST') {
       sendJSON(res, 409, { error: 'Agent profile is disabled', error_code: 'agent_chat_profile_disabled' });
       return;
     }
