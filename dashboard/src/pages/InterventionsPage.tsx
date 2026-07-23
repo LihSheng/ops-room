@@ -39,6 +39,7 @@ import {
   type RetryAssessment,
 } from '../api/interventions';
 import { TaskControlDesk } from '../components/TaskControlDesk';
+import { WorkflowControlDesk } from '../components/WorkflowControlDesk';
 
 type InboxFilter = 'all' | 'errors' | 'blocked' | 'unknown' | 'effects';
 
@@ -101,9 +102,6 @@ function relativeTime(value: string | null) {
   const seconds = Math.round((parsed.getTime() - Date.now()) / 1000);
   const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
   const ranges: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ['year', 31_536_000],
-    ['month', 2_592_000],
-    ['week', 604_800],
     ['day', 86_400],
     ['hour', 3_600],
     ['minute', 60],
@@ -207,21 +205,6 @@ function InterventionEntry({ item }: { item: InterventionItem }) {
             <Text size="sm" mt={4} fw={600}>{item.recommended_response}</Text>
           </Box>
 
-          <Box>
-            <Text size="xs" c="dimmed" fw={700} mb={6}>Evidence used</Text>
-            <Stack gap={5}>
-              {item.evidence.map((evidence, index) => (
-                <Group key={`${evidence.source}:${evidence.identifier}:${index}`} justify="space-between" align="flex-start" wrap="nowrap">
-                  <Box>
-                    <Text size="sm">{evidence.summary}</Text>
-                    <Text size="xs" c="dimmed">{label(evidence.source)}{evidence.identifier ? ` · ${evidence.identifier}` : ''}</Text>
-                  </Box>
-                  {evidence.at && <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>{evidence.at}</Text>}
-                </Group>
-              ))}
-            </Stack>
-          </Box>
-
           <EvidenceLinks item={item} />
         </Stack>
       </Paper>
@@ -257,17 +240,18 @@ export function InterventionsPage() {
         </Button>
       </Group>
 
-      <Alert color="blue" variant="light" icon={<IconShieldCheck size={18} />} title="Governed task controls only">
-        OPS-012F.1 enables confirmed review-task pause, resume, cancel, and retry actions through the existing server contract. Workflow approval, effect resolution, workspace controls, provider invocation, and uncertain-effect replay remain unavailable.
+      <Alert color="blue" variant="light" icon={<IconShieldCheck size={18} />} title="Governed task and workflow controls">
+        Review-task controls and exact Workflow recovery/Berlin decisions are available through authenticated server contracts. Effect resolution, workspace cleanup controls, provider invocation, and uncertain-effect replay remain unavailable.
       </Alert>
 
       <TaskControlDesk />
+      <WorkflowControlDesk />
 
       {query.isLoading ? (
         <Stack gap="md"><Skeleton height={110} /><Skeleton height={420} /></Stack>
       ) : query.isError || !query.data ? (
         <Alert color="red" icon={<IconAlertTriangle size={18} />} title="Intervention evidence unavailable">
-          The accepted authenticated read contracts could not be composed. Task controls remain independently server-authorized.
+          The accepted authenticated read contracts could not be composed. Mutation controls remain independently server-authorized.
         </Alert>
       ) : (
         <>

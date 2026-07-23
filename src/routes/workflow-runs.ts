@@ -1,3 +1,5 @@
+import './operator-workflows.js';
+
 import {
   FEATURE_DEVELOPMENT_WORKFLOW,
   listWorkflowRuns,

@@ -15,6 +15,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import type { MissionRecord, MissionRoom } from '../api/missions';
 import { MissionActivityPanel } from './MissionActivityPanel';
 import { MissionRoomTimeline } from './MissionRoomTimeline';
+import { WorkflowControlPanel } from './WorkflowControlPanel';
 
 export function missionStateColor(state: MissionRecord['state']) {
   if (state === 'active' || state === 'completed') return 'teal';
@@ -101,6 +102,7 @@ export function MissionRoomContent({ room }: { room: MissionRoom }) {
         </Alert>
       )}
 
+      <WorkflowControlPanel room={room} />
       <MissionActivityPanel room={room} />
       <MissionRoomTimeline room={room} />
     </Stack>
