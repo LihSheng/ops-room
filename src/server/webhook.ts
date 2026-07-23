@@ -65,4 +65,5 @@ if (providerRecovery.unavailable.length > 0) {
   );
 }
 
+await import('../routes/operator-workflows.js');
 await import('./http.js');
