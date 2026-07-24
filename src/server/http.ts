@@ -547,7 +547,7 @@ const routes: RouteEntry[] = [
   {
     method: 'GET',
     match: (p) => {
-      const m = p.match(/^\/api\/missions\/([A-Za-z0-9._:-]+)$/);
+      const m = p.match(/^\/api\/missions\/((?:[A-Za-z0-9._:-]|%[0-9A-Fa-f]{2})+)$/);
       return m ? { missionId: m[1] } : null;
     },
     handler: async (_req, res, params) => {
@@ -602,7 +602,7 @@ const routes: RouteEntry[] = [
   {
     method: 'GET',
     match: (p) => {
-      const m = p.match(/^\/api\/workflows\/([A-Za-z0-9._:-]+)$/);
+      const m = p.match(/^\/api\/workflows\/((?:[A-Za-z0-9._:-]|%[0-9A-Fa-f]{2})+)$/);
       return m ? { workflowId: m[1] } : null;
     },
     handler: async (_req, res, params) => {
@@ -630,7 +630,7 @@ const routes: RouteEntry[] = [
   {
     method: 'GET',
     match: (p) => {
-      const m = p.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)$/);
+      const m = p.match(/^\/api\/review-tasks\/((?:[A-Za-z0-9._:-]|%[0-9A-Fa-f]{2})+)$/);
       return m ? { taskId: m[1] } : null;
     },
     handler: async (_req, res, params) => {
@@ -644,7 +644,7 @@ const routes: RouteEntry[] = [
   {
     method: 'POST',
     match: (p) => {
-      const m = p.match(/^\/api\/(?:operator\/tasks|review-tasks)\/([A-Za-z0-9._:-]+)\/(cancel|retry|pause|resume)$/);
+      const m = p.match(/^\/api\/(?:operator\/tasks|review-tasks)\/((?:[A-Za-z0-9._:-]|%[0-9A-Fa-f]{2})+)\/(cancel|retry|pause|resume)$/);
       return m ? { taskId: m[1], action: m[2] } : null;
     },
     handler: async (req, res, params) => {
@@ -763,7 +763,7 @@ const routes: RouteEntry[] = [
   {
     method: 'GET',
     match: (p) => {
-      const m = p.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/effects$/);
+      const m = p.match(/^\/api\/review-tasks\/((?:[A-Za-z0-9._:-]|%[0-9A-Fa-f]{2})+)\/effects$/);
       return m ? { taskId: m[1] } : null;
     },
     handler: async (_req, res, params, url) => {
@@ -782,7 +782,7 @@ const routes: RouteEntry[] = [
   {
     method: 'POST',
     match: (p) => {
-      const m = p.match(/^\/api\/review-tasks\/([A-Za-z0-9._:-]+)\/effects\/([a-f0-9]+)\/resolve$/);
+      const m = p.match(/^\/api\/review-tasks\/((?:[A-Za-z0-9._:-]|%[0-9A-Fa-f]{2})+)\/effects\/([a-f0-9]+)\/resolve$/);
       return m ? { taskId: m[1], effectId: m[2] } : null;
     },
     handler: async (req, res, params) => {
@@ -879,7 +879,8 @@ const routes: RouteEntry[] = [
     method: 'GET',
     match: () => ({}),
     handler: async (req, res, _params, url) => {
-      handleStaticApp(req, res, url.pathname);
+      const served = handleStaticApp(req, res, url.pathname);
+      if (served) return;
     },
   },
 ];
