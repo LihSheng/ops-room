@@ -1,11 +1,51 @@
+import { existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const OPS_ROOM_ROOT = join(__dirname, '..', '..');
-const REPO_ROOT = OPS_ROOM_ROOT;
-const _dataDir = process.env.OPENAB_DATA_DIR || join(REPO_ROOT, 'data');
+
+/**
+ * Resolve the default configuration directory.
+ *
+ * Returns the actual `config/` directory (not the repository root).
+ * Two bounded layouts are supported:
+ *
+ * 1. Source-checkout layout (CI, dev, tests):
+ *    <OPS_ROOM_ROOT>/config/   → returns <OPS_ROOM_ROOT>/config
+ *
+ * 2. Immutable production-release layout (deployed artifact):
+ *    <release-root>/config/    → returns <release-root>/config
+ *    <release-root>/ops-room/  ← this is OPS_ROOM_ROOT
+ *
+ * Exactly two locations are checked. Each candidate must be a directory
+ * and contain agent-profiles (governed sentinel). No unbounded search.
+ * Throws a clear error when neither location is valid.
+ */
+function resolveConfigRoot(root?: string): string {
+  const base = root ?? OPS_ROOM_ROOT;
+  for (const candidate of [join(base, 'config'), join(base, '..', 'config')]) {
+    try {
+      if (statSync(candidate).isDirectory() && existsSync(join(candidate, 'agent-profiles'))) {
+        return candidate;
+      }
+    } catch {
+      // statSync or existsSync may throw ENOENT — skip to next candidate.
+    }
+  }
+  throw new Error(
+    `Cannot locate config directory: checked ${join(base, 'config')} and ${join(base, '..', 'config')}. ` +
+    'Set OPS_ROOM_CONFIG_ROOT, or individual overrides: OPS_ROOM_AGENT_PROFILES_DIR, ' +
+    'OPS_ROOM_SKILL_MANIFESTS_DIR, OPS_ROOM_MEMORY_SPACE_MANIFESTS_DIR, OPENAB_AGENTS_CONFIG_DIR.',
+  );
+}
+
+const CONFIG_ROOT: string = process.env.OPS_ROOM_CONFIG_ROOT || resolveConfigRoot();
+
+// Exported for testing — accepts an optional root override for layout simulation.
+export { resolveConfigRoot as _resolveConfigRootForTest };
+const _dataDir = process.env.OPENAB_DATA_DIR || join(OPS_ROOM_ROOT, 'data');
 const _opsRoomDataDir = process.env.OPS_ROOM_DATA_DIR || join(_dataDir, 'ops-room');
 const _requiredCommands = Object.hasOwn(process.env, 'OPS_ROOM_REQUIRED_COMMANDS')
   ? process.env.OPS_ROOM_REQUIRED_COMMANDS
@@ -57,10 +97,10 @@ export const REQUIRED_COMMANDS = _requiredCommands.split(',').map((value) => val
 export const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.OPS_ROOM_SHUTDOWN_TIMEOUT_MS || '55000', 10);
 export const DATA_DIR = _dataDir;
 export const OPS_ROOM_DATA_DIR = _opsRoomDataDir;
-export const AGENTS_CONFIG_DIR = process.env.OPENAB_AGENTS_CONFIG_DIR || join(REPO_ROOT, 'config', 'agents');
-export const AGENT_PROFILES_DIR = process.env.OPS_ROOM_AGENT_PROFILES_DIR || join(REPO_ROOT, 'config', 'agent-profiles');
-export const SKILL_MANIFESTS_DIR = process.env.OPS_ROOM_SKILL_MANIFESTS_DIR || join(REPO_ROOT, 'config', 'skills');
-export const MEMORY_SPACE_MANIFESTS_DIR = process.env.OPS_ROOM_MEMORY_SPACE_MANIFESTS_DIR || join(REPO_ROOT, 'config', 'memory-spaces');
+export const AGENTS_CONFIG_DIR = process.env.OPENAB_AGENTS_CONFIG_DIR || join(CONFIG_ROOT, 'agents');
+export const AGENT_PROFILES_DIR = process.env.OPS_ROOM_AGENT_PROFILES_DIR || join(CONFIG_ROOT, 'agent-profiles');
+export const SKILL_MANIFESTS_DIR = process.env.OPS_ROOM_SKILL_MANIFESTS_DIR || join(CONFIG_ROOT, 'skills');
+export const MEMORY_SPACE_MANIFESTS_DIR = process.env.OPS_ROOM_MEMORY_SPACE_MANIFESTS_DIR || join(CONFIG_ROOT, 'memory-spaces');
 export const TASKS_DIR = process.env.OPS_ROOM_TASKS_DIR || join(_opsRoomDataDir, 'tasks');
 export const REVIEW_TASKS_DIR = process.env.OPS_ROOM_REVIEW_TASKS_DIR || join(_opsRoomDataDir, 'review-tasks');
 export const MISSIONS_DIR = process.env.OPS_ROOM_MISSIONS_DIR || join(_opsRoomDataDir, 'missions');
