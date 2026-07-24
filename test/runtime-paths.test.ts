@@ -9,8 +9,8 @@ import { cwd, execPath } from 'node:process';
 /**
  * The pure resolver function being tested.
  * resolveConfigRoot(candidateRoot) checks:
- *   1. candidate/config/agent-profiles/ exists as directory → return candidate
- *   2. parent(candidate)/config/agent-profiles/ exists as directory → return parent
+ *   1. candidate/config/agent-profiles/ exists as directory → return candidate/config
+ *   2. parent(candidate)/config/agent-profiles/ exists as directory → return parent/config
  *   3. Otherwise → throw clear error listing both checked paths
  */
 const { _resolveConfigRootForTest } = await import('../src/services/runtime-paths.js');
@@ -59,18 +59,20 @@ function createFileNotDirLayout(): Layout {
 
 // ── Pure resolver tests ─────────────────────────────────────
 
-test('source-checkout: config under OPS_ROOM_ROOT resolves to OPS_ROOM_ROOT', () => {
+test('source-checkout: config under OPS_ROOM_ROOT resolves to OPS_ROOM_ROOT/config', () => {
   const l = createSourceCheckoutLayout();
   try {
-    assert.equal(_resolveConfigRootForTest(l.root), l.root);
+    // Resolver returns the config directory directly: l.root/config
+    assert.equal(_resolveConfigRootForTest(l.root), join(l.root, 'config'));
     assert.equal(existsSync(join(l.root, 'config', 'agent-profiles')), true);
   } finally { l.cleanup(); }
 });
 
-test('immutable-release: config under parent resolves to parent', () => {
+test('immutable-release: config under parent resolves to release-root/config', () => {
   const l = createImmutableReleaseLayout();
   try {
-    assert.equal(_resolveConfigRootForTest(l.root), join(l.root, '..'));
+    // Resolver returns the config directory directly: parent/config
+    assert.equal(_resolveConfigRootForTest(l.root), join(l.root, '..', 'config'));
     assert.equal(existsSync(join(l.root, '..', 'config', 'agent-profiles')), true);
   } finally { l.cleanup(); }
 });
@@ -78,7 +80,7 @@ test('immutable-release: config under parent resolves to parent', () => {
 test('regular file named "config" is NOT accepted', () => {
   const l = createFileNotDirLayout();
   try {
-    assert.throws(() => _resolveConfigRootForTest(l.root), /Cannot locate config root/);
+    assert.throws(() => _resolveConfigRootForTest(l.root), /Cannot locate config directory/);
   } finally { l.cleanup(); }
 });
 
@@ -89,8 +91,8 @@ test('missing config throws clear error listing paths and env vars', () => {
       () => _resolveConfigRootForTest(l.root),
       (e: Error) =>
         e.message.includes(l.root) &&
-        e.message.includes('Cannot locate config root') &&
-        e.message.includes('OPS_ROOM_AGENT_PROFILES_DIR'),
+        e.message.includes('Cannot locate config directory') &&
+        e.message.includes('OPS_ROOM_CONFIG_ROOT'),
     );
   } finally { l.cleanup(); }
 });
@@ -104,7 +106,7 @@ test('only two bounded ancestor levels checked (config 4+ levels up not found)',
     // Candidate 1: opsRoot/config → no
     // Candidate 2: a/b/c/config → no
     // deep/config is at a/b/c/../../.. which is NOT checked
-    assert.throws(() => _resolveConfigRootForTest(opsRoot), /Cannot locate config root/);
+    assert.throws(() => _resolveConfigRootForTest(opsRoot), /Cannot locate config directory/);
   } finally { rmSync(deep, { recursive: true, force: true }); }
 });
 
@@ -146,6 +148,36 @@ test('env override takes precedence — resolves to custom dir, not layout', () 
   }
 });
 
+test('OPS_ROOM_CONFIG_ROOT override resolves all default config dirs from one root', () => {
+  const l = createImmutableReleaseLayout();
+  const fakeConfigRoot = join(tmpdir(), `rpt-cfgroot-${Date.now()}-${s()}`);
+  for (const sub of ['agent-profiles', 'skills', 'memory-spaces', 'agents']) {
+    mkdirSync(join(fakeConfigRoot, sub), { recursive: true });
+  }
+  try {
+    const out = nodeScriptEval(
+      `import { existsSync } from 'node:fs';
+       import { AGENT_PROFILES_DIR, SKILL_MANIFESTS_DIR, MEMORY_SPACE_MANIFESTS_DIR, AGENTS_CONFIG_DIR } from './src/services/runtime-paths.js';
+       console.log('PROFILES:' + AGENT_PROFILES_DIR + ':' + existsSync(AGENT_PROFILES_DIR));
+       console.log('SKILLS:' + SKILL_MANIFESTS_DIR + ':' + existsSync(SKILL_MANIFESTS_DIR));
+       console.log('MEMORY:' + MEMORY_SPACE_MANIFESTS_DIR + ':' + existsSync(MEMORY_SPACE_MANIFESTS_DIR));
+       console.log('AGENTS:' + AGENTS_CONFIG_DIR + ':' + existsSync(AGENTS_CONFIG_DIR));`,
+      { OPS_ROOM_CONFIG_ROOT: fakeConfigRoot },
+    );
+    for (const line of out.trim().split('\n')) {
+      const lastColon = line.lastIndexOf(':');
+      const firstColon = line.indexOf(':');
+      const dir = line.slice(firstColon + 1, lastColon);
+      const exists = line.slice(lastColon + 1);
+      assert.equal(exists, 'true', `Default under OPS_ROOM_CONFIG_ROOT should exist: ${dir}`);
+      assert.ok(dir.startsWith(fakeConfigRoot), `Resolved under config root: ${dir}`);
+    }
+  } finally {
+    l.cleanup();
+    rmSync(fakeConfigRoot, { recursive: true, force: true });
+  }
+});
+
 test('without env override, real source-checkout layout resolves correctly', () => {
   // Running from the repo checkout — config/ exists under the package root.
   // Clear env overrides so the default layout resolver runs.
@@ -159,6 +191,7 @@ test('without env override, real source-checkout layout resolves correctly', () 
       OPS_ROOM_AGENT_PROFILES_DIR: '',
       OPS_ROOM_SKILL_MANIFESTS_DIR: '',
       OPS_ROOM_MEMORY_SPACE_MANIFESTS_DIR: '',
+      OPS_ROOM_CONFIG_ROOT: '',
     },
   );
   for (const line of out.trim().split('\n')) {
@@ -182,11 +215,9 @@ test('immutable release artifact: config resolves from release root without over
   mkdirSync(buildDir, { recursive: true });
   try {
     // Build the release artifact from the current source.
-    // Use npm from the executable directory (works on Unix and cross-platform CI).
     const nodeBin = execPath;
     const nodeDir = join(nodeBin, '..');
     const npmBin = resolve(join(nodeDir, 'npm' + (process.platform === 'win32' ? '.cmd' : '')));
-    // Fallback: on Windows the npm.cmd may be parallel to node.exe, not in bin/
     const npmBinAlt = resolve(join(nodeDir, '..', 'npm' + (process.platform === 'win32' ? '.cmd' : '')));
     const npm = existsSync(npmBin) ? npmBin : (existsSync(npmBinAlt) ? npmBinAlt : 'npm');
     const spawnOptions: Record<string, unknown> = {
@@ -224,7 +255,6 @@ test('immutable release artifact: config resolves from release root without over
       extracted,
     );
 
-    const expectedProfiles = join(extracted, 'config', 'agent-profiles');
     const expectedDir = join(extracted, 'config');
 
     for (const line of out.trim().split('\n')) {
