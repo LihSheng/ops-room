@@ -1,10 +1,53 @@
+import { existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const OPS_ROOM_ROOT = join(__dirname, '..', '..');
-const REPO_ROOT = OPS_ROOM_ROOT;
+
+/**
+ * Resolve the default configuration root directory.
+ *
+ * Two production layouts are supported:
+ *
+ * 1. Source-checkout layout (CI, dev, tests):
+ *    <OPS_ROOM_ROOT>/config/   — config lives directly under the package root
+ *    → returns OPS_ROOM_ROOT
+ *
+ * 2. Immutable production-release layout (deployed artifact):
+ *    <release-root>/config/    — config lives at the release root, one level up
+ *    <release-root>/ops-room/  — this is OPS_ROOM_ROOT
+ *    → returns parent of OPS_ROOM_ROOT
+ *
+ * Exactly two bounded locations are checked. No unbounded ancestor search.
+ * Each candidate is verified to be a directory and contain a governed
+ * subdirectory (agent-profiles) before being selected.
+ */
+function resolveDefaultConfigRoot(root?: string): string {
+  const base = root ?? OPS_ROOM_ROOT;
+  for (const candidate of [base, join(base, '..')]) {
+    const configDir = join(candidate, 'config');
+    try {
+      if (statSync(configDir).isDirectory() && existsSync(join(configDir, 'agent-profiles'))) {
+        return candidate;
+      }
+    } catch {
+      // statSync or existsSync may throw ENOENT — skip to next candidate.
+    }
+  }
+  throw new Error(
+    `Cannot locate config root: checked ${base}/config and ${join(base, '..')}/config. ` +
+    'Set explicit OPS_ROOM_AGENT_PROFILES_DIR, OPS_ROOM_SKILL_MANIFESTS_DIR, ' +
+    'OPS_ROOM_MEMORY_SPACE_MANIFESTS_DIR, or OPENAB_AGENTS_CONFIG_DIR to bypass.',
+  );
+}
+
+const REPO_ROOT = resolveDefaultConfigRoot();
+
+// Exported for testing — not part of the stable public API.
+// Accepts an optional root override so tests can simulate both layouts.
+export { resolveDefaultConfigRoot as _resolveConfigRootForTest };
 const _dataDir = process.env.OPENAB_DATA_DIR || join(REPO_ROOT, 'data');
 const _opsRoomDataDir = process.env.OPS_ROOM_DATA_DIR || join(_dataDir, 'ops-room');
 const _requiredCommands = Object.hasOwn(process.env, 'OPS_ROOM_REQUIRED_COMMANDS')
