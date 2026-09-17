@@ -1,6 +1,6 @@
 services:
   gemini:
-    image: ghcr.io/openabdev/openab-gemini:latest
+    image: ghcr.io/openabdev/openab:0.10.0-beta.3-gemini
     container_name: openab-gemini
     restart: unless-stopped
     entrypoint: ["/scripts/entrypoint.sh"]
@@ -23,7 +23,7 @@ services:
     command: ["openab", "run", "-c", "/etc/openab/config.toml"]
 
   opencode-professor:
-    image: ghcr.io/openabdev/openab-opencode:latest
+    image: ghcr.io/openabdev/openab:0.10.0-beta.3-opencode
     container_name: openab-opencode-professor
     restart: unless-stopped
     entrypoint: ["/scripts/entrypoint.sh"]
@@ -70,7 +70,7 @@ services:
       '
 
   opencode-1:
-    image: ghcr.io/openabdev/openab-opencode:latest
+    image: ghcr.io/openabdev/openab:0.10.0-beta.3-opencode
     container_name: openab-opencode-1
     restart: unless-stopped
     entrypoint: ["/scripts/entrypoint.sh"]
@@ -104,7 +104,7 @@ services:
       '
 
   opencode-2:
-    image: ghcr.io/openabdev/openab-opencode:latest
+    image: ghcr.io/openabdev/openab:0.10.0-beta.3-opencode
     container_name: openab-opencode-2
     restart: unless-stopped
     entrypoint: ["/scripts/entrypoint.sh"]

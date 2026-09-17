@@ -58,6 +58,16 @@ data/ops-room/tasks/*
 
 data/ops-room/review-tasks/
 
+# Additional Ops Room runtime state
+data/ops-room/archive/
+data/ops-room/audit/
+data/ops-room/idempotency/
+data/ops-room/lifecycle/
+data/ops-room/missions/
+data/ops-room/operator-sessions/
+data/ops-room/repositories/
+data/ops-room/workflow-runs/
+
 # Backward compatibility: old Ops Room runtime location.
 ops-room/data/
 !ops-room/data/.gitkeep
@@ -112,6 +122,10 @@ ops-room/test/**/*.js.map
 .local/
 .opencode/
 .DS_Store
+
+# Generated deployment copy and local compose backups
+/ops-room/
+docker-compose.yml.pre-*
 
 # ------------------------------------------------------------
 # Editor / OS
